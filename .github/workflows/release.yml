@@ -60,8 +60,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }} --config src-tauri/tauri.mcp.conf.json
-          # Nombres que distinguen la app del servidor MCP.
-          releaseAssetNamePattern: "AgentBoard-App_[version]_[platform]_[arch][setup][ext]"
 
       # Además, el MCP suelto para quien solo quiera registrarlo en su agente.
       - name: Subir servidor MCP suelto
@@ -81,3 +79,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/fix-appimage.sh "${{ github.ref_name }}"
+
+  # Cuando están los tres sistemas, renombra los instaladores a AgentBoard-App_<versión>_… para
+  # distinguirlos del servidor MCP suelto (AgentBoard-MCP_<versión>_…).
+  rename-assets:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Renombrar assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/rename-release-assets.sh "${{ github.ref_name }}"

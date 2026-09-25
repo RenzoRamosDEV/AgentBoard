@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentBoard — Coste y actividad de tus agentes de código, en local</title>
+<meta name="description" content="AgentBoard reúne en un panel qué hacen tus agentes de código (Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode) y cuánto cuestan, leyendo los logs locales. Código abierto, sin enviar nada fuera del equipo.">
+<meta property="og:title" content="AgentBoard">
+<meta property="og:description" content="El panel de coste y actividad de tus agentes de código, en local.">
+<meta property="og:image" content="assets/panel.png">
+<link rel="icon" href="assets/icon.jpg">
+<style>
+  :root{
+    --bg:#0f1115; --surface:#171a20; --surface2:#1d2128; --line:#282d36;
+    --text:#e7e9ee; --muted:#9aa2ad; --dim:#6b7280;
+    --accent:#f2a33a; --accent2:#f2a33a; --green:#4ade80; --blue:#5b8def;
+    --radius:14px; --maxw:1000px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;
+    background-image:radial-gradient(60% 45% at 50% -5%, rgba(242,163,58,.14), transparent 70%);}
+  a{color:inherit}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  header{padding:70px 0 40px;text-align:center}
+  .logo{width:112px;height:112px;border-radius:50%;object-fit:cover;border:2px solid var(--line);
+    box-shadow:0 10px 40px rgba(0,0,0,.45)}
+  h1{font-size:clamp(34px,6vw,54px);margin:20px 0 6px;letter-spacing:-.02em;font-weight:700}
+  .tag{font-size:clamp(16px,2.6vw,20px);color:var(--text);font-weight:600;margin:0 0 10px}
+  .lead{max-width:640px;margin:0 auto 26px;color:var(--muted);font-size:16px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;
+    text-decoration:none;font-weight:600;font-size:15px;border:1px solid var(--line);transition:.15s}
+  .btn.primary{background:var(--accent);color:#1a1206;border-color:var(--accent)}
+  .btn.primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
+  .btn.ghost{background:var(--surface);color:var(--text)}
+  .btn.ghost:hover{background:var(--surface2);border-color:var(--dim)}
+  .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+  .badge{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);
+    padding:4px 10px;border-radius:999px}
+
+  section{padding:46px 0;border-top:1px solid var(--line)}
+  h2{font-size:clamp(22px,4vw,30px);margin:0 0 8px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 26px;max-width:680px}
+
+  .shot{width:100%;border-radius:var(--radius);border:1px solid var(--line);
+    box-shadow:0 16px 50px rgba(0,0,0,.4);display:block}
+  .shot+.shot{margin-top:18px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+  .card h3{margin:0 0 6px;font-size:17px}
+  .card p{margin:0;color:var(--muted);font-size:14.5px}
+  .card .ico{font-size:22px;display:block;margin-bottom:10px}
+
+  ul.checks{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 22px}
+  ul.checks li{color:var(--muted);padding-left:26px;position:relative}
+  ul.checks li b{color:var(--text)}
+  ul.checks li::before{content:"›";color:var(--accent);position:absolute;left:8px;font-weight:700}
+
+  pre{background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;
+    font-size:13.5px;color:#cfd4dd}
+  pre .c{color:var(--dim)}
+
+  .dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+  .dl a{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;
+    text-decoration:none;transition:.15s;display:block}
+  .dl a:hover{background:var(--surface2);border-color:var(--accent);transform:translateY(-2px)}
+  .dl .os{font-weight:700;font-size:17px;margin-bottom:2px}
+  .dl .files{color:var(--muted);font-size:13.5px}
+
+  .note{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:10px;padding:14px 16px;color:var(--muted);font-size:14px;margin-top:20px}
+
+  footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);text-align:center;font-size:14px}
+  footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <img class="logo" src="assets/icon.jpg" alt="Logo de AgentBoard">
+    <h1>AgentBoard</h1>
+    <p class="tag">El panel de coste y actividad de tus agentes de código, en local.</p>
+    <p class="lead">Reúne en una sola vista qué hacen Claude Code, Codex, Copilot, Cursor, Gemini y OpenCode
+      —y cuánto cuestan— leyendo los logs que ya tienen en el ordenador. Nada sale de la máquina.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">⬇ Descargar</a>
+      <a class="btn ghost" href="https://github.com/RenzoRamosDEV/AgentBoard">Ver en GitHub</a>
+    </div>
+    <div class="badges">
+      <span class="badge">Tauri 2 · Rust</span>
+      <span class="badge">React + TypeScript</span>
+      <span class="badge">SQLite en memoria</span>
+      <span class="badge">Servidor MCP</span>
+      <span class="badge">Código abierto · MIT</span>
+    </div>
+  </div>
+</header>
+
+<section id="que-es">
+  <div class="wrap">
+    <h2>Qué es</h2>
+    <p class="sub">Los agentes de código generan mucha actividad —llamadas al modelo, tokens, sesiones,
+      herramientas, comandos— y con ella un gasto repartido y opaco en cada herramienta. AgentBoard lee
+      esos registros, los cruza y los presenta en un panel, sin enviar nada fuera del equipo.</p>
+    <ul class="checks">
+      <li><b>Local y privado.</b> Sin proxy, sin claves de API, sin telemetría.</li>
+      <li><b>Solo lectura.</b> Lee los logs existentes; no interfiere con los agentes.</li>
+      <li><b>Sin persistencia.</b> Los datos viven en memoria; al cerrar no queda rastro.</li>
+      <li><b>Multiplataforma.</b> Linux, Windows y macOS desde un único binario.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="panel">
+  <div class="wrap">
+    <h2>El panel</h2>
+    <p class="sub">Un panel lateral para organizarlo todo y cada apartado con su tabla y su gráfico.</p>
+    <img class="shot" src="assets/panel.png" alt="Resumen de AgentBoard: tarjetas de coste, sesiones, cache hit, ahorro por caché, burn rate y gasto del mes, con los paneles Daily Activity y By Agent debajo">
+    <img class="shot" src="assets/tools.png" alt="Tabla de herramientas con llamadas, errores y porcentaje de error por herramienta">
+  </div>
+</section>
+
+<section id="funciones">
+  <div class="wrap">
+    <h2>Qué ofrece</h2>
+    <p class="sub">Coste y uso de un vistazo, más las funciones que se esperan de una app de escritorio.</p>
+    <div class="grid">
+      <div class="card"><span class="ico">📊</span><h3>Coste y proyección</h3><p>Gasto del día y del mes, proyección a fin de mes y aviso al acercarse al presupuesto.</p></div>
+      <div class="card"><span class="ico">🤖</span><h3>Por agente y modelo</h3><p>Qué agente y qué modelo se usan más, y con qué eficiencia de caché.</p></div>
+      <div class="card"><span class="ico">🧭</span><h3>Por actividad</h3><p>Reparto entre coding, testing, debugging, exploración… y por proyecto y rama.</p></div>
+      <div class="card"><span class="ico">🔧</span><h3>Herramientas y comandos</h3><p>Uso y porcentaje de error por herramienta y por comando de shell.</p></div>
+      <div class="card"><span class="ico">⚡</span><h3>En vivo</h3><p>Relee los logs al vuelo; el panel se actualiza sin recargar.</p></div>
+      <div class="card"><span class="ico">🎛️</span><h3>Bandeja e idiomas</h3><p>Gasto del mes en la bandeja, avisos de presupuesto, exportar a CSV/JSON, temas e idiomas.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="mcp">
+  <div class="wrap">
+    <h2>Servidor MCP</h2>
+    <p class="sub">Además de la interfaz, un servidor <b>MCP</b> expone los mismos datos a cualquier agente
+      compatible (Claude Code, Codex, Gemini, Cursor, OpenCode). Así un agente puede preguntar «¿cuánto llevo
+      gastado este mes?» durante una conversación, sin abrir la app.</p>
+<pre><span class="c"># compilar y registrar en Claude Code</span>
+cargo build --release --bin agentboard-mcp
+claude mcp add agentboard -- ./target/release/agentboard-mcp</pre>
+    <p class="sub" style="margin-top:16px">15 herramientas (<span class="mono">get_summary</span>,
+      <span class="mono">get_cost_by_model</span>, <span class="mono">get_daily</span>,
+      <span class="mono">list_agents</span>…), todas con filtro de periodo, agentes y proyectos.</p>
+  </div>
+</section>
+
+<section id="descargar">
+  <div class="wrap">
+    <h2>Descargar</h2>
+    <p class="sub">Elige el instalador de tu sistema. Todos se generan automáticamente en cada versión.</p>
+    <div class="dl">
+      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
+        <div class="os">🐧 Linux</div><div class="files">.AppImage · .deb · .rpm</div></a>
+      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
+        <div class="os">🪟 Windows</div><div class="files">.msi · .exe</div></a>
+      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
+        <div class="os">🍎 macOS</div><div class="files">.dmg (universal)</div></a>
+    </div>
+    <div class="note">Los binarios de Windows y macOS van sin firmar: la primera vez el sistema pedirá
+      confirmación (SmartScreen / Gatekeeper).</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    AgentBoard es software de código abierto bajo licencia
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/blob/main/LICENSE">MIT</a>.
+    · <a href="https://github.com/RenzoRamosDEV/AgentBoard">Repositorio</a>
+    · <a href="https://github.com/RenzoRamosDEV/AgentBoard/tree/main/docs/wiki">Documentación</a>
+  </div>
+</footer>
+
+</body>
+</html>

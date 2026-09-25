@@ -8,6 +8,7 @@ pub mod pricing;
 pub mod providers;
 pub mod queries;
 pub mod settings;
+pub mod watcher;
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};
@@ -22,8 +23,9 @@ pub fn run() {
 
             // Escaneo inicial en segundo plano: lee los logs del ordenador a la base en memoria.
             let handle = app.handle().clone();
+            let scan_db = db.clone();
             std::thread::spawn(move || {
-                let result = db
+                let result = scan_db
                     .lock()
                     .map_err(|e| anyhow::anyhow!("{e}"))
                     .and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
@@ -33,6 +35,12 @@ pub fn run() {
                     }
                     Err(e) => eprintln!("agentboard: falló el escaneo inicial: {e:#}"),
                 }
+            });
+
+            // Vigilante en vivo: relee al vuelo cuando los agentes escriben en sus logs.
+            let watch_handle = app.handle().clone();
+            watcher::spawn(db.clone(), move || {
+                let _ = watch_handle.emit("ingest://done", ());
             });
             Ok(())
         })

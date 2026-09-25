@@ -121,8 +121,9 @@ export function installMocks() {
       case "get_data_info":
         return { firstTs: now - 42 * DAY, calls: 3792, watchedFiles: 212, lastScan: now - 60_000 };
       case "get_settings":
-        return { theme: "system", language: "system", monthlyBudget: 60 };
+        return { theme: "system", language: "system", monthlyBudget: 60, ...JSON.parse(localStorage.getItem("mockSettings") ?? "{}") };
       case "set_settings":
+        localStorage.setItem("mockSettings", JSON.stringify(a.settings));
         return a.settings;
       case "plugin:event|listen":
         return 1;

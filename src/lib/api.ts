@@ -16,9 +16,70 @@ export interface Summary {
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheHit: number;
+  cacheSavingsUsd: number;
+  burnRateUsdH: number;
   firstTs: number | null;
   lastTs: number | null;
   unpricedModels: string[];
 }
 
-export const getSummary = (filter: Filter = {}) => invoke<Summary>("get_summary", { filter });
+export interface Point {
+  ts: number;
+  costUsd: number;
+  calls: number;
+}
+
+export interface BreakdownRow {
+  key: string;
+  label: string;
+  costUsd: number;
+  calls: number;
+  errors: number;
+  cacheHit: number;
+  hasPrice: boolean;
+}
+
+export type BreakdownBy = "project" | "branch" | "model" | "activity" | "tool" | "command";
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  logRoot: string;
+  costUsd: number;
+  calls: number;
+}
+
+export interface ProjectRow {
+  id: number;
+  name: string;
+  cwd: string;
+  costUsd: number;
+  calls: number;
+}
+
+export interface DataInfo {
+  firstTs: number | null;
+  dbBytes: number;
+  watchedFiles: number;
+  dbPath: string;
+}
+
+export interface Settings {
+  monthlyBudget: number | null;
+}
+
+/** Minutos a sumar a UTC para obtener la hora local. */
+export const tzOffsetMin = () => -new Date().getTimezoneOffset();
+
+export const api = {
+  summary: (filter: Filter) => invoke<Summary>("get_summary", { filter }),
+  timeseries: (filter: Filter, bucket: "day" | "hour") =>
+    invoke<Point[]>("get_timeseries", { filter, bucket, tzOffsetMin: tzOffsetMin() }),
+  breakdown: (filter: Filter, by: BreakdownBy) => invoke<BreakdownRow[]>("get_breakdown", { filter, by }),
+  agents: (filter: Filter) => invoke<AgentRow[]>("list_agents", { filter }),
+  projects: (filter: Filter) => invoke<ProjectRow[]>("list_projects", { filter }),
+  dataInfo: () => invoke<DataInfo>("get_data_info"),
+  settings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
+};

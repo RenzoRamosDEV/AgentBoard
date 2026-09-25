@@ -1,48 +1,87 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getSummary, type Summary } from "./lib/api";
-
-const usd = new Intl.NumberFormat("es-ES", { style: "currency", currency: "USD" });
-const num = new Intl.NumberFormat("es-ES");
+import { api, type AgentRow, type DataInfo, type Filter, type ProjectRow, type Settings } from "./lib/api";
+import { periodRange, type Period } from "./lib/period";
+import { Sidebar } from "./components/Sidebar";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { TooltipProvider } from "./components/Tooltip";
+import { Dashboard } from "./views/Dashboard";
 
 export default function App() {
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>({ kind: "30d" });
+  // Se guardan los *ocultos*: un agente o proyecto nuevo aparece incluido por defecto.
+  const [hiddenAgents, setHiddenAgents] = useState<Set<string>>(new Set());
+  const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [info, setInfo] = useState<DataInfo | null>(null);
+  const [settings, setSettings] = useState<Settings>({ monthlyBudget: null });
+  const [showSettings, setShowSettings] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
-  const load = () => getSummary().then(setSummary).catch((e) => setError(String(e)));
+  const range = useMemo(() => periodRange(period), [period, refresh]);
+
+  const filter: Filter = useMemo(
+    () => ({
+      ...range,
+      agents: hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined,
+      projects: hiddenProjects.size ? projects.filter((p) => !hiddenProjects.has(p.id)).map((p) => p.id) : undefined,
+    }),
+    [range, hiddenAgents, hiddenProjects, agents, projects],
+  );
+
+  // Las listas de la barra lateral dependen del periodo y de los agentes, no de los proyectos.
+  useEffect(() => {
+    const scope: Filter = { ...range, agents: filter.agents };
+    api.agents(range).then(setAgents).catch(console.error);
+    api.projects(scope).then(setProjects).catch(console.error);
+    api.dataInfo().then(setInfo).catch(console.error);
+  }, [range, filter.agents?.join(","), refresh]);
 
   useEffect(() => {
-    load();
-    const off = listen("ingest://done", load);
+    api.settings().then(setSettings).catch(console.error);
+    const off = listen("ingest://done", () => setRefresh((n) => n + 1));
     return () => {
       off.then((f) => f());
     };
   }, []);
 
-  if (error) return <main className="empty">Error: {error}</main>;
-  if (!summary) return <main className="empty">Cargando…</main>;
+  const toggle = <T,>(set: Set<T>, v: T) => {
+    const next = new Set(set);
+    next.has(v) ? next.delete(v) : next.add(v);
+    return next;
+  };
 
-  return (
-    <main>
-      <h1>AgentBurn</h1>
-      <section className="kpis">
-        <Kpi label="Coste" value={usd.format(summary.costUsd)} />
-        <Kpi label="Llamadas" value={num.format(summary.calls)} />
-        <Kpi label="Sesiones" value={num.format(summary.sessions)} />
-        <Kpi label="Tokens de salida" value={num.format(summary.outputTokens)} />
-      </section>
-      {summary.firstTs && (
-        <p className="muted">Primer registro: {new Date(summary.firstTs).toLocaleString()}</p>
-      )}
-    </main>
+  const onlyProject = useCallback(
+    (id: number | null) =>
+      setHiddenProjects(id === null ? new Set() : new Set(projects.filter((p) => p.id !== id).map((p) => p.id))),
+    [projects],
   );
-}
 
-function Kpi({ label, value }: { label: string; value: string }) {
+  const visibleProjects = projects.filter((p) => !hiddenProjects.has(p.id));
+  const singleProject = hiddenProjects.size && visibleProjects.length === 1 ? visibleProjects[0].name : null;
+
+  const saveSettings = async (s: Settings) => setSettings(await api.saveSettings(s));
+
   return (
-    <div className="kpi">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <TooltipProvider>
+      <div className="app">
+        <Sidebar
+          agents={agents}
+          projects={projects}
+          hiddenAgents={hiddenAgents}
+          hiddenProjects={hiddenProjects}
+          toggleAgent={(id) => setHiddenAgents((s) => toggle(s, id))}
+          toggleProject={(id) => setHiddenProjects((s) => toggle(s, id))}
+          onlyProject={onlyProject}
+          period={period}
+          setPeriod={setPeriod}
+          info={info}
+          onSettings={() => setShowSettings(true)}
+        />
+        <Dashboard filter={filter} singleProject={singleProject} budget={settings.monthlyBudget} refresh={refresh} />
+      </div>
+      {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
+    </TooltipProvider>
   );
 }

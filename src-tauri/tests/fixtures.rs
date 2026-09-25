@@ -78,3 +78,49 @@ fn claude_code_fixture() {
     assert_eq!(queries::summary(&conn, &queries::Filter::default(), 0).unwrap().calls, 8);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM tool_calls"), 7);
 }
+
+#[test]
+fn opencode_fixture() {
+    use agentboard_lib::providers::opencode::OpenCode;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("opencode");
+    std::fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("opencode.db");
+    let sql = std::fs::read_to_string(fixtures("opencode").join("opencode.sql")).unwrap();
+    rusqlite::Connection::open(&db_path).unwrap().execute_batch(&sql).unwrap();
+
+    let mut conn = db::open_in_memory().unwrap();
+    let providers: Vec<Box<dyn Provider>> = vec![Box::new(OpenCode::with_roots(vec![root]))];
+    let stats = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!((stats.files, stats.errors), (1, 0));
+
+    let f = queries::Filter::default();
+    let s = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!(s.calls, 3);
+    assert_eq!(s.sessions, 2);
+    assert!(s.unpriced_models.is_empty(), "big-pickle trae coste reportado");
+    // big-pickle: 0.0123 + 0.001 reportados; sonnet: precio de tabla (200×3 + 300×15 + 8400×0.3 + 100×3.75)/1e6
+    let sonnet = (200.0 * 3.0 + 300.0 * 15.0 + 8400.0 * 0.3 + 100.0 * 3.75) / 1e6;
+    assert!((s.cost_usd - (0.0133 + sonnet)).abs() < 1e-9, "{}", s.cost_usd);
+
+    let q = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(q("SELECT COUNT(*) FROM agents WHERE id = 'opencode'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM turns"), 1, "la sesión hija no abre turno");
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE turn_id = 'msg_u1'"), 2);
+    assert_eq!(q("SELECT is_error FROM tool_calls WHERE call_id = 'call_1'"), 1);
+    assert_eq!(q("SELECT duration_ms FROM tool_calls WHERE call_id = 'call_1'"), 1000);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Bash'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE is_sidechain = 1 AND agent_id = 'ses_child'"), 1);
+    assert_eq!(q("SELECT is_subagent FROM sessions WHERE id = 'ses_child'"), 1);
+    let intent: String = conn.query_row("SELECT intent FROM turns WHERE id='msg_u1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(intent, "debug");
+    let name: String = conn.query_row("SELECT name FROM projects", [], |r| r.get(0)).unwrap();
+    assert_eq!(name, "demo");
+    let agents = queries::breakdown(&conn, &f, "agent_type").unwrap();
+    assert_eq!((agents[0].key.as_str(), agents[0].calls), ("explore", 1));
+
+    // Segunda pasada sin cambios: no se procesa nada ni se duplica.
+    let again = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!(again.records, 0);
+    assert_eq!(queries::summary(&conn, &f, 0).unwrap().calls, 3);
+}

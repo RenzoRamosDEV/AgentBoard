@@ -91,6 +91,23 @@ export function SettingsDialog({ settings, onSave, onClose }: { settings: Settin
       </section>
 
       <section className="settings-section">
+        <h3>{t("Presupuesto mensual")}</h3>
+        <div className="budget-field">
+          <span className="budget-prefix">$</span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            inputMode="decimal"
+            placeholder={t("sin límite")}
+            value={draft.monthlyBudget ?? ""}
+            onChange={(e) => setDraft({ ...draft, monthlyBudget: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
+          />
+        </div>
+        <p className="muted small">{t("Se avisa al llegar al 80 % y al 100 % de la proyección del mes. Vacío = sin avisos.")}</p>
+      </section>
+
+      <section className="settings-section">
         <h3>{t("Idioma")}</h3>
         <Segmented value={draft.language} options={LANGS.map((o) => ({ ...o, label: o.value === "system" ? t("Sistema") : o.label }))} onChange={(language: Language) => setDraft({ ...draft, language })} />
         <p className="muted small">{t('"Sistema" usa el idioma de tu escritorio (español, inglés, portugués o francés).')}</p>

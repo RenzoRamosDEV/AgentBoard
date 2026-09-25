@@ -296,6 +296,9 @@ svg .crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3
 .field span { color: var(--text-secondary); }
 .field input { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.budget-field { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 6px 12px; max-width: 200px; }
+.budget-prefix { color: var(--text-muted); }
+.budget-field input { border: 0; background: transparent; color: var(--text-primary); width: 100%; font-variant-numeric: tabular-nums; outline: none; }
 .dialog-settings { width: min(640px, 94vw); padding: 24px 28px 28px; display: flex; flex-direction: column; gap: 22px; }
 .dialog-head { display: flex; justify-content: space-between; align-items: center; }
 .dialog-head h2 { font-size: 18px; }

@@ -36,6 +36,8 @@ export default function App() {
   setLang(lang);
   const [showSettings, setShowSettings] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
 
   const range = useMemo(() => periodRange(period), [period, refresh]);
 
@@ -51,8 +53,8 @@ export default function App() {
   // Las listas del panel dependen del periodo y de los agentes, no de los proyectos.
   useEffect(() => {
     const scope: Filter = { ...range, agents: filter.agents };
-    api.agents(range).then(setAgents).catch(console.error);
-    api.projects(scope).then(setProjects).catch(console.error);
+    api.agents(range).then(setAgents).catch((e) => setLoadError(String(e)));
+    api.projects(scope).then(setProjects).catch((e) => setLoadError(String(e)));
   }, [range, filter.agents?.join(","), refresh]);
 
   useEffect(() => applyTheme(settings.theme), [settings.theme]);
@@ -65,8 +67,17 @@ export default function App() {
   }, [settings.language]);
 
   useEffect(() => {
-    api.settings().then(setSettings).catch(console.error);
-    const off = listen("ingest://done", () => setRefresh((n) => n + 1));
+    api.settings().then(setSettings).catch((e) => setLoadError(String(e)));
+    let first = true;
+    const off = listen("ingest://done", () => {
+      setRefresh((n) => n + 1);
+      // El primer evento es el escaneo inicial; los siguientes son relecturas en vivo.
+      if (!first) {
+        setLive(true);
+        setTimeout(() => setLive(false), 2500);
+      }
+      first = false;
+    });
     return () => {
       off.then((f) => f());
     };
@@ -114,7 +125,16 @@ export default function App() {
           setPeriod={setPeriod}
           onSettings={() => setShowSettings(true)}
         />
-        {content}
+        <div className="content">
+          {loadError && (
+            <div className="notice warn banner">
+              {t("No se pudieron cargar los datos: {e}", { e: loadError })}
+              <button className="link" onClick={() => setLoadError(null)}>{t("Cerrar")}</button>
+            </div>
+          )}
+          {live && <div className="live-badge">{t("Actualizado en vivo")}</div>}
+          {content}
+        </div>
       </div>
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
     </TooltipProvider>

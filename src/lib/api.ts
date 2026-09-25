@@ -112,7 +112,7 @@ export const api = {
   summary: (filter: Filter) => invoke<Summary>("get_summary", { filter }),
   timeseries: (filter: Filter, bucket: "day" | "hour") =>
     invoke<Point[]>("get_timeseries", { filter, bucket, tzOffsetMin: tzOffsetMin() }),
-  timeseriesBy: (filter: Filter, by: "agent" | "model") =>
+  timeseriesBy: (filter: Filter, by: "agent" | "model" | "project" | "branch" | "tool") =>
     invoke<SeriesPoint[]>("get_timeseries_by", { filter, by, tzOffsetMin: tzOffsetMin() }),
   breakdown: (filter: Filter, by: BreakdownBy) => invoke<BreakdownRow[]>("get_breakdown", { filter, by }),
   activity: (filter: Filter) => invoke<ActivityReport>("get_activity", { filter }),

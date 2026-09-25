@@ -3,8 +3,9 @@ import type { Period } from "../lib/period";
 import { sectionOf, type SectionId } from "../lib/sections";
 import type { DashboardData } from "../lib/useData";
 import { Kpis, type Kpi } from "../components/Kpis";
-import { PANELS, periodLabel } from "./Overview";
+import { periodLabel } from "./Overview";
 import { DailyFull } from "./panels";
+import { ActivityFull, AgentFull, AgentTypesFull, McpFull, ModelFull, ProjectFull, ShellFull, SkillsFull, ToolsFull } from "./sections";
 
 /** Tres cifras clave de cada apartado. */
 function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): Kpi[] {
@@ -99,7 +100,6 @@ export function Section({
   back: () => void;
 }) {
   const s = sectionOf(id);
-  const Body = PANELS[id];
   const title = id === "project" && singleProject ? `By Branch · ${singleProject}` : s.title;
   return (
     <div className="main">
@@ -112,13 +112,16 @@ export function Section({
         </h1>
       </header>
       <Kpis items={sectionKpis(id, data)} columns={3} />
-      {id === "daily" ? (
-        <DailyFull data={data} />
-      ) : (
-        <section className="panel">
-          <Body data={data} full singleProject={singleProject} />
-        </section>
-      )}
+      {id === "daily" && <DailyFull data={data} />}
+      {id === "agent" && <AgentFull data={data} />}
+      {id === "project" && <ProjectFull data={data} singleProject={singleProject} />}
+      {id === "activity" && <ActivityFull data={data} />}
+      {id === "model" && <ModelFull data={data} />}
+      {id === "tools" && <ToolsFull data={data} />}
+      {id === "shell" && <ShellFull data={data} />}
+      {id === "skills" && <SkillsFull data={data} />}
+      {id === "mcp" && <McpFull data={data} />}
+      {id === "agents" && <AgentTypesFull data={data} />}
     </div>
   );
 }

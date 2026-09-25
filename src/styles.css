@@ -39,6 +39,8 @@
   --act-git: #f0a04b;
   --act-brainstorming: #d95926;
   --act-general: #6b7280;
+  --palette-1: #3987e5; --palette-2: #d95926; --palette-3: #199e70; --palette-4: #c98500;
+  --palette-5: #d55181; --palette-6: #2fa84f; --palette-7: #9085e9; --palette-8: #e66767;
   --agent-claude: #e8833a;
   --agent-codex: #3987e5;
   --agent-copilot: #9085e9;
@@ -82,6 +84,8 @@
     --act-git: #b8620f;
     --act-brainstorming: #c24a1c;
     --act-general: #6b7280;
+    --palette-1: #2a78d6; --palette-2: #eb6834; --palette-3: #1baf7a; --palette-4: #b07a00;
+    --palette-5: #c2317e; --palette-6: #1f8f55; --palette-7: #4a3aa7; --palette-8: #c43434;
     --agent-claude: #c9661e;
     --agent-codex: #2a78d6;
     --agent-copilot: #4a3aa7;
@@ -244,6 +248,9 @@ b { font-weight: 600; }
 .segment { border: 0; background: transparent; color: var(--text-secondary); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 .segment:hover { color: var(--text-primary); }
 .segment.active { background: var(--surface-1); color: var(--text-primary); font-weight: 500; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); }
+.share-card { display: flex; justify-content: center; padding: 6px 0; }
+.share-card .donut { flex-direction: row; gap: 24px; align-items: center; }
+.share-card .legend { flex-direction: column; gap: 6px; }
 .linechart { display: flex; flex-direction: column; gap: 6px; }
 .linechart svg { display: block; width: 100%; }
 svg .grid { stroke: var(--row-border); stroke-width: 1; }

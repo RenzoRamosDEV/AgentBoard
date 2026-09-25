@@ -11,16 +11,16 @@ import { DataTable, type Column } from "../components/DataTable";
 import { ChartTitle, Split } from "../components/Panel";
 
 /** Columna con la barra de reparto integrada en la fila (no repite etiqueta ni cifra). */
-function barColumn<T>(header: string, rows: T[], value: (r: T) => number, color: string): Column<T> {
+export function barColumn<T>(header: string, rows: T[], value: (r: T) => number, color: string): Column<T> {
   const max = Math.max(...rows.map(value), 0);
   return { header, cell: (r) => <InlineBar value={value(r)} max={max} color={color} />, width: "minmax(90px, 1.3fr)" };
 }
 
-const cost = (n: number) => fmt.usd(n);
-const shot = (v: number | null | undefined) => (v == null ? "–" : fmt.pct(v));
-const shotClass = (v: number | null | undefined) => (v == null ? "muted" : v >= 0.95 ? "good" : "warn");
-const errClass = (r: BreakdownRow) => (r.calls && r.errors / r.calls > 0.05 ? "warn" : "muted");
-const err = (r: BreakdownRow) => (r.errors ? fmt.pct(r.errors / r.calls) : "–");
+export const cost = (n: number) => fmt.usd(n);
+export const shot = (v: number | null | undefined) => (v == null ? "–" : fmt.pct(v));
+export const shotClass = (v: number | null | undefined) => (v == null ? "muted" : v >= 0.95 ? "good" : "warn");
+export const errClass = (r: BreakdownRow) => (r.calls && r.errors / r.calls > 0.05 ? "warn" : "muted");
+export const err = (r: BreakdownRow) => (r.errors ? fmt.pct(r.errors / r.calls) : "–");
 
 export interface PanelProps {
   data: DashboardData;
@@ -36,14 +36,14 @@ const PREVIEW = 5;
 
 // --- Daily Activity -------------------------------------------------------------
 
-const DAY = 864e5;
-const startOfDay = (ts: number) => {
+export const DAY = 864e5;
+export const startOfDay = (ts: number) => {
   const d = new Date(ts);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 };
 
 /** Un punto por día del periodo, con los días sin actividad a cero, para que la línea temporal sea continua. */
-function dayPoints(daily: Point[], filter: { from?: number; to?: number }) {
+export function dayPoints(daily: Point[], filter: { from?: number; to?: number }) {
   const byDay = new Map(daily.map((p) => [startOfDay(p.ts), p]));
   const today = startOfDay(Date.now());
   const first = daily.length ? startOfDay(daily[0].ts) : today;

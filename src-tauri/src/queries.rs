@@ -190,12 +190,33 @@ pub struct SeriesPoint {
     pub output_tokens: i64,
 }
 
-/// Coste por día local y agente (`by = "agent"`) o modelo (`by = "model"`).
+/// Serie por día local y `agent | model | project | branch | tool` (esta última cuenta usos de
+/// herramienta, sin coste).
 pub fn timeseries_by(conn: &Connection, f: &Filter, by: &str, tz_offset_min: i64) -> Result<Vec<SeriesPoint>> {
     let off = tz_offset_min * 60_000;
+    if by == "tool" {
+        let (w, mut args) = f.sql("t.ts");
+        let sql = format!(
+            r"SELECT ((t.ts + ?) / ?) * ? - ? AS b, t.tool, t.tool, 0.0, COUNT(*), 0
+              FROM tool_calls t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool NOT LIKE 'mcp\_\_%' ESCAPE '\'
+              GROUP BY b, t.tool ORDER BY b, 5 DESC"
+        );
+        let mut all: Vec<Value> = vec![off.into(), DAY_MS.into(), DAY_MS.into(), off.into()];
+        all.append(&mut args);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(all.iter()), |r| {
+                Ok(SeriesPoint { ts: r.get(0)?, key: r.get(1)?, label: r.get(2)?, cost_usd: r.get(3)?, calls: r.get(4)?, output_tokens: r.get(5)? })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        return Ok(rows);
+    }
     let (key, label, join) = match by {
         "agent" => ("s.agent_id", "COALESCE(a.name, s.agent_id)", "LEFT JOIN agents a ON a.id = s.agent_id"),
         "model" => ("c.model", "c.model", ""),
+        "project" => ("COALESCE(p.repo_root, '')", "COALESCE(MIN(p.name), '(sin proyecto)')", "LEFT JOIN projects p ON p.id = s.project_id"),
+        "branch" => ("COALESCE(s.git_branch, '')", "COALESCE(s.git_branch, '(sin rama)')", ""),
         other => anyhow::bail!("serie desconocida: {other}"),
     };
     let (w, mut args) = f.sql("c.ts");
@@ -505,6 +526,11 @@ mod tests {
         let day = timeseries(&conn, &Filter::default(), "day", 0).unwrap();
         assert_eq!((day[0].sessions, day[0].input_tokens, day[0].output_tokens), (3, 2_000_005, 100_005));
         assert!(timeseries_by(&conn, &Filter::default(), "nada", 0).is_err());
+        let projects = timeseries_by(&conn, &Filter::default(), "project", 0).unwrap();
+        assert_eq!(projects.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), vec!["web", "api"]);
+        conn.execute("INSERT INTO tool_calls (call_id,session_id,ts,tool) VALUES ('x1','s1',1000,'Bash'),('x2','s1',1000,'Bash'),('x3','s1',1000,'mcp__srv__t')", []).unwrap();
+        let tools = timeseries_by(&conn, &Filter::default(), "tool", 0).unwrap();
+        assert_eq!(tools.iter().map(|p| (p.label.as_str(), p.calls)).collect::<Vec<_>>(), vec![("Bash", 2)], "sin MCP");
     }
 
     #[test]

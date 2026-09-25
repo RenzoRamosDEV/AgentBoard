@@ -48,12 +48,21 @@ export function installMocks() {
         return Array.from({ length: days }, (_, i) => pt(monthStart + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
       }
       case "get_timeseries_by": {
-        const out = [];
+        const keys: Record<string, [string, string][]> = {
+          agent: [["claude-code", "Claude Code"], ["codex", "Codex CLI"], ["opencode", "OpenCode"]],
+          model: [["claude-fable-5-1", "claude-fable-5-1"], ["claude-opus-5-5", "claude-opus-5-5"], ["claude-sonnet-5", "claude-sonnet-5"], ["gpt-5-codex", "gpt-5-codex"]],
+          project: [["/w", "AgentBoard"], ["/t", "tuio-web"], ["/i", "infra"], ["/s", "scripts"]],
+          branch: [["main", "main"], ["feat/dashboard", "feat/dashboard"]],
+          tool: [["Bash", "Bash"], ["Read", "Read"], ["Edit", "Edit"], ["Grep", "Grep"], ["Write", "Write"]],
+        };
+        const out: { ts: number; key: string; label: string; costUsd: number; calls: number; outputTokens: number }[] = [];
         for (let d = 13; d >= 0; d--) {
           const ts = Math.floor((now - d * DAY) / DAY) * DAY;
-          out.push({ ts, key: "claude-code", label: "Claude Code", costUsd: 1 + ((d * 37) % 11) * 0.5, calls: 80, outputTokens: 30000 });
-          out.push({ ts, key: "codex", label: "Codex CLI", costUsd: ((d * 3) % 4) * 0.2, calls: 12, outputTokens: 4000 });
-          if (d % 2) out.push({ ts, key: "opencode", label: "OpenCode", costUsd: 0, calls: 6, outputTokens: 2000 });
+          (keys[String(a.by)] ?? []).forEach(([key, label], i) => {
+            if ((d + i) % 4 === 3) return;
+            const w = 1 / (i + 1);
+            out.push({ ts, key, label, costUsd: a.by === "tool" ? 0 : (1 + ((d * 37) % 11) * 0.5) * w, calls: Math.round(80 * w) + (d % 3) * 5, outputTokens: Math.round(30000 * w) });
+          });
         }
         return out;
       }

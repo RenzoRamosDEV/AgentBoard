@@ -51,6 +51,9 @@ const AGENT_COLORS: Record<string, string> = {
 const FALLBACK_COLORS = ["var(--series-blue)", "var(--series-violet)", "var(--series-green)", "var(--series-yellow)", "var(--series-magenta)"];
 export const agentColor = (id: string, index = 0) => AGENT_COLORS[id] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
 
+/** Color por posición para series sin color propio (modelos, proyectos, herramientas). */
+export const paletteColor = (index: number) => `var(--palette-${(index % 8) + 1})`;
+
 export const activityLabel = (key: string) => ACTIVITIES[key]?.label ?? key;
 export const activityColor = (key: string) => ACTIVITIES[key]?.color ?? "var(--act-general)";
 

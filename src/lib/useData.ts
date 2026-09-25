@@ -11,6 +11,10 @@ export interface DashboardData {
   /** Coste por hora local, para el reparto por hora del día. */
   hourly: Point[];
   dailyByAgent: SeriesPoint[];
+  dailyByModel: SeriesPoint[];
+  /** Por proyecto, o por rama si hay un solo proyecto seleccionado. */
+  dailyByProject: SeriesPoint[];
+  dailyByTool: SeriesPoint[];
   month: Point[];
   projects: BreakdownRow[];
   /** Solo con un proyecto seleccionado. */
@@ -41,6 +45,9 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
       api.timeseries(filter, "day"),
       api.timeseries(filter, "hour"),
       api.timeseriesBy(filter, "agent"),
+      api.timeseriesBy(filter, "model"),
+      api.timeseriesBy(filter, singleProject ? "branch" : "project"),
+      api.timeseriesBy(filter, "tool"),
       api.timeseries(monthFilter, "day"),
       by("project"),
       singleProject ? by("branch") : Promise.resolve(null),
@@ -53,9 +60,9 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
       by("mcp"),
       by("agent_type"),
     ])
-      .then(([summary, agents, daily, hourly, dailyByAgent, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
+      .then(([summary, agents, daily, hourly, dailyByAgent, dailyByModel, dailyByProject, dailyByTool, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
         if (!alive) return;
-        setData({ filter, summary, agents, daily, hourly, dailyByAgent, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
+        setData({ filter, summary, agents, daily, hourly, dailyByAgent, dailyByModel, dailyByProject, dailyByTool, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
         setError(null);
       })
       .catch((e) => alive && setError(String(e)));

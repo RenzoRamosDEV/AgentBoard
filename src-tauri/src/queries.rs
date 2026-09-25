@@ -600,3 +600,81 @@ mod tests {
         assert_eq!((info.first_ts, info.calls, info.watched_files, info.last_scan), (Some(1000), 4, 0, None));
     }
 }
+
+/// Una fila por llamada, con proyecto/agente resueltos, para exportar.
+pub fn export(conn: &Connection, f: &Filter, format: &str) -> Result<String> {
+    let (w, args) = f.sql("c.ts");
+    let sql = format!(
+        "SELECT c.ts, COALESCE(a.name, s.agent_id) AS agent, COALESCE(p.name, '') AS project,
+                COALESCE(s.git_branch, '') AS branch, c.model, c.input_tokens, c.output_tokens,
+                c.cache_read, c.cache_write, c.reasoning_tokens, c.cost_usd, c.is_sidechain
+         FROM call_costs c JOIN sessions s ON s.id = c.session_id
+         LEFT JOIN agents a ON a.id = s.agent_id
+         LEFT JOIN projects p ON p.id = s.project_id
+         WHERE {w} ORDER BY c.ts"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let cols = ["ts", "iso", "agent", "project", "branch", "model", "input_tokens", "output_tokens", "cache_read", "cache_write", "reasoning_tokens", "cost_usd", "is_subagent"];
+    let rows = stmt
+        .query_map(params_from_iter(args.iter()), |r| {
+            let ts: i64 = r.get(0)?;
+            let iso = chrono::DateTime::from_timestamp_millis(ts).map(|d| d.to_rfc3339()).unwrap_or_default();
+            Ok(serde_json::json!({
+                "ts": ts, "iso": iso,
+                "agent": r.get::<_, String>(1)?, "project": r.get::<_, String>(2)?, "branch": r.get::<_, String>(3)?,
+                "model": r.get::<_, String>(4)?,
+                "input_tokens": r.get::<_, i64>(5)?, "output_tokens": r.get::<_, i64>(6)?,
+                "cache_read": r.get::<_, i64>(7)?, "cache_write": r.get::<_, i64>(8)?, "reasoning_tokens": r.get::<_, i64>(9)?,
+                "cost_usd": r.get::<_, f64>(10)?, "is_subagent": r.get::<_, bool>(11)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if format == "json" {
+        return Ok(serde_json::to_string_pretty(&rows)?);
+    }
+    // CSV: cabecera + una fila por llamada; los textos se entrecomillan si hace falta.
+    let mut out = String::from("");
+    out.push_str(&cols.join(","));
+    out.push('\n');
+    for row in &rows {
+        let cells: Vec<String> = cols
+            .iter()
+            .map(|c| match &row[*c] {
+                serde_json::Value::Null => String::new(),
+                serde_json::Value::String(s) => csv_cell(s),
+                v => v.to_string(),
+            })
+            .collect();
+        out.push_str(&cells.join(","));
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn csv_cell(s: &str) -> String {
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn exporta_csv_y_json() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        let csv = export(&conn, &Filter::default(), "csv").unwrap();
+        assert!(csv.lines().next().unwrap().starts_with("ts,iso,agent,project,branch,model"));
+        assert_eq!(csv.lines().count(), 1 + 4, "cabecera + 4 llamadas");
+        assert!(csv.contains("claude-sonnet-4-5"));
+        let json = export(&conn, &Filter::default(), "json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 4);
+    }
+}

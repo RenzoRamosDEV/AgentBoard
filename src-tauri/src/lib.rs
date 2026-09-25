@@ -54,6 +54,7 @@ pub fn run() {
             commands::list_agents,
             commands::list_projects,
             commands::get_data_info,
+            commands::export_data,
             commands::get_settings,
             commands::set_settings,
         ])

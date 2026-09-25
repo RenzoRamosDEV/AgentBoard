@@ -70,6 +70,11 @@ pub fn get_data_info(state: tauri::State<AppState>) -> CmdResult<DataInfo> {
 }
 
 #[tauri::command]
+pub fn export_data(state: tauri::State<AppState>, filter: Option<Filter>, format: String) -> CmdResult<String> {
+    with_db(&state, |c| queries::export(c, &filter.unwrap_or_default(), &format))
+}
+
+#[tauri::command]
 pub fn get_settings() -> CmdResult<Settings> {
     Ok(settings::load())
 }

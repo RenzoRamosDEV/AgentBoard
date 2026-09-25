@@ -5,6 +5,25 @@ App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de
 - **Stack:** Tauri 2 · Rust · SQLite (WAL) · React + TypeScript + Vite
 - **Especificación:** gestionada con [OpenSpec](https://github.com/Fission-AI/OpenSpec) en `openspec/` (specs vigentes en `openspec/specs/`, cambios en `openspec/changes/`).
 
+## Qué muestra
+
+Panel izquierdo para organizarlo todo: apartados, periodo (Hoy, 7 días, 30 días, Mes, 6 meses, Todo, rango), agentes y proyectos detectados, datos y ajustes (presupuesto mensual). Cada apartado tiene su tabla y su gráfico, y una vista ampliada al pulsarlo:
+
+| Apartado | Tabla | Gráfico |
+| --- | --- | --- |
+| Resumen | coste, sesiones, cache hit, ahorro por caché, burn rate, gasto del mes y presupuesto | — |
+| Daily Activity | coste y llamadas por día | columnas por día |
+| By Project | coste, media por sesión, sesiones y overhead de contexto (por rama con un proyecto elegido) | reparto del coste |
+| By Activity | Coding, Exploration, Testing, Delegation, Conversation, Build/Deploy, Feature Dev, Debugging, Brainstorming, General: coste, turnos y 1-shot | anillo de reparto; ampliada: apilado por día y 1-shot |
+| By Model | coste, cache hit, llamadas y 1-shot | coste por modelo |
+| Tools | llamadas y % de error por herramienta | uso |
+| Shell Commands | comandos por primera palabra (separando tuberías) | uso |
+| Skills & Agents | usos y coste de skills y subagentes invocados | coste |
+| MCP Servers | llamadas por servidor MCP | uso |
+| Claude Agent Types | llamadas y coste dentro de subagentes por tipo | coste |
+
+El diseño está en Claude Design: <https://claude.ai/artifact/5gfYnEQqfmuqPJu7xaunqc>.
+
 ## Requisitos
 
 | Herramienta | Versión |
@@ -52,7 +71,7 @@ Los logs se leen de `~/.claude/projects/` (o `$CLAUDE_CONFIG_DIR/projects/`). Ca
 ## Estructura
 
 ```
-src/                  UI React
+src/                  UI React (views/ = resumen y vista ampliada; components/ = panel lateral, tablas, gráficos)
 src-tauri/src/
   db.rs               conexión SQLite y migraciones
   ingest.rs           offsets por archivo, upsert, eventos

@@ -46,7 +46,10 @@ fn main() -> anyhow::Result<()> {
     }
     println!("\nBy Agent");
     for r in queries::list_agents(&conn, &f)? {
-        println!("  {:<20} ${:>8.2}  {:>5} calls", r.name, r.cost_usd, r.calls);
+        println!(
+            "  {:<20} ${:>8.2}  {:>5} calls",
+            r.name, r.cost_usd, r.calls
+        );
     }
     for (title, by) in [
         ("By Project", "project"),

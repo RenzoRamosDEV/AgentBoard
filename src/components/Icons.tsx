@@ -56,6 +56,13 @@ export const SearchIcon = () => (
   </svg>
 );
 
+export const PanelIcon = () => (
+  <svg {...base} width={16} height={16}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line x1="9" y1="4" x2="9" y2="20" />
+  </svg>
+);
+
 export const ChevronIcon = () => (
   <svg {...base} width={14} height={14}>
     <path d="M6 9l6 6 6-6" />

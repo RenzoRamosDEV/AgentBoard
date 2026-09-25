@@ -30,6 +30,8 @@ type Dict = Record<string, string>;
 const en: Dict = {
   // Panel lateral
   Apartados: "Sections",
+  "Colapsar panel": "Collapse panel",
+  "Expandir panel": "Expand panel",
   Periodo: "Period",
   Agentes: "Agents",
   Proyectos: "Projects",
@@ -244,6 +246,8 @@ const en: Dict = {
 
 const pt: Dict = {
   Apartados: "Seções",
+  "Colapsar panel": "Recolher painel",
+  "Expandir panel": "Expandir painel",
   Periodo: "Período",
   Agentes: "Agentes",
   Proyectos: "Projetos",
@@ -447,6 +451,8 @@ const pt: Dict = {
 
 const fr: Dict = {
   Apartados: "Sections",
+  "Colapsar panel": "Réduire le panneau",
+  "Expandir panel": "Développer le panneau",
   Periodo: "Période",
   Agentes: "Agents",
   Proyectos: "Projets",

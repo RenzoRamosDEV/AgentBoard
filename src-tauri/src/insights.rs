@@ -133,13 +133,12 @@ fn sorted(mut rows: Vec<BreakdownRow>, limit: usize) -> Vec<BreakdownRow> {
 // ---------------------------------------------------------------------------
 // Skills, MCP y subagentes
 
-/// Cada skill o tipo de subagente invocado, con sus usos y el coste del resto de su turno.
+/// Cada skill o tipo de subagente invocado, con sus usos y el coste de la respuesta que lo invoca.
 pub fn skills_and_agents(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
     let (w, args) = f.sql("t.ts");
     let mut stmt = conn.prepare(&format!(
         "SELECT t.detail, COUNT(*), SUM(t.is_error),
-                SUM((SELECT COALESCE(SUM(c.cost_usd), 0) FROM call_costs c
-                     WHERE c.turn_id = t.turn_id AND c.ts >= t.ts AND c.is_sidechain = 0))
+                SUM((SELECT COALESCE(SUM(c.cost_usd), 0) FROM call_costs c WHERE c.message_id = t.message_id))
          FROM tool_calls t JOIN sessions s ON s.id = t.session_id
          WHERE {w} AND t.tool IN ('Skill', 'Agent', 'Task') AND t.detail IS NOT NULL
          GROUP BY 1"

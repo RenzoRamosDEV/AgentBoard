@@ -58,7 +58,7 @@ fn claude_code_fixture() {
     let cmds = by("command");
     assert_eq!(cmds.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), vec!["cargo", "tail"]);
     let skills = by("skill");
-    assert_eq!(skills.iter().map(|r| (r.key.as_str(), r.calls)).collect::<Vec<_>>(), vec![("dataviz", 1), ("Explore", 1)], "empate en usos: más coste primero");
+    assert_eq!(skills.iter().map(|r| (r.key.as_str(), r.calls)).collect::<Vec<_>>(), vec![("Explore", 1), ("dataviz", 1)], "empate en usos: más coste primero");
     assert!(skills.iter().all(|r| r.cost_usd > 0.0));
     let mcp = by("mcp");
     assert_eq!((mcp[0].key.as_str(), mcp[0].calls), ("claude_ai_Slack", 1));

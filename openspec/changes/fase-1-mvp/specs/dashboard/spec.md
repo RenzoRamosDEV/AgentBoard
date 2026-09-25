@@ -79,10 +79,10 @@ Core Tools SHALL listar las herramientas nativas (excluidas las MCP) por número
 - **THEN** cuentan un uso de `grep`, uno de `head` y uno de `git`
 
 ### Requirement: Skills & Agents
-El apartado SHALL listar cada skill invocada y cada tipo de subagente lanzado, con sus usos y el coste del resto del turno a partir de la invocación.
+El apartado SHALL listar cada skill invocada y cada tipo de subagente lanzado, con sus usos y el coste de las respuestas del modelo que los invocaron.
 
 #### Scenario: Skill invocada
-- **WHEN** en un turno se invoca la skill `dataviz` y después se gastan 0,20 USD
+- **WHEN** la respuesta que invoca la skill `dataviz` cuesta 0,20 USD
 - **THEN** `dataviz` aparece con 1 uso y 0,20 USD
 
 ### Requirement: MCP Servers

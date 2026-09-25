@@ -20,7 +20,12 @@ Fase 0 dejó `call_costs`, `queries::Filter` y un único comando. La UI es un `A
 - **Migración 0002**: tabla `settings (key, value)` con JSON por valor, y `call_costs` recreada con `cache_savings_usd`. Alternativa descartada: calcular el ahorro en cada consulta con otro JOIN a `prices` (duplica la lógica de vigencia).
 - **Burn rate** = coste con `ts >= now − 60 min` con los filtros de agente y proyecto, ignorando el periodo: responde "a qué ritmo voy ahora".
 - **`get_breakdown(filter, by)`** con `by ∈ project | branch | model | tool | command | activity` y filas homogéneas `{key, label, costUsd, calls, errors, cacheHit}`; herramientas y comandos no tienen coste propio (van en 0).
-- **Gráficas SVG propias** (barras horizontales, línea acumulada): pocas formas, cero dependencias, control total del tema claro/oscuro. Recharts queda como opción si las fases 4–5 lo piden.
+- **Apartados como CodeBurn**, a petición del usuario: tablas compactas con una barra de calor en degradado (azul → amarillo → rojo) proporcional al valor, tipografía monoespaciada y paneles con borde de color. Es HTML/CSS, sin librería de gráficas.
+- **Turnos por `promptId`**: todas las líneas `user` de un turno lo comparten; las respuestas no, así que cada llamada toma el último turno de su sesión con `ts` ≤ al suyo en el momento de la ingesta (las líneas llegan en orden dentro del archivo).
+- **Clasificación de turnos en Rust**, no en SQL: una consulta agrega por turno (herramientas, errores, archivos editados, coste, modelo) y Rust aplica las reglas; así las reglas se testean como funciones puras.
+- **Intención por palabras clave** calculada al importar y guardada como etiqueta; el texto se descarta (privacidad).
+- **Comandos de shell** separados por `|`, `&&`, `||` y `;` en Rust al consultar; los prefijos `sudo`, `env VAR=…` y `timeout N` se saltan.
+- **Migración 0003 borra `file_state`** para forzar una relectura; los upserts completan las columnas nuevas sin duplicar.
 - **Excluir en vez de incluir**: la UI guarda los agentes/proyectos *ocultos* y envía la lista de incluidos solo si hay alguno oculto; así un agente nuevo aparece incluido por defecto.
 
 ## Risks / Trade-offs

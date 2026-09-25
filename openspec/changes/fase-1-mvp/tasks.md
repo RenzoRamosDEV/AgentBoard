@@ -7,12 +7,14 @@
 - [ ] 1.3 Implementar `timeseries` por día u hora con desfase horario; verificar con test que dos llamadas del mismo día local caen en el mismo cubo
 - [ ] 1.4 Implementar `breakdown` para project, branch, model, tool, command y activity; verificar con tests el agrupado de comandos (`git` = 2)
 - [ ] 1.5 Implementar `list_agents`, `list_projects` (con coste del periodo) y `data_info`; verificar con tests
-- [ ] 1.6 Implementar `settings` (get/set con validación de presupuesto) y exponer todos los comandos en Tauri; verificar con `cargo test` y `cargo check`
+- [ ] 1.6 Migración `0003` (turnos, detalle de herramientas, subagentes) y parser/ingesta que los rellenan; verificar con tests del parser y del fixture
+- [ ] 1.7 Implementar `activity` por turno (clasificación, 1-shot por actividad y modelo), overhead por proyecto, comandos separados por tuberías, skills/agentes, MCP y tipos de subagente; verificar con tests
+- [ ] 1.8 Implementar `settings` (get/set con validación de presupuesto) y exponer todos los comandos en Tauri; verificar con `cargo test` y `cargo check`
 
 ## 2. Interfaz
 
 - [ ] 2.1 Tipos y llamadas en `src/lib/api.ts` y cálculo de periodos en `src/lib/period.ts`; verificar con `npm run build`
 - [ ] 2.2 Barra lateral con agentes, proyectos, periodo, rango personalizado e info de datos; verificar en `tauri dev`
-- [ ] 2.3 Paneles de KPIs, gasto del mes, proyecto/rama, modelos, herramientas y comandos con gráficas SVG; verificar en `tauri dev` con datos reales
+- [ ] 2.3 Apartados estilo CodeBurn (cabecera, Daily Activity, By Project, By Activity, By Model, Core Tools, Shell Commands, Skills & Agents, MCP Servers, Claude Agent Types) con barras de calor; verificar con captura headless y en `tauri dev`
 - [ ] 2.4 Diálogo de ajustes con presupuesto mensual; verificar que persiste tras reiniciar
 - [ ] 2.5 Actualizar README con las vistas disponibles

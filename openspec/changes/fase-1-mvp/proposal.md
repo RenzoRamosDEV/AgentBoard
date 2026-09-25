@@ -7,9 +7,11 @@ La fase 0 importa el historial pero solo enseña un total. Para responder "¿cu�
 ## What Changes
 
 - Barra lateral con filtros: agentes y proyectos auto-detectados (buscador y casillas), periodo (Hoy, 7 días, 30 días, Mes, 6 meses, Todo, rango personalizado) e información de datos (primer registro, tamaño de la base, archivos vigilados).
-- Paneles: KPIs (coste, llamadas, sesiones, cache hit, ahorro por caché, burn rate), gasto del mes (acumulado, proyección y presupuesto), coste por proyecto y por rama, modelos (coste y cache hit), herramientas y comandos de shell (uso y errores).
+- Paneles con la misma organización que CodeBurn: cabecera de resumen (coste, llamadas, sesiones, cache hit, tokens de entrada/salida/caché, burn rate, gasto del mes y presupuesto), Daily Activity, By Project (o por rama con un proyecto elegido), By Activity (con turnos y 1-shot), By Model (con cache hit y 1-shot), Core Tools, Shell Commands, Skills & Agents, MCP Servers y Claude Agent Types.
+- Estética de terminal oscura: paneles con borde de color, barras de calor en degradado y cifras de coste resaltadas.
+- La ingesta registra turnos (por `promptId`), la intención del prompt por palabras clave (sin guardar el texto), el detalle de cada herramienta (skill, tipo de subagente) y el `agentId` de las llamadas de subagentes. La migración fuerza una relectura para rellenar estos datos en el historial ya importado.
 - Ajuste de presupuesto mensual, persistido en la base.
-- Comandos nuevos: `get_timeseries`, `get_breakdown`, `list_agents`, `list_projects`, `get_data_info`, `get_settings`, `set_settings`; `get_summary` añade cache hit, ahorro y burn rate.
+- Comandos nuevos: `get_timeseries`, `get_breakdown`, `get_activity`, `list_agents`, `list_projects`, `get_data_info`, `get_settings`, `set_settings`; `get_summary` añade cache hit, ahorro y burn rate.
 
 ## Capabilities
 
@@ -22,5 +24,5 @@ La fase 0 importa el historial pero solo enseña un total. Para responder "¿cu�
 
 ## Impact
 
-- `src-tauri/src/queries.rs`, `commands.rs`; migración `0002` (tabla `settings` y ahorro por caché en `call_costs`).
+- `src-tauri/src/queries.rs`, `commands.rs`, `providers/claude_code.rs`, `ingest.rs`; migraciones `0002` (tabla `settings`, ahorro por caché) y `0003` (turnos, detalle de herramientas, subagentes).
 - UI: `src/components/`, `src/views/Dashboard.tsx`, gráficas SVG propias sin dependencias nuevas.

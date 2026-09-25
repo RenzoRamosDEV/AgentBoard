@@ -10,3 +10,4 @@ src-tauri/gen/schemas/
 *.log
 .DS_Store
 *.tsbuildinfo
+src-tauri/binaries/

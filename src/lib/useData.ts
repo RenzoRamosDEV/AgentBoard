@@ -3,6 +3,8 @@ import { api, type ActivityDay, type ActivityReport, type BreakdownRow, type Fil
 import { monthStart } from "./period";
 
 export interface DashboardData {
+  /** Filtro con el que se cargó (para rellenar días sin actividad). */
+  filter: Filter;
   summary: Summary;
   daily: Point[];
   month: Point[];
@@ -46,7 +48,7 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
     ])
       .then(([summary, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
         if (!alive) return;
-        setData({ summary, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
+        setData({ filter, summary, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
         setError(null);
       })
       .catch((e) => alive && setError(String(e)));

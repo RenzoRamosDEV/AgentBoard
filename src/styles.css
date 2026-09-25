@@ -196,12 +196,17 @@ b { font-weight: 600; }
 /* Columnas */
 .columns { display: flex; flex-direction: column; gap: 6px; }
 .columns-max { font-size: 11px; text-align: right; }
-.columns-plot { display: flex; align-items: flex-end; gap: 4px; border-bottom: 1px solid var(--border); }
-.column { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; }
-.column-seg { width: 100%; }
+.columns-plot { display: grid; align-items: end; gap: 3px; border-bottom: 1px solid var(--border); }
+.column { min-width: 0; width: 100%; max-width: 28px; justify-self: center; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; }
+.column-seg { width: 100%; min-height: 0; }
+.column-single { min-height: 2px; opacity: 1; }
+.column-single[style*="height: 0px"] { background: var(--track) !important; }
 .column-single { border-radius: 3px 3px 0 0; }
 .column:hover .column-seg { filter: brightness(1.15); }
-.columns-axis { display: flex; justify-content: space-between; font-size: 11px; }
+.columns-axis { display: grid; gap: 3px; font-size: 11px; }
+.columns-axis span { text-align: center; white-space: nowrap; overflow: visible; }
+.columns-axis .first { text-align: left; }
+.columns-axis .last { text-align: right; }
 
 /* Anillo */
 .donut { display: flex; flex-direction: column; align-items: center; gap: 8px; }

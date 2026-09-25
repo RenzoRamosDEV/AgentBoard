@@ -49,18 +49,38 @@ export interface PanelProps {
 
 // --- Daily Activity -------------------------------------------------------------
 
-const dayPoints = (daily: Point[]) =>
-  daily.map((p) => ({
-    ts: p.ts,
-    value: p.costUsd,
-    tooltip: (
-      <>
-        <b>{fmt.date(p.ts)}</b>
-        <div>{cost(p.costUsd)}</div>
-        <div className="muted">{fmt.int(p.calls)} llamadas</div>
-      </>
-    ),
-  }));
+const DAY = 864e5;
+const startOfDay = (ts: number) => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+
+/** Un punto por día del periodo, con los días sin actividad a cero, para que la línea temporal sea continua. */
+function dayPoints(daily: Point[], filter: { from?: number; to?: number }) {
+  const byDay = new Map(daily.map((p) => [startOfDay(p.ts), p]));
+  const today = startOfDay(Date.now());
+  const first = daily.length ? startOfDay(daily[0].ts) : today;
+  let start = filter.from != null ? startOfDay(filter.from) : first;
+  let end = filter.to != null ? startOfDay(filter.to - 1) : today;
+  if (end - start > 400 * DAY) start = end - 400 * DAY; // "Todo" con años de historial: agrupar es cosa de la vista ampliada
+  const out = [];
+  for (let d = new Date(start); d.getTime() <= end; d.setDate(d.getDate() + 1)) {
+    const ts = d.getTime();
+    const p = byDay.get(ts) ?? { ts, costUsd: 0, calls: 0 };
+    out.push({
+      ts,
+      value: p.costUsd,
+      tooltip: (
+        <>
+          <b>{fmt.date(ts)}</b>
+          <div>{cost(p.costUsd)}</div>
+          <div className="muted">{fmt.int(p.calls)} llamadas</div>
+        </>
+      ),
+    });
+  }
+  return out;
+}
 
 export function DailyPanel({ data, full }: PanelProps) {
   const rows = [...data.daily].reverse();
@@ -73,7 +93,7 @@ export function DailyPanel({ data, full }: PanelProps) {
   const chart = (
     <>
       <ChartTitle>Coste por día (USD)</ChartTitle>
-      <Columns points={dayPoints(data.daily)} format={cost} height={full ? 260 : 170} />
+      <Columns points={dayPoints(data.daily, data.filter)} format={cost} height={full ? 260 : 170} />
     </>
   );
   return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={480} />;

@@ -79,11 +79,13 @@ export function Columns({
   if (!points.length) return <Empty />;
   const max = Math.max(...points.map((p) => p.value), 1e-12);
   const px = (v: number) => Math.round((v / max) * height);
-  const mid = points[Math.floor(points.length / 2)];
+  const n = points.length;
+  const mid = Math.floor(n / 2);
+  const template = { gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` };
   return (
     <div className="columns" ref={ref}>
       <div className="columns-max muted">máx. {format(max)}</div>
-      <div className="columns-plot" style={{ height }}>
+      <div className="columns-plot" style={{ height, ...template }}>
         {points.map((p) => (
           <div
             key={p.ts}
@@ -98,10 +100,12 @@ export function Columns({
           </div>
         ))}
       </div>
-      <div className="columns-axis muted">
-        <span>{axis(points[0].ts)}</span>
-        {points.length > 2 && <span>{axis(mid.ts)}</span>}
-        {points.length > 1 && <span>{axis(points[points.length - 1].ts)}</span>}
+      <div className="columns-axis muted" style={template}>
+        {points.map((p, i) => (
+          <span key={p.ts} className={i === 0 ? "first" : i === n - 1 ? "last" : ""}>
+            {i === 0 || i === n - 1 || (n > 6 && i === mid) ? axis(p.ts) : ""}
+          </span>
+        ))}
       </div>
     </div>
   );

@@ -31,8 +31,9 @@ export function installMocks() {
           burnRateUsdH: 2.35, firstTs: now - 42 * DAY, lastTs: now, unpricedModels: ["modelo-local"],
         };
       case "get_timeseries": {
+        // Solo algunos días tienen actividad, como en la realidad.
         const days = Math.floor((now - monthStart) / DAY) + 1;
-        return Array.from({ length: days }, (_, i) => ({ ts: monthStart + i * DAY, costUsd: 1 + ((i * 37) % 11) * 0.6, calls: 100 }));
+        return Array.from({ length: days }, (_, i) => ({ ts: monthStart + i * DAY, costUsd: 1 + ((i * 37) % 11) * 0.6, calls: 100 })).filter((_, i) => i % 3 !== 1);
       }
       case "get_breakdown":
         switch (a.by) {

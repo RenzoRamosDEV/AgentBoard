@@ -1,7 +1,7 @@
 //! Comandos Tauri: envoltorios finos sobre `queries` y `settings`.
 
 use crate::ingest::now_ms;
-use crate::insights::{self, ActivityReport};
+use crate::insights::{self, ActivityDay, ActivityReport};
 use crate::queries::{self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, Summary};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
@@ -44,6 +44,11 @@ pub fn get_breakdown(state: tauri::State<AppState>, filter: Option<Filter>, by: 
 #[tauri::command]
 pub fn get_activity(state: tauri::State<AppState>, filter: Option<Filter>) -> CmdResult<ActivityReport> {
     with_db(&state, |c| insights::activity(c, &filter.unwrap_or_default()))
+}
+
+#[tauri::command]
+pub fn get_activity_daily(state: tauri::State<AppState>, filter: Option<Filter>, tz_offset_min: i64) -> CmdResult<Vec<ActivityDay>> {
+    with_db(&state, |c| insights::activity_daily(c, &filter.unwrap_or_default(), tz_offset_min))
 }
 
 #[tauri::command]

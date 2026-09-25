@@ -193,6 +193,7 @@ pub fn agent_types(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
 
 #[derive(Debug, Default)]
 pub struct TurnStats {
+    pub ts: i64,
     pub intent: Option<String>,
     pub cost_usd: f64,
     /// Llamadas por modelo, para saber el modelo dominante del turno.
@@ -301,10 +302,12 @@ pub struct ActivityReport {
 pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnStats>> {
     let mut turns: HashMap<String, TurnStats> = HashMap::new();
     let (w, args) = f.sql("t.ts");
-    let mut stmt = conn.prepare(&format!("SELECT t.id, t.intent FROM turns t JOIN sessions s ON s.id = t.session_id WHERE {w}"))?;
+    let mut stmt = conn.prepare(&format!("SELECT t.id, t.intent, t.ts FROM turns t JOIN sessions s ON s.id = t.session_id WHERE {w}"))?;
     let mut rows = stmt.query(params_from_iter(args.iter()))?;
     while let Some(r) = rows.next()? {
-        turns.entry(r.get(0)?).or_default().intent = r.get(1)?;
+        let t = turns.entry(r.get(0)?).or_default();
+        t.intent = r.get(1)?;
+        t.ts = r.get(2)?;
     }
 
     let (w, args) = f.sql("c.ts");
@@ -380,6 +383,36 @@ pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
         .collect();
     models.sort_by(|a, b| a.model.cmp(&b.model));
     Ok(ActivityReport { activities, models })
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityDay {
+    /// Inicio del día local en epoch ms UTC.
+    pub ts: i64,
+    pub activity: String,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+/// Coste y turnos por día local y actividad (para el gráfico apilado).
+pub fn activity_daily(conn: &Connection, f: &Filter, tz_offset_min: i64) -> Result<Vec<ActivityDay>> {
+    const DAY_MS: i64 = 86_400_000;
+    let off = tz_offset_min * 60_000;
+    let mut acc: BTreeMap<(i64, String), (f64, i64)> = BTreeMap::new();
+    for t in turn_stats(conn, f)?.values() {
+        if t.ts == 0 {
+            continue; // llamadas sin turno registrado
+        }
+        let day = ((t.ts + off) / DAY_MS) * DAY_MS - off;
+        let e = acc.entry((day, classify_turn(t).to_string())).or_default();
+        e.0 += t.cost_usd;
+        e.1 += 1;
+    }
+    Ok(acc
+        .into_iter()
+        .map(|((ts, activity), (cost_usd, turns))| ActivityDay { ts, activity, cost_usd, turns })
+        .collect())
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@ pub fn run() {
             commands::get_timeseries,
             commands::get_breakdown,
             commands::get_activity,
+            commands::get_activity_daily,
             commands::list_agents,
             commands::list_projects,
             commands::get_data_info,

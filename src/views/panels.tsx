@@ -355,23 +355,11 @@ export function ActivityPanel({ data, full }: PanelProps) {
         ]
       : []),
     { header: "1-shot", cell: (r) => shot(r.oneShot), align: "right", width: "56px", className: (r) => shotClass(r.oneShot) },
+    { header: "%", cell: (r) => (total ? fmt.pct(r.costUsd / total) : "–"), align: "right", width: "52px", className: "secondary" },
+    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--act-coding)"),
   ];
   const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
-  const segments = rows.map((r) => ({ key: r.key, label: activityLabel(r.key), value: r.costUsd, color: activityColor(r.key) }));
-  if (!full) {
-    return (
-      <Split
-        table={table}
-        chart={
-          <>
-            <ChartTitle>Reparto del coste · {cost(total)}</ChartTitle>
-            <ShareBar segments={segments} format={cost} compact limit={5} />
-          </>
-        }
-        chartWidth={170}
-      />
-    );
-  }
+  if (!full) return table;
   // Vista ampliada: apilado por día + 1-shot por actividad.
   const byDay = new Map<number, { key: string; value: number; color: string; label: string }[]>();
   for (const d of data.activityDaily) {

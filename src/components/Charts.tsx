@@ -101,9 +101,15 @@ export function Columns({
             onMouseMove={p.tooltip ? (e) => setTip({ x: e.clientX, y: e.clientY, content: p.tooltip }) : undefined}
             onMouseLeave={p.tooltip ? () => setTip(null) : undefined}
           >
-            {p.stack
-              ? [...p.stack].reverse().map((s) => <div key={s.key} className="column-seg" style={{ height: px(s.value), background: s.color }} />)
-              : <div className="column-seg column-single" style={{ height: px(p.value), background: color }} />}
+            {p.stack ? (
+              <div className="column-stack">
+                {[...p.stack].reverse().map((s) => (
+                  <div key={s.key} className="column-seg" style={{ height: px(s.value), background: s.color }} />
+                ))}
+              </div>
+            ) : (
+              <div className="column-seg column-single" style={{ height: px(p.value), background: color }} />
+            )}
           </div>
         ))}
       </div>

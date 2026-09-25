@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
-import { Bars, Columns, Donut, InlineBar, Legend, LineChart, Segmented } from "../components/Charts";
+import { Bars, Columns, InlineBar, Legend, LineChart, Segmented, ShareBar } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { ChartTitle, Split } from "../components/Panel";
 
@@ -293,8 +293,8 @@ export function AgentPanel({ data, full }: PanelProps) {
   const segments = rows.map((r) => ({ key: r.key, label: r.label, value: r.costUsd, color: color(r) }));
   const donut = (
     <>
-      <ChartTitle>Reparto del coste</ChartTitle>
-      <Donut segments={segments} center={cost(total)} format={cost} size={full ? 180 : 130} />
+      <ChartTitle>Reparto del coste · {cost(total)}</ChartTitle>
+      <ShareBar segments={segments} format={cost} compact={!full} limit={full ? 8 : 5} />
     </>
   );
   if (!rows.length) return <p className="empty">Todavía no se ha detectado ningún agente</p>;
@@ -364,11 +364,11 @@ export function ActivityPanel({ data, full }: PanelProps) {
         table={table}
         chart={
           <>
-            <ChartTitle>Reparto del coste</ChartTitle>
-            <Donut segments={segments} center={cost(total)} format={cost} size={130} />
+            <ChartTitle>Reparto del coste · {cost(total)}</ChartTitle>
+            <ShareBar segments={segments} format={cost} compact limit={5} />
           </>
         }
-        chartWidth={150}
+        chartWidth={170}
       />
     );
   }

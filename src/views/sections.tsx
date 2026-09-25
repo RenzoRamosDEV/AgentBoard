@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, SeriesPoint } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName, paletteColor } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
-import { Bars, Columns, Donut, Legend, Segmented } from "../components/Charts";
+import { Bars, Columns, Legend, Segmented, ShareBar } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { barColumn, cost, dayPoints, err, errClass, shot, shotClass, startOfDay } from "./panels";
 
@@ -91,7 +91,7 @@ function ShareCard<T extends { key: string }>({ title, rows, label, color, metri
   return (
     <Card title={title} subtitle={`${metric.label.toLowerCase()} · ${metric.format(total)} en total`}>
       <div className="share-card">
-        <Donut segments={segments} center={metric.format(total)} format={metric.format} size={170} />
+        <ShareBar segments={segments} format={metric.format} />
       </div>
     </Card>
   );
@@ -249,9 +249,10 @@ export function ActivityFull({ data }: { data: DashboardData }) {
   ];
   const byDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
   for (const d of data.activityDaily) {
-    const list = byDay.get(d.ts) ?? [];
+    const day = startOfDay(d.ts);
+    const list = byDay.get(day) ?? [];
     list.push({ key: d.activity, label: activityLabel(d.activity), value: get({ costUsd: d.costUsd, turns: d.turns }), color: activityColor(d.activity) });
-    byDay.set(d.ts, list);
+    byDay.set(day, list);
   }
   const points = dayPoints(data.daily, data.filter).map((d) => {
     const stack = (byDay.get(d.ts) ?? []).sort((a, b) => b.value - a.value);
@@ -292,7 +293,7 @@ export function ActivityFull({ data }: { data: DashboardData }) {
       <div className="grid-2">
         <Card title="Reparto del coste" subtitle={`${cost(total)} en total`}>
           <div className="share-card">
-            <Donut segments={segments} center={cost(total)} format={cost} size={170} />
+            <ShareBar segments={segments} format={cost} />
           </div>
         </Card>
         <Card title="1-shot por actividad" subtitle="solo actividades con ediciones">

@@ -281,6 +281,60 @@ export function Donut({ segments, center, sub, format, size = 150 }: { segments:
   );
 }
 
+/** Reparto: barra apilada al 100 % con segmentos separados y lista con porcentaje y valor. */
+export function ShareBar({ segments, format, limit = 8, compact = false }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean }) {
+  const setTip = useTooltip();
+  const total = segments.reduce((a, s) => a + s.value, 0);
+  if (!total) return <Empty />;
+  const sorted = [...segments].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+  const shown = sorted.slice(0, limit);
+  const rest = sorted.slice(limit).reduce((a, s) => a + s.value, 0);
+  const items = rest > 0 ? [...shown, { key: "__otros", label: "Otros", value: rest, color: "var(--text-muted)" }] : shown;
+  const pct = (v: number) => v / total;
+  return (
+    <div className={`share ${compact ? "share-compact" : ""}`}>
+      <div className="share-bar" role="img" aria-label="Reparto">
+        {items.map((s) => (
+          <div
+            key={s.key}
+            className="share-seg"
+            style={{ flexGrow: s.value, background: s.color }}
+            onMouseMove={(e) =>
+              setTip({
+                x: e.clientX,
+                y: e.clientY,
+                content: (
+                  <>
+                    <b>{s.label}</b>
+                    <div>
+                      {format(s.value)} · {fmtPct(pct(s.value))}
+                    </div>
+                  </>
+                ),
+              })
+            }
+            onMouseLeave={() => setTip(null)}
+          />
+        ))}
+      </div>
+      <ul className="share-list">
+        {items.map((s) => (
+          <li key={s.key}>
+            <i style={{ background: s.color }} />
+            <span className="share-label" title={s.label}>
+              {s.label}
+            </span>
+            <span className="share-pct num">{fmtPct(pct(s.value))}</span>
+            {!compact && <span className="share-value num">{format(s.value)}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const fmtPct = (v: number) => `${Math.round(v * 100)}%`;
+
 export const Legend = ({ items }: { items: { label: string; color: string }[] }) => (
   <div className="legend">
     {items.map((i) => (

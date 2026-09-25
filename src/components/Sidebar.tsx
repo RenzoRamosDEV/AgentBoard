@@ -6,12 +6,12 @@ import { SECTIONS, type SectionId } from "../lib/sections";
 import { ChevronIcon, GearIcon, PanelIcon, SearchIcon, SectionIcon } from "./Icons";
 import { Select } from "./Select";
 import { t } from "../lib/i18n";
-import logo1x from "../assets/logo-132.png";
-import logo2x from "../assets/logo-264.png";
-import logo3x from "../assets/logo-396.png";
-import light1x from "../assets/logo-light-132.png";
-import light2x from "../assets/logo-light-264.png";
-import light3x from "../assets/logo-light-396.png";
+import logo1x from "../assets/brand-132.png";
+import logo2x from "../assets/brand-264.png";
+import logo3x from "../assets/brand-396.png";
+import light1x from "../assets/brand-light-132.png";
+import light2x from "../assets/brand-light-264.png";
+import light3x from "../assets/brand-light-396.png";
 
 interface Props {
   section: SectionId;

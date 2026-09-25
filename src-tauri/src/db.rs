@@ -9,6 +9,7 @@ use std::time::Duration;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_inicial.sql")),
     (2, include_str!("../migrations/0002_ajustes_y_ahorro.sql")),
+    (3, include_str!("../migrations/0003_turnos_y_subagentes.sql")),
 ];
 
 /// Carpeta de datos de AgentBurn en este sistema (`~/.local/share/agentburn` en Linux).
@@ -104,7 +105,7 @@ mod tests {
             .query_row("SELECT COUNT(*), SUM(cache_savings_usd) FROM call_costs", [], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap();
         assert_eq!((n, savings), (1, 0.0));
-        assert_eq!(schema_version(&conn).unwrap(), 2);
+        assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.last().unwrap().0);
     }
 
     #[test]

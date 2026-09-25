@@ -131,6 +131,13 @@ b { font-weight: 600; }
 .sidebar section { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .sidebar section.grow { flex: 1 0 auto; min-height: 140px; }
 .sidebar h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; }
+.section-toggle { cursor: pointer; user-select: none; border-radius: 6px; margin: 0 -4px; padding: 2px 4px; }
+.section-toggle:hover { color: var(--text-secondary); }
+.section-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+.section-toggle-label { display: inline-flex; align-items: center; gap: 5px; }
+.section-toggle .chev { display: inline-flex; color: var(--text-muted); transition: transform 0.15s; }
+.section-toggle .chev svg { width: 12px; height: 12px; }
+.section-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
 .brand { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 4px 0 2px; }
 .brand-logo { width: 132px; height: 132px; border-radius: 50%; object-fit: cover; image-rendering: auto; border: 2px solid var(--border); box-shadow: 0 6px 24px rgb(0 0 0 / 0.35); }
 .logo-light { display: none; }

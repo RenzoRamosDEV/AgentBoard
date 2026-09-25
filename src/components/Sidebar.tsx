@@ -3,7 +3,7 @@ import type { AgentRow, ProjectRow } from "../lib/api";
 import { fmt } from "../lib/format";
 import { PERIODS, type Period, type PeriodKind } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
-import { GearIcon, PanelIcon, SearchIcon, SectionIcon } from "./Icons";
+import { ChevronIcon, GearIcon, PanelIcon, SearchIcon, SectionIcon } from "./Icons";
 import { Select } from "./Select";
 import { t } from "../lib/i18n";
 import logo1x from "../assets/logo-132.png";
@@ -29,32 +29,39 @@ interface Props {
 }
 
 const COLLAPSE_KEY = "agentboard.sidebarCollapsed";
-const loadCollapsed = () => {
+const loadFlag = (key: string, def: boolean) => {
   try {
-    return localStorage.getItem(COLLAPSE_KEY) === "1";
+    const v = localStorage.getItem(key);
+    return v === null ? def : v === "1";
   } catch {
-    return false;
+    return def;
+  }
+};
+const saveFlag = (key: string, value: boolean) => {
+  try {
+    localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    /* almacenamiento no disponible; el estado vale para esta sesión */
   }
 };
 
 /** Panel izquierdo: apartados, filtros, datos y ajustes. Se puede colapsar a solo iconos. */
 export function Sidebar(p: Props) {
   const [projectQ, setProjectQ] = useState("");
-  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const [collapsed, setCollapsed] = useState(() => loadFlag(COLLAPSE_KEY, false));
+  const [agentsOpen, setAgentsOpen] = useState(() => loadFlag("agentboard.agentsOpen", true));
+  const [projectsOpen, setProjectsOpen] = useState(() => loadFlag("agentboard.projectsOpen", true));
   const projects = p.projects.filter((x) => x.name.toLowerCase().includes(projectQ.trim().toLowerCase()));
   const allShown = p.hiddenProjects.size === 0;
 
   const toggleCollapsed = () => {
     setCollapsed((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
-      } catch {
-        /* almacenamiento no disponible; el estado vale para esta sesión */
-      }
-      return next;
+      saveFlag(COLLAPSE_KEY, !v);
+      return !v;
     });
   };
+  const toggleAgents = () => setAgentsOpen((v) => (saveFlag("agentboard.agentsOpen", !v), !v));
+  const toggleProjects = () => setProjectsOpen((v) => (saveFlag("agentboard.projectsOpen", !v), !v));
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -103,49 +110,75 @@ export function Sidebar(p: Props) {
       </section>
 
       <section>
-        <h3>{t("Agentes")}</h3>
-        {p.agents.length === 0 && <p className="muted small">{t("Todavía no se ha detectado ningún agente.")}</p>}
-        <ul className="checklist">
-          {p.agents.map((a) => (
-            <li key={a.id}>
-              <label title={a.logRoot}>
-                <input type="checkbox" checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
-                <span className="name">{a.name}</span>
-                <span className="muted num">{fmt.usd(a.costUsd)}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
+        <h3 className="section-toggle" role="button" tabIndex={0} aria-expanded={agentsOpen} onClick={toggleAgents} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggleAgents())}>
+          <span className="section-toggle-label">
+            <span className="chev">
+              <ChevronIcon />
+            </span>
+            {t("Agentes")}
+          </span>
+        </h3>
+        {agentsOpen && (
+          <>
+            {p.agents.length === 0 && <p className="muted small">{t("Todavía no se ha detectado ningún agente.")}</p>}
+            <ul className="checklist">
+              {p.agents.map((a) => (
+                <li key={a.id}>
+                  <label title={a.logRoot}>
+                    <input type="checkbox" checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
+                    <span className="name">{a.name}</span>
+                    <span className="muted num">{fmt.usd(a.costUsd)}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
-      <section className="grow">
-        <h3>
-          {t("Proyectos")}
+      <section className={projectsOpen ? "grow" : ""}>
+        <h3 className="section-toggle" role="button" tabIndex={0} aria-expanded={projectsOpen} onClick={toggleProjects} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggleProjects())}>
+          <span className="section-toggle-label">
+            <span className="chev">
+              <ChevronIcon />
+            </span>
+            {t("Proyectos")}
+          </span>
           {!allShown && (
-            <button className="link" onClick={() => p.onlyProject(null)}>
+            <button
+              className="link"
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onlyProject(null);
+              }}
+            >
               {t("Todos")}
             </button>
           )}
         </h3>
-        <label className="search">
-          <SearchIcon />
-          <input type="search" placeholder={t("Buscar proyecto…")} value={projectQ} onChange={(e) => setProjectQ(e.target.value)} aria-label={t("Buscar proyecto")} />
-        </label>
-        <ul className="checklist scroll">
-          {projects.map((x) => (
-            <li key={x.id}>
-              <label title={x.cwd}>
-                <input type="checkbox" checked={!p.hiddenProjects.has(x.id)} onChange={() => p.toggleProject(x.id)} />
-                <span className="name">{x.name}</span>
-                <span className="muted num">{fmt.usd(x.costUsd)}</span>
-              </label>
-              <button className="link only" onClick={() => p.onlyProject(x.id)} title={t("Ver solo este proyecto")}>
-                {t("solo")}
-              </button>
-            </li>
-          ))}
-          {!projects.length && <li className="muted small">{t("Sin proyectos")}</li>}
-        </ul>
+        {projectsOpen && (
+          <>
+            <label className="search">
+              <SearchIcon />
+              <input type="search" placeholder={t("Buscar proyecto…")} value={projectQ} onChange={(e) => setProjectQ(e.target.value)} aria-label={t("Buscar proyecto")} />
+            </label>
+            <ul className="checklist scroll">
+              {projects.map((x) => (
+                <li key={x.id}>
+                  <label title={x.cwd}>
+                    <input type="checkbox" checked={!p.hiddenProjects.has(x.id)} onChange={() => p.toggleProject(x.id)} />
+                    <span className="name">{x.name}</span>
+                    <span className="muted num">{fmt.usd(x.costUsd)}</span>
+                  </label>
+                  <button className="link only" onClick={() => p.onlyProject(x.id)} title={t("Ver solo este proyecto")}>
+                    {t("solo")}
+                  </button>
+                </li>
+              ))}
+              {!projects.length && <li className="muted small">{t("Sin proyectos")}</li>}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="data-info">

@@ -262,7 +262,7 @@ export function DailyPanel({ data, full }: PanelProps) {
       <Columns points={dayPoints(data.daily, data.filter)} format={cost} height={full ? 260 : 170} />
     </>
   );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={400} />;
+  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={260} />;
 }
 
 // --- By Agent ---------------------------------------------------------------------------

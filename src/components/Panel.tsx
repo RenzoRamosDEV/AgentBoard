@@ -41,7 +41,7 @@ export function Panel({
 export const Split = ({ table, chart, chartWidth = 220 }: { table: ReactNode; chart: ReactNode; chartWidth?: number }) => (
   <div className="split">
     <div className="split-table">{table}</div>
-    <div className="split-chart" style={{ width: chartWidth }}>
+    <div className="split-chart" style={{ flexBasis: chartWidth }}>
       {chart}
     </div>
   </div>

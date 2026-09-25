@@ -1,0 +1,17 @@
+[package]
+name = "agentboard-mcp"
+version = "0.1.0"
+description = "Servidor MCP de AgentBoard (stdio, JSON-RPC): expone el uso de los agentes"
+edition = "2021"
+
+[[bin]]
+name = "agentboard-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Reutiliza toda la lógica de la app (providers, ingesta, consultas) vía su lib `agentboard_lib`.
+agentboard = { path = ".." }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"

@@ -157,9 +157,19 @@ en cuanto existan. El texto de los prompts y las respuestas no se guarda en ning
 JSON-RPC. Así un agente puede preguntar «¿cuánto llevo gastado este mes?» o «¿qué modelo me sale
 más caro?» durante una conversación.
 
+**Viene incluido en la app.** Al instalar AgentBoard, el servidor queda junto al ejecutable:
+
+| Sistema | Ruta del servidor MCP |
+| --- | --- |
+| Linux (`.deb` / `.rpm`) | `/usr/bin/agentboard-mcp` |
+| Windows | `C:\Program Files\AgentBoard\agentboard-mcp.exe` |
+| macOS | `/Applications/AgentBoard.app/Contents/MacOS/agentboard-mcp` |
+
+También se publica suelto en cada release (`AgentBoard-MCP_<versión>_<sistema>`), útil con el
+AppImage o si solo se quiere el MCP. Registro en Claude Code:
+
 ```bash
-cd src-tauri && cargo build --release --bin agentboard-mcp
-claude mcp add agentboard -- $(pwd)/target/release/agentboard-mcp
+claude mcp add agentboard -- /usr/bin/agentboard-mcp
 ```
 
 15 herramientas (`get_summary`, `get_cost_by_model`, `get_daily`, `list_agents`…), todas con
@@ -174,9 +184,12 @@ Claude Code, Codex, Gemini, Cursor, OpenCode… Guía completa en la
 Descarga el instalador de tu sistema desde
 [**Releases**](https://github.com/RenzoRamosDEV/AgentBoard/releases):
 
-- **Linux** — `.AppImage` o `.deb`
-- **Windows** — `.msi` o `.exe`
-- **macOS** — `.dmg` (universal, Intel + Apple Silicon)
+| Archivo | Qué es |
+| --- | --- |
+| `AgentBoard-App_<versión>_linux_…` (`.AppImage`, `.deb`, `.rpm`) | La app para Linux (incluye el MCP) |
+| `AgentBoard-App_<versión>_windows_…` (`.msi`, `-setup.exe`) | La app para Windows (incluye el MCP) |
+| `AgentBoard-App_<versión>_darwin_…` (`.dmg`) | La app para macOS universal (incluye el MCP) |
+| `AgentBoard-MCP_<versión>_<sistema>` | Solo el servidor MCP, para registrarlo en un agente |
 
 > [!NOTE]
 > Los binarios de Windows y macOS van sin firmar; la primera vez el sistema pedirá confirmación

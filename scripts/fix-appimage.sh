@@ -28,5 +28,9 @@ ARCH=x86_64 "$WORK/appimagetool" --no-appstream "$WORK/squashfs-root" "$APP"
 echo "AppImage arreglado: $APP"
 
 if [ -n "$TAG" ]; then
-  gh release upload "$TAG" "$APP" --clobber
+  # Se sube con el mismo nombre que ya tiene el asset del release para reemplazarlo.
+  NAME=$(gh release view "$TAG" --json assets --jq '.assets[].name | select(endswith(".AppImage"))' | head -1)
+  NAME="${NAME:-$(basename "$APP")}"
+  cp "$APP" "$WORK/$NAME"
+  gh release upload "$TAG" "$WORK/$NAME" --clobber
 fi

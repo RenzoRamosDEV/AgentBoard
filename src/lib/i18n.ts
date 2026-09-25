@@ -19,7 +19,9 @@ export const LOCALES: Record<Lang, string> = { es: "es-ES", en: "en-US", pt: "pt
 
 /** Idioma del sistema, si es uno de los soportados; si no, inglés. */
 export function systemLang(): Lang {
-  const code = (navigator.language || "en").slice(0, 2).toLowerCase();
+  // `navigator` no existe fuera del navegador (p. ej. en los tests con Node < 21).
+  const lang = typeof navigator !== "undefined" ? navigator.language : "";
+  const code = (lang || "en").slice(0, 2).toLowerCase();
   return code === "es" || code === "pt" || code === "fr" ? code : "en";
 }
 

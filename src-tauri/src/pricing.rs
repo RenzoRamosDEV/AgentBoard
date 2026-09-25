@@ -32,6 +32,8 @@ pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
     ("gpt-5.1-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5.1-codex-max", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5.1-codex-mini", 0.25, 2.0, 0.025, 0.0, 0.0),
+    ("gpt-5.2-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
+    ("gpt-5.3-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5-mini", 0.25, 2.0, 0.025, 0.0, 0.0),
     ("gpt-5-nano", 0.05, 0.4, 0.005, 0.0, 0.0),
     ("o3", 2.0, 8.0, 0.5, 0.0, 0.0),
@@ -62,7 +64,8 @@ pub fn seed_if_empty(conn: &Connection) -> Result<()> {
 }
 
 /// Nombre canónico para buscar precio: sin prefijo de proveedor, sin sufijo de fecha
-/// (`-20251101`) ni marcas de contexto (`[1m]`).
+/// (`-20251101`) ni marcas de contexto (`[1m]`, `-1m`), y versiones de Claude con guion
+/// (`claude-opus-4.7` → `claude-opus-4-7`, como las escribe Copilot).
 pub fn normalize_model(raw: &str) -> String {
     let mut m = raw.trim().to_ascii_lowercase();
     if let Some(pos) = m.rfind('/') {
@@ -70,6 +73,14 @@ pub fn normalize_model(raw: &str) -> String {
     }
     if let Some(pos) = m.find('[') {
         m.truncate(pos);
+    }
+    for suffix in ["-1m-internal", "-1m"] {
+        if let Some(head) = m.strip_suffix(suffix) {
+            m = head.to_string();
+        }
+    }
+    if m.starts_with("claude-") {
+        m = m.replace('.', "-");
     }
     if let Some((head, tail)) = m.rsplit_once('-') {
         if tail.len() == 8 && tail.chars().all(|c| c.is_ascii_digit()) {
@@ -163,5 +174,8 @@ mod tests {
         assert_eq!(normalize_model("anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5");
         assert_eq!(normalize_model("claude-opus-5-5[1m]"), "claude-opus-5-5");
         assert_eq!(normalize_model("gpt-5"), "gpt-5");
+        assert_eq!(normalize_model("claude-opus-4.7"), "claude-opus-4-7");
+        assert_eq!(normalize_model("claude-sonnet-4.5-1m"), "claude-sonnet-4-5");
+        assert_eq!(normalize_model("gpt-5.3-codex"), "gpt-5.3-codex");
     }
 }

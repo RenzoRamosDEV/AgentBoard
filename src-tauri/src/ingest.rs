@@ -142,6 +142,9 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
     if prev.is_some() && start == size {
         return Ok(FileResult::default());
     }
+    if start == 0 {
+        provider.reset(path);
+    }
 
     let mut buf = Vec::with_capacity((size - start).max(0) as usize);
     let mut f = File::open(path)?;

@@ -135,6 +135,10 @@ impl Provider for Codex {
             && self.log_roots().iter().any(|r| path.starts_with(r))
     }
 
+    fn reset(&self, path: &Path) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
+    }
+
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
         let v: Value = serde_json::from_str(line)?;
         let Some(ts) = v["timestamp"].as_str().and_then(parse_ts) else {

@@ -2,6 +2,7 @@
 
 pub mod claude_code;
 pub mod codex;
+pub mod copilot;
 pub mod opencode;
 
 use anyhow::Result;
@@ -23,6 +24,8 @@ pub trait Provider: Send + Sync {
     fn source(&self) -> Source {
         Source::Jsonl
     }
+    /// El archivo se va a leer desde el principio: descarta el estado que se guardara de él.
+    fn reset(&self, _path: &Path) {}
     /// Solo para `Source::Sqlite`: registros modificados después de `since` y el nuevo cursor.
     fn read_db(&self, _path: &Path, since: i64) -> Result<(Vec<Record>, i64)> {
         Ok((vec![], since))
@@ -106,6 +109,7 @@ pub fn all() -> Vec<Box<dyn Provider>> {
     vec![
         Box::new(claude_code::ClaudeCode::default()),
         Box::new(codex::Codex::default()),
+        Box::new(copilot::Copilot::default()),
         Box::new(opencode::OpenCode::default()),
     ]
 }

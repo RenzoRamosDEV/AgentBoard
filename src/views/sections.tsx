@@ -43,14 +43,15 @@ const M = {
   tokens: { value: "tokens", label: "Tokens de salida", get: (r: { outputTokens: number }) => r.outputTokens, format: fmt.compact },
 };
 
-/** Barras horizontales con selector de métrica. */
+/** Barras horizontales con selector de métrica: como mucho `limit` filas; la última agrupa el resto. */
 function RankingCard<T extends { key: string }>({
   title,
   rows,
   label,
   color,
   metrics,
-  limit = 12,
+  limit = 7,
+  othersLabel = "Otros",
 }: {
   title: string;
   rows: T[];
@@ -58,40 +59,67 @@ function RankingCard<T extends { key: string }>({
   color: (r: T, i: number) => string;
   metrics: Metric<T>[];
   limit?: number;
+  othersLabel?: string;
 }) {
   const [metric, setMetric] = useState(metrics[0].value);
   const m = metrics.find((x) => x.value === metric) ?? metrics[0];
-  const items = [...rows]
-    .map((r, i) => ({ r, i }))
-    .sort((a, b) => m.get(b.r) - m.get(a.r))
-    .map(({ r, i }) => ({
-      key: r.key,
-      label: label(r),
-      value: m.get(r),
-      valueLabel: m.format(m.get(r)),
-      color: color(r, i),
+  const isRate = m.value === "errors" || m.value === "cache" || m.value === "avg";
+  const sorted = rows.map((r, i) => ({ r, i })).sort((a, b) => m.get(b.r) - m.get(a.r));
+  const head = sorted.length > limit ? sorted.slice(0, limit - 1) : sorted;
+  const tail = sorted.slice(head.length);
+  const items = head.map(({ r, i }) => ({
+    key: r.key,
+    label: label(r),
+    value: m.get(r),
+    valueLabel: m.format(m.get(r)),
+    color: color(r, i),
+    tooltip: (
+      <>
+        <b>{label(r)}</b>
+        <div>{m.format(m.get(r))}</div>
+      </>
+    ),
+  }));
+  if (tail.length) {
+    // Los porcentajes y medias no se suman: para "otros" se usa la media.
+    const values = tail.map(({ r }) => m.get(r));
+    const value = isRate ? values.reduce((a, v) => a + v, 0) / values.length : values.reduce((a, v) => a + v, 0);
+    items.push({
+      key: "__otros",
+      label: `${othersLabel} (${tail.length})`,
+      value,
+      valueLabel: m.format(value),
+      color: "var(--text-muted)",
       tooltip: (
         <>
-          <b>{label(r)}</b>
-          <div>{m.format(m.get(r))}</div>
+          <b>{othersLabel}</b>
+          <div>
+            {tail.length} elementos · {isRate ? "media" : "suma"}: {m.format(value)}
+          </div>
+          {tail.slice(0, 6).map(({ r }) => (
+            <div key={r.key} className="muted">
+              {label(r)}: {m.format(m.get(r))}
+            </div>
+          ))}
         </>
       ),
-    }));
+    });
+  }
   return (
     <Card title={title} subtitle={m.label} actions={metrics.length > 1 && <Segmented value={metric} options={metrics.map((x) => ({ value: x.value, label: x.label }))} onChange={setMetric} label="Métrica" />}>
-      <Bars items={items} limit={limit} thick labelWidth={140} />
+      <Bars items={items} thick labelWidth={150} />
     </Card>
   );
 }
 
 /** Anillo de reparto de una métrica. */
-function ShareCard<T extends { key: string }>({ title, rows, label, color, metric }: { title: string; rows: T[]; label: (r: T) => string; color: (r: T, i: number) => string; metric: Metric<T> }) {
+function ShareCard<T extends { key: string }>({ title, rows, label, color, metric, othersLabel }: { title: string; rows: T[]; label: (r: T) => string; color: (r: T, i: number) => string; metric: Metric<T>; othersLabel?: string }) {
   const total = rows.reduce((a, r) => a + metric.get(r), 0);
   const segments = rows.map((r, i) => ({ key: r.key, label: label(r), value: metric.get(r), color: color(r, i) }));
   return (
     <Card title={title} subtitle={`${metric.label.toLowerCase()} · ${metric.format(total)} en total`}>
       <div className="share-card">
-        <ShareBar segments={segments} format={metric.format} />
+        <ShareBar segments={segments} format={metric.format} limit={7} othersLabel={othersLabel} />
       </div>
     </Card>
   );
@@ -199,7 +227,7 @@ export function AgentFull({ data }: { data: DashboardData }) {
       </Card>
       <div className="grid-2">
         <ShareCard title="Reparto del coste" rows={rows} label={(r) => r.label} color={color} metric={M.cost} />
-        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={color} metrics={[M.cost, M.calls, M.sessions, M.avgSession, M.cacheHit]} />
+        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={color} metrics={[M.cost, M.calls, M.sessions, M.avgSession, M.cacheHit]} othersLabel="Otros agentes" />
       </div>
       <EvolutionCard title="Evolución por agente" series={data.dailyByAgent} data={data} color={(key, i) => agentColor(key, i)} />
     </>
@@ -226,7 +254,7 @@ export function ProjectFull({ data, singleProject }: { data: DashboardData; sing
       </Card>
       <div className="grid-2">
         <ShareCard title="Reparto del coste" rows={rows} label={(r) => r.label} color={color} metric={M.cost} />
-        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={color} metrics={[M.cost, M.avgSession, M.sessions, M.calls]} />
+        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={color} metrics={[M.cost, M.avgSession, M.sessions, M.calls]} othersLabel={singleProject ? "Otras ramas" : "Otros proyectos"} />
       </div>
       <EvolutionCard title={`Evolución por ${what}`} series={data.dailyByProject} data={data} color={(key) => color({ key })} />
     </>
@@ -325,7 +353,7 @@ export function ModelFull({ data }: { data: DashboardData }) {
       </Card>
       <div className="grid-2">
         <ShareCard title="Reparto del coste" rows={rows} label={(r) => modelName(r.key)} color={color} metric={M.cost} />
-        <RankingCard title="Ranking" rows={rows} label={(r) => modelName(r.key)} color={color} metrics={[M.cost, M.calls, M.cacheHit, M.sessions]} />
+        <RankingCard title="Ranking" rows={rows} label={(r) => modelName(r.key)} color={color} metrics={[M.cost, M.calls, M.cacheHit, M.sessions]} othersLabel="Otros modelos" />
       </div>
       <EvolutionCard title="Evolución por modelo" series={data.dailyByModel} data={data} color={(key) => color({ key })} label={(s) => modelName(s.key)} />
     </>
@@ -347,7 +375,7 @@ function UsesFull({ rows, header, color, series, data, seriesTitle, mono = false
         <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} />
       </Card>
       <div className="grid-2">
-        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={() => color} metrics={[M.uses, M.errorRate]} />
+        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={() => color} metrics={[M.uses, M.errorRate]} othersLabel={`Otr${header === "Herramienta" ? "as herramientas" : header === "Comando" ? "os comandos" : "os servidores"}`} />
         <ShareCard title="Reparto de las llamadas" rows={rows.slice(0, 8)} label={(r) => r.label} color={rc} metric={M.uses} />
       </div>
       {series && seriesTitle && <EvolutionCard title={seriesTitle} series={series} data={data} color={(key) => rc({ key })} metrics={[{ value: "calls", label: "Llamadas" }]} />}
@@ -363,7 +391,7 @@ export const ShellFull = ({ data }: { data: DashboardData }) => (
 );
 export const McpFull = ({ data }: { data: DashboardData }) => <UsesFull rows={data.mcp} header="Servidor" color="var(--series-magenta)" data={data} />;
 
-function CostUsesFull({ rows, header, usesHeader, color, hint }: { rows: BreakdownRow[]; header: string; usesHeader: string; color: string; hint?: string }) {
+function CostUsesFull({ rows, header, usesHeader, color, hint, othersLabel = "Otros" }: { rows: BreakdownRow[]; header: string; usesHeader: string; color: string; hint?: string; othersLabel?: string }) {
   const rc = rowColor(rows);
   const usesMetric = { ...M.uses, label: usesHeader };
   const columns: Column<BreakdownRow>[] = [
@@ -380,15 +408,15 @@ function CostUsesFull({ rows, header, usesHeader, color, hint }: { rows: Breakdo
       </Card>
       <div className="grid-2">
         <ShareCard title="Reparto del coste" rows={rows} label={(r) => r.label} color={rc} metric={M.cost} />
-        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={rc} metrics={[M.cost, usesMetric]} />
+        <RankingCard title="Ranking" rows={rows} label={(r) => r.label} color={rc} metrics={[M.cost, usesMetric]} othersLabel={othersLabel} />
       </div>
     </>
   );
 }
 
 export const SkillsFull = ({ data }: { data: DashboardData }) => (
-  <CostUsesFull rows={data.skills} header="Skill / agente" usesHeader="Usos" color="var(--series-violet)" hint="coste de las respuestas del modelo que los invocaron" />
+  <CostUsesFull rows={data.skills} header="Skill / agente" usesHeader="Usos" color="var(--series-violet)" hint="coste de las respuestas del modelo que los invocaron" othersLabel="Otras skills y agentes" />
 );
 export const AgentTypesFull = ({ data }: { data: DashboardData }) => (
-  <CostUsesFull rows={data.agentTypes} header="Tipo" usesHeader="Llamadas" color="var(--series-blue)" hint="llamadas hechas dentro de subagentes, por tipo" />
+  <CostUsesFull rows={data.agentTypes} header="Tipo" usesHeader="Llamadas" color="var(--series-blue)" hint="llamadas hechas dentro de subagentes, por tipo" othersLabel="Otros tipos" />
 );

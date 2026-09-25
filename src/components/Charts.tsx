@@ -282,14 +282,16 @@ export function Donut({ segments, center, sub, format, size = 150 }: { segments:
 }
 
 /** Reparto: barra apilada al 100 % con segmentos separados y lista con porcentaje y valor. */
-export function ShareBar({ segments, format, limit = 8, compact = false }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean }) {
+export function ShareBar({ segments, format, limit = 8, compact = false, othersLabel = "Otros" }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean; othersLabel?: string }) {
   const setTip = useTooltip();
   const total = segments.reduce((a, s) => a + s.value, 0);
   if (!total) return <Empty />;
   const sorted = [...segments].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
-  const shown = sorted.slice(0, limit);
-  const rest = sorted.slice(limit).reduce((a, s) => a + s.value, 0);
-  const items = rest > 0 ? [...shown, { key: "__otros", label: "Otros", value: rest, color: "var(--text-muted)" }] : shown;
+  // Como mucho `limit` entradas: la última agrupa el resto.
+  const shown = sorted.length > limit ? sorted.slice(0, limit - 1) : sorted;
+  const tail = sorted.slice(shown.length);
+  const rest = tail.reduce((a, s) => a + s.value, 0);
+  const items = tail.length ? [...shown, { key: "__otros", label: `${othersLabel} (${tail.length})`, value: rest, color: "var(--text-muted)" }] : shown;
   const pct = (v: number) => v / total;
   return (
     <div className={`share ${compact ? "share-compact" : ""}`}>

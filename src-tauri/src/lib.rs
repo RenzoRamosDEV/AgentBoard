@@ -39,7 +39,7 @@ pub fn run() {
 
             // Vigilante en vivo: relee al vuelo cuando los agentes escriben en sus logs.
             let watch_handle = app.handle().clone();
-            watcher::spawn(db.clone(), move || {
+            watcher::spawn(db.clone(), std::sync::Arc::new(providers::all), move || {
                 let _ = watch_handle.emit("ingest://done", ());
             });
             Ok(())

@@ -114,6 +114,20 @@ mod tests {
     }
 
     #[test]
+    fn coste_reportado_cuando_no_hay_precio() {
+        let conn = db::open_in_memory().unwrap();
+        insert_call(&conn, "r", "big-pickle", 1000, 10);
+        conn.execute("UPDATE calls SET cost_reported = 0.0123 WHERE message_id = 'r'", []).unwrap();
+        assert!((cost(&conn, "r") - 0.0123).abs() < 1e-12);
+        let has: bool = conn.query_row("SELECT has_price FROM call_costs WHERE message_id='r'", [], |r| r.get(0)).unwrap();
+        assert!(has, "con coste reportado no cuenta como sin precio");
+        // Con precio en la tabla, manda la tabla.
+        insert_call(&conn, "t", "claude-sonnet-4-5", 1_000_000, 0);
+        conn.execute("UPDATE calls SET cost_reported = 99 WHERE message_id = 't'", []).unwrap();
+        assert!((cost(&conn, "t") - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn nuevo_precio_recalcula_sin_reimportar() {
         let conn = db::open_in_memory().unwrap();
         insert_call(&conn, "c", "claude-sonnet-4-5", 1_000_000, 0);

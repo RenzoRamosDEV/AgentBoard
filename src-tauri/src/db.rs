@@ -10,6 +10,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_inicial.sql")),
     (2, include_str!("../migrations/0002_ajustes_y_ahorro.sql")),
     (3, include_str!("../migrations/0003_turnos_y_subagentes.sql")),
+    (4, include_str!("../migrations/0004_coste_reportado.sql")),
 ];
 
 /// Carpeta de datos de AgentBoard en este sistema (`~/.local/share/agentboard` en Linux).

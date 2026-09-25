@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { t } from "../lib/i18n";
 
 /** Tarjeta de un apartado: título, pregunta que responde y enlace a su vista ampliada. */
 export function Panel({
@@ -28,7 +29,7 @@ export function Panel({
       {onOpen && (
         <footer className="panel-foot">
           <button className="link" onClick={onOpen}>
-            Ver más ›
+            {t("Ver más ›")}
           </button>
         </footer>
       )}
@@ -48,4 +49,4 @@ export const Split = ({ table, chart, chartWidth = 220 }: { table: ReactNode; ch
 
 export const ChartTitle = ({ children }: { children: ReactNode }) => <div className="chart-title">{children}</div>;
 
-export const Empty = ({ children = "Sin datos en este periodo" }: { children?: ReactNode }) => <p className="empty">{children}</p>;
+export const Empty = ({ children }: { children?: ReactNode }) => <p className="empty">{children ?? t("Sin datos en este periodo")}</p>;

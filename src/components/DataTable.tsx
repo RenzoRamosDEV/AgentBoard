@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Empty } from "./Panel";
+import { t } from "../lib/i18n";
 
 export interface Column<T> {
   header: string;
@@ -63,10 +64,10 @@ export function DataTable<T>({
         <div className="table-more">
           {onMore ? (
             <button className="link" onClick={onMore}>
-              Ver {rows.length - limit} más ›
+              {t("Ver más ›")}
             </button>
           ) : (
-            <span className="muted">… y {rows.length - limit} más</span>
+            <span className="muted">{t("… y {n} más", { n: rows.length - limit })}</span>
           )}
         </div>
       )}

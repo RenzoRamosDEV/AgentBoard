@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Empty } from "./Panel";
 import { useTooltip } from "./Tooltip";
+import { getLang, LOCALES, t } from "../lib/i18n";
 
 export interface BarItem {
   key: string;
@@ -73,7 +74,7 @@ export function Columns({
   height = 190,
   color = "var(--accent)",
   format,
-  axis = (ts: number) => new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+  axis = (ts: number) => new Date(ts).toLocaleDateString(LOCALES[getLang()], { day: "numeric", month: "short" }),
 }: {
   points: ColumnPoint[];
   height?: number;
@@ -91,7 +92,7 @@ export function Columns({
   const template = { gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` };
   return (
     <div className="columns" ref={ref}>
-      <div className="columns-max muted">máx. {format(max)}</div>
+      <div className="columns-max muted">{t("máx. {v}", { v: format(max) })}</div>
       <div className="columns-plot" style={{ height, ...template }}>
         {points.map((p) => (
           <div
@@ -130,7 +131,7 @@ export function LineChart({
   height = 200,
   color = "var(--accent)",
   format,
-  axis = (ts: number) => new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+  axis = (ts: number) => new Date(ts).toLocaleDateString(LOCALES[getLang()], { day: "numeric", month: "short" }),
 }: {
   points: { ts: number; value: number; tooltip?: ReactNode }[];
   height?: number;
@@ -161,7 +162,7 @@ export function LineChart({
   };
   return (
     <div className="linechart" ref={ref}>
-      <div className="columns-max muted">máx. {format(max)}</div>
+      <div className="columns-max muted">{t("máx. {v}", { v: format(max) })}</div>
       <svg width={w} height={height} role="img" aria-label="Evolución">
         {[0.25, 0.5, 0.75].map((f) => (
           <line key={f} className="grid" x1={pad.left} x2={pad.left + iw} y1={y(max * f)} y2={y(max * f)} />
@@ -288,7 +289,7 @@ export function Donut({ segments, center, sub, format, size = 150 }: { segments:
 }
 
 /** Reparto: barra apilada al 100 % con segmentos separados y lista con porcentaje y valor. */
-export function ShareBar({ segments, format, limit = 8, compact = false, othersLabel = "Otros" }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean; othersLabel?: string }) {
+export function ShareBar({ segments, format, limit = 8, compact = false, othersLabel = t("Otros") }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean; othersLabel?: string }) {
   const setTip = useTooltip();
   const total = segments.reduce((a, s) => a + s.value, 0);
   if (!total) return <Empty />;

@@ -79,7 +79,7 @@ export default function App() {
           info={info}
           onSettings={() => setShowSettings(true)}
         />
-        <Dashboard filter={filter} singleProject={singleProject} budget={settings.monthlyBudget} refresh={refresh} />
+        <Dashboard filter={filter} period={period} singleProject={singleProject} budget={settings.monthlyBudget} refresh={refresh} />
       </div>
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
     </TooltipProvider>

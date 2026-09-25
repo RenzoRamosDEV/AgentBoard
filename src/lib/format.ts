@@ -1,8 +1,9 @@
-const usd2 = new Intl.NumberFormat("es-ES", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
-const usd4 = new Intl.NumberFormat("es-ES", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
-const int = new Intl.NumberFormat("es-ES");
-const compact = new Intl.NumberFormat("es-ES", { notation: "compact", maximumFractionDigits: 1 });
-const pct = new Intl.NumberFormat("es-ES", { style: "percent", maximumFractionDigits: 1 });
+// Cifras al estilo terminal de CodeBurn ($1,234.56 · 21.3K · 97.6%); los textos siguen en español.
+const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usd4 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
+const int = new Intl.NumberFormat("en-US");
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const pct = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
 export const fmt = {
   usd: (n: number) => (n !== 0 && Math.abs(n) < 0.01 ? usd4 : usd2).format(n),
@@ -22,13 +23,29 @@ export const fmt = {
   },
 };
 
-export const ACTIVITY_LABELS: Record<string, string> = {
-  coding: "Código",
-  testing: "Tests",
-  shell: "Shell",
-  exploration: "Exploración",
-  research: "Investigación",
-  delegation: "Subagentes",
-  conversation: "Conversación",
-  other: "Otras",
+/** Etiqueta y color (token CSS) de cada actividad. */
+export const ACTIVITIES: Record<string, { label: string; color: string }> = {
+  coding: { label: "Coding", color: "var(--act-coding)" },
+  feature: { label: "Feature Dev", color: "var(--act-feature)" },
+  debugging: { label: "Debugging", color: "var(--act-debug)" },
+  testing: { label: "Testing", color: "var(--act-testing)" },
+  build: { label: "Build/Deploy", color: "var(--act-build)" },
+  git: { label: "Git", color: "var(--act-git)" },
+  exploration: { label: "Exploration", color: "var(--act-explore)" },
+  delegation: { label: "Delegation", color: "var(--act-delegation)" },
+  brainstorming: { label: "Brainstorming", color: "var(--act-brainstorm)" },
+  conversation: { label: "Conversation", color: "var(--text-muted)" },
+  shell: { label: "Shell", color: "var(--act-build)" },
+  research: { label: "Research", color: "var(--act-explore)" },
+  other: { label: "General", color: "var(--text-muted)" },
 };
+
+/** `claude-opus-5-5` → `Opus 5.5`; otros modelos tal cual. */
+export function modelName(id: string): string {
+  const m = id.match(/^claude-(?:(\d+)-(\d+)-)?([a-z]+)(?:-(\d+))?(?:-(\d+))?$/);
+  if (!m) return id;
+  const [, oldMajor, oldMinor, family, major, minor] = m;
+  const name = family.charAt(0).toUpperCase() + family.slice(1);
+  if (oldMajor) return `${name} ${oldMajor}.${oldMinor}`;
+  return [name, [major, minor].filter(Boolean).join(".")].filter(Boolean).join(" ");
+}

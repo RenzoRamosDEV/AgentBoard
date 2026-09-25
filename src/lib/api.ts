@@ -38,9 +38,24 @@ export interface BreakdownRow {
   errors: number;
   cacheHit: number;
   hasPrice: boolean;
+  sessions: number;
+  overheadTokens: number;
 }
 
-export type BreakdownBy = "project" | "branch" | "model" | "activity" | "tool" | "command";
+export type BreakdownBy = "project" | "branch" | "model" | "tool" | "command" | "skill" | "mcp" | "agent_type";
+
+export interface ActivityRow {
+  key: string;
+  costUsd: number;
+  turns: number;
+  editTurns: number;
+  oneShot: number | null;
+}
+
+export interface ActivityReport {
+  activities: ActivityRow[];
+  models: { model: string; editTurns: number; oneShot: number | null }[];
+}
 
 export interface AgentRow {
   id: string;
@@ -77,6 +92,7 @@ export const api = {
   timeseries: (filter: Filter, bucket: "day" | "hour") =>
     invoke<Point[]>("get_timeseries", { filter, bucket, tzOffsetMin: tzOffsetMin() }),
   breakdown: (filter: Filter, by: BreakdownBy) => invoke<BreakdownRow[]>("get_breakdown", { filter, by }),
+  activity: (filter: Filter) => invoke<ActivityReport>("get_activity", { filter }),
   agents: (filter: Filter) => invoke<AgentRow[]>("list_agents", { filter }),
   projects: (filter: Filter) => invoke<ProjectRow[]>("list_projects", { filter }),
   dataInfo: () => invoke<DataInfo>("get_data_info"),

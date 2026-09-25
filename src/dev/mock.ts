@@ -9,13 +9,16 @@ const now = Date.now();
 const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
 
 const models = [
-  { key: "claude-opus-5-5", label: "claude-opus-5-5", costUsd: 41.2, calls: 1840, errors: 0, cacheHit: 0.91, hasPrice: true },
-  { key: "claude-sonnet-5", label: "claude-sonnet-5", costUsd: 9.8, calls: 1210, errors: 0, cacheHit: 0.87, hasPrice: true },
-  { key: "gpt-5-codex", label: "gpt-5-codex", costUsd: 4.1, calls: 320, errors: 0, cacheHit: 0.62, hasPrice: true },
-  { key: "claude-haiku-4-5", label: "claude-haiku-4-5", costUsd: 0.9, calls: 410, errors: 0, cacheHit: 0.8, hasPrice: true },
-  { key: "modelo-local", label: "modelo-local", costUsd: 0, calls: 12, errors: 0, cacheHit: 0, hasPrice: false },
+  { key: "claude-fable-5-1", label: "claude-fable-5-1", costUsd: 62.1, calls: 742, errors: 0, cacheHit: 0.971, hasPrice: true, sessions: 0, overheadTokens: 0 },
+  { key: "claude-opus-5-5", label: "claude-opus-5-5", costUsd: 41.2, calls: 1840, errors: 0, cacheHit: 0.91, hasPrice: true, sessions: 0, overheadTokens: 0 },
+  { key: "claude-sonnet-5", label: "claude-sonnet-5", costUsd: 9.8, calls: 1210, errors: 0, cacheHit: 0.87, hasPrice: true, sessions: 0, overheadTokens: 0 },
+  { key: "gpt-5-codex", label: "gpt-5-codex", costUsd: 4.1, calls: 320, errors: 0, cacheHit: 0.62, hasPrice: true, sessions: 0, overheadTokens: 0 },
+  { key: "claude-haiku-4-5", label: "claude-haiku-4-5", costUsd: 0.9, calls: 410, errors: 0, cacheHit: 0.8, hasPrice: true, sessions: 0, overheadTokens: 0 },
+  { key: "modelo-local", label: "modelo-local", costUsd: 0, calls: 12, errors: 0, cacheHit: 0, hasPrice: false, sessions: 0, overheadTokens: 0 },
 ];
-const row = (label: string, costUsd: number, calls: number, errors = 0) => ({ key: label, label, costUsd, calls, errors, cacheHit: 0.85, hasPrice: true });
+const row = (label: string, costUsd: number, calls: number, errors = 0, sessions = 0) => ({
+  key: label, label, costUsd, calls, errors, cacheHit: 0.85, hasPrice: true, sessions, overheadTokens: sessions ? 10_600 + sessions * 20 : 0,
+});
 
 export function installMocks() {
   mockIPC((cmd, args) => {
@@ -34,13 +37,28 @@ export function installMocks() {
       case "get_breakdown":
         switch (a.by) {
           case "model": return models;
-          case "project": return [row("AgentBoard", 22.1, 900), row("tuio-web", 18.4, 1300), row("infra", 9.2, 700), row("scripts", 6.3, 890)];
-          case "branch": return [row("main", 12.0, 500), row("feat/dashboard", 8.1, 300), row("fix/ingesta", 2.0, 100)];
-          case "activity": return [row("coding", 24.3, 1500), row("exploration", 14.2, 1100), row("testing", 9.9, 600), row("shell", 5.1, 400), row("conversation", 2.5, 192)];
+          case "project": return [row("AgentBoard", 22.1, 900, 0, 12), row("tuio-web", 18.4, 1300, 0, 9), row("infra", 9.2, 700, 0, 4), row("scripts", 6.3, 890, 0, 3)];
+          case "branch": return [row("main", 12.0, 500, 0, 5), row("feat/dashboard", 8.1, 300, 0, 3), row("fix/ingesta", 2.0, 100, 0, 1)];
+          case "skill": return [row("general-purpose", 1.32, 5), row("code-reviewer", 0.541, 3), row("dataviz", 0.211, 1)];
+          case "mcp": return [row("figma", 0, 23), row("claude_ai_Slack", 0, 5), row("claude_ai_Supabase", 0, 1)];
+          case "agent_type": return [row("general-purpose", 100.4, 1652), row("code-reviewer", 9.21, 104), row("Explore", 4.8, 82)];
           case "tool": return [row("Bash", 0, 1204, 96), row("Read", 0, 980, 4), row("Edit", 0, 702, 21), row("Grep", 0, 410, 0), row("Write", 0, 120, 2)].map((r) => ({ ...r, costUsd: 0 }));
           case "command": return [row("git", 0, 402, 3), row("cargo", 0, 310, 44), row("npm", 0, 280, 20), row("ls", 0, 150, 0), row("rg", 0, 62, 1)].map((r) => ({ ...r, costUsd: 0 }));
         }
         return [];
+      case "get_activity":
+        return {
+          activities: [
+            { key: "coding", costUsd: 24.3, turns: 268, editTurns: 250, oneShot: 0.96 },
+            { key: "exploration", costUsd: 14.2, turns: 31, editTurns: 0, oneShot: null },
+            { key: "testing", costUsd: 9.9, turns: 30, editTurns: 0, oneShot: null },
+            { key: "delegation", costUsd: 5.1, turns: 9, editTurns: 0, oneShot: null },
+            { key: "feature", costUsd: 3.8, turns: 4, editTurns: 4, oneShot: 1 },
+            { key: "debugging", costUsd: 2.5, turns: 6, editTurns: 6, oneShot: 1 },
+            { key: "conversation", costUsd: 1.2, turns: 90, editTurns: 0, oneShot: null },
+          ],
+          models: [{ model: "claude-opus-5-5", editTurns: 200, oneShot: 0.92 }, { model: "claude-fable-5-1", editTurns: 60, oneShot: 1 }],
+        };
       case "list_agents":
         return [
           { id: "claude-code", name: "Claude Code", logRoot: "~/.claude/projects", costUsd: 51.9, calls: 3460 },

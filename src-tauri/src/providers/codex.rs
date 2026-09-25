@@ -129,6 +129,10 @@ impl Provider for Codex {
         Self::home().map(|h| vec![h.join("sessions"), h.join("archived_sessions")]).unwrap_or_default()
     }
 
+    fn installed(&self) -> bool {
+        Self::home().is_some_and(|h| h.is_dir()) || super::on_path("codex")
+    }
+
     fn matches(&self, path: &Path) -> bool {
         path.extension().is_some_and(|e| e == "jsonl")
             && path.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.starts_with("rollout-"))

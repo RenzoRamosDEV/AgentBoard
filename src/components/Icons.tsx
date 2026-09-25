@@ -49,15 +49,6 @@ const PATHS: Record<SectionId, ReactElement> = {
 
 export const SectionIcon = ({ id }: { id: SectionId }) => <svg {...base}>{PATHS[id]}</svg>;
 
-export const LogoIcon = () => (
-  <svg {...base} width={18} height={18} strokeWidth={2.2}>
-    <rect x="3" y="3" width="7" height="9" rx="1.5" />
-    <rect x="14" y="3" width="7" height="5" rx="1.5" />
-    <rect x="14" y="12" width="7" height="9" rx="1.5" />
-    <rect x="3" y="16" width="7" height="5" rx="1.5" />
-  </svg>
-);
-
 export const SearchIcon = () => (
   <svg {...base} width={14} height={14}>
     <circle cx="11" cy="11" r="7" />

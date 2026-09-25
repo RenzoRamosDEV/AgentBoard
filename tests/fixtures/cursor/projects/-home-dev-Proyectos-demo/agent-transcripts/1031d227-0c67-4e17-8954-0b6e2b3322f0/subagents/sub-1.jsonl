@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nBusca el test\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"tool-call","toolCallId":"tc1","toolName":"grep","args":{"pattern":"test"}},{"type":"text","text":"Encontrado."}]}}

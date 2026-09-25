@@ -3,6 +3,8 @@
 pub mod claude_code;
 pub mod codex;
 pub mod copilot;
+pub mod cursor;
+pub mod gemini;
 pub mod opencode;
 
 use anyhow::Result;
@@ -23,6 +25,11 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     fn source(&self) -> Source {
         Source::Jsonl
+    }
+    /// ¿Está el agente en este ordenador? Por defecto, si existe alguna carpeta de logs.
+    /// Un agente instalado aparece en la lista aunque aún no tenga sesiones.
+    fn installed(&self) -> bool {
+        self.log_roots().iter().any(|r| r.is_dir())
     }
     /// El archivo se va a leer desde el principio: descarta el estado que se guardara de él.
     fn reset(&self, _path: &Path) {}
@@ -110,8 +117,19 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(claude_code::ClaudeCode::default()),
         Box::new(codex::Codex::default()),
         Box::new(copilot::Copilot::default()),
+        Box::new(cursor::Cursor::default()),
+        Box::new(gemini::Gemini::default()),
         Box::new(opencode::OpenCode::default()),
     ]
+}
+
+/// ¿Hay un ejecutable con ese nombre en el PATH?
+pub fn on_path(bin: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|dir| {
+        let p = dir.join(bin);
+        p.is_file() || (cfg!(windows) && (dir.join(format!("{bin}.exe")).is_file() || dir.join(format!("{bin}.cmd")).is_file()))
+    })
 }
 
 /// RFC 3339 → epoch ms UTC.

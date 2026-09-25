@@ -97,7 +97,7 @@ fn opencode_fixture() {
     let f = queries::Filter::default();
     let s = queries::summary(&conn, &f, 0).unwrap();
     assert_eq!(s.calls, 3);
-    assert_eq!(s.sessions, 2);
+    assert_eq!(s.sessions, 1, "la sesión hija (subagente) no cuenta");
     assert!(s.unpriced_models.is_empty(), "big-pickle trae coste reportado");
     // big-pickle: 0.0123 + 0.001 reportados; sonnet: precio de tabla (200×3 + 300×15 + 8400×0.3 + 100×3.75)/1e6
     let sonnet = (200.0 * 3.0 + 300.0 * 15.0 + 8400.0 * 0.3 + 100.0 * 3.75) / 1e6;
@@ -136,7 +136,7 @@ fn codex_fixture() {
     let f = queries::Filter::default();
     let s = queries::summary(&conn, &f, 0).unwrap();
     assert_eq!(s.calls, 4, "3 respuestas + 1 del subagente; el token_count no se cuenta");
-    assert_eq!(s.sessions, 2);
+    assert_eq!(s.sessions, 1, "el hilo hijo no cuenta como sesión");
     assert_eq!(s.cache_read, 21_000);
     assert_eq!(s.input_tokens, 12000 - 9000 + 13000 - 12000 + 2000 + 1000, "input sin la parte cacheada");
     assert!(s.unpriced_models.is_empty());
@@ -223,4 +223,68 @@ fn copilot_fixture() {
     ingest::scan_all(&mut conn, &providers).unwrap();
     let again = queries::summary(&conn, &f, 0).unwrap();
     assert_eq!((again.calls, again.input_tokens), (4, 5500));
+}
+
+#[test]
+fn gemini_fixture() {
+    use agentboard_lib::providers::gemini::Gemini;
+    let mut conn = db::open_in_memory().unwrap();
+    let providers: Vec<Box<dyn Provider>> = vec![Box::new(Gemini::with_roots(vec![fixtures("gemini").join("tmp")]))];
+    let stats = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!((stats.files, stats.errors), (2, 0));
+
+    let f = queries::Filter::default();
+    let s = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!(s.calls, 4, "3 respuestas + 1 del subagente");
+    assert_eq!(s.sessions, 1);
+    assert_eq!(s.input_tokens, 2000 + 1000 + 1000 + 400, "input sin la parte cacheada");
+    assert_eq!(s.cache_read, 8000);
+    assert_eq!(s.output_tokens, 160 + 80 + 50 + 30);
+    assert!(s.unpriced_models.is_empty());
+
+    let q = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(q("SELECT COUNT(*) FROM agents WHERE id = 'gemini'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM turns"), 2, "el subagente no abre turno");
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE turn_id = 'u1'"), 2);
+    assert_eq!(q("SELECT is_error FROM tool_calls WHERE call_id = 't1'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Edit' AND is_error = 0"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE is_sidechain = 1"), 1);
+    let (i1, i2): (String, String) = conn
+        .query_row("SELECT (SELECT intent FROM turns WHERE id='u1'), (SELECT intent FROM turns WHERE id='u2')", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((i1.as_str(), i2.as_str()), ("debug", "brainstorm"));
+    let name: String = conn.query_row("SELECT p.name FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.is_subagent = 0", [], |r| r.get(0)).unwrap();
+    assert_eq!(name, "demo", "la carpeta llega por $set.directories");
+    conn.execute("DELETE FROM file_state", []).unwrap();
+    ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!(queries::summary(&conn, &f, 0).unwrap().calls, 4);
+}
+
+#[test]
+fn cursor_fixture() {
+    use agentboard_lib::providers::cursor::Cursor;
+    let mut conn = db::open_in_memory().unwrap();
+    let providers: Vec<Box<dyn Provider>> = vec![Box::new(Cursor::with_roots(vec![fixtures("cursor").join("projects")]))];
+    let stats = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!((stats.files, stats.errors), (2, 0));
+
+    let f = queries::Filter::default();
+    let s = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!(s.calls, 5, "4 respuestas + 1 del subagente");
+    assert_eq!(s.sessions, 1);
+    assert!(s.output_tokens > 0, "tokens estimados por caracteres");
+    assert_eq!(s.unpriced_models, vec!["cursor-auto".to_string()]);
+
+    let q = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(q("SELECT COUNT(*) FROM turns"), 2);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Bash' AND target = 'npm test 2>&1 | tail -5'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Edit' AND target = 'src/app.js'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Grep'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE is_sidechain = 1"), 1);
+    let intent: String = conn.query_row("SELECT intent FROM turns ORDER BY ts LIMIT 1", [], |r| r.get(0)).unwrap();
+    assert_eq!(intent, "debug");
+    let name: String = conn.query_row("SELECT p.name FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.is_subagent = 0", [], |r| r.get(0)).unwrap();
+    assert_eq!(name, "demo");
+    let ts: i64 = conn.query_row("SELECT ts FROM turns ORDER BY ts LIMIT 1", [], |r| r.get(0)).unwrap();
+    assert_eq!(ts, 1_790_257_920_000, "24 sep 2026 06:52 UTC-7 = 13:52 UTC");
 }

@@ -1,0 +1,8 @@
+{"sessionId":"a1b2c3d4-0000-4000-8000-000000000001","projectHash":"8f3c","startTime":"2026-09-24T11:00:00.000Z","lastUpdated":"2026-09-24T11:00:00.000Z","kind":"main"}
+{"id":"u1","timestamp":"2026-09-24T11:00:01.000Z","type":"user","content":[{"text":"Arregla el test que falla"}]}
+{"id":"g1","timestamp":"2026-09-24T11:00:05.000Z","type":"gemini","content":[{"text":"Voy a mirar."}],"model":"gemini-2.5-pro","tokens":{"input":5000,"output":120,"cached":3000,"thoughts":40,"tool":0,"total":5160},"toolCalls":[{"id":"t1","name":"run_shell_command","args":{"command":"npm test 2>&1 | tail -5"},"status":"error","timestamp":"2026-09-24T11:00:06.000Z"},{"id":"t2","name":"replace","args":{"file_path":"/home/dev/Proyectos/demo/src/app.js","old_string":"a","new_string":"b"},"status":"success","timestamp":"2026-09-24T11:00:08.000Z"}]}
+{"$set":{"lastUpdated":"2026-09-24T11:00:09.000Z","directories":["/home/dev/Proyectos/demo"]}}
+{"id":"g2","timestamp":"2026-09-24T11:00:12.000Z","type":"gemini","content":[{"text":"Listo."}],"model":"gemini-2.5-pro","tokens":{"input":6000,"output":80,"cached":5000,"thoughts":0,"tool":0,"total":6080}}
+{"id":"u2","timestamp":"2026-09-24T12:00:00.000Z","type":"user","content":"¿Qué opinas de usar Svelte?"}
+{"id":"g3","timestamp":"2026-09-24T12:00:03.000Z","type":"gemini","content":[{"text":"Depende."}],"model":"gemini-2.5-flash","tokens":{"input":1000,"output":50,"cached":0,"total":1050}}
+{"esto no es json

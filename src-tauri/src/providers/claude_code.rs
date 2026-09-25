@@ -43,6 +43,10 @@ impl Provider for ClaudeCode {
         }
     }
 
+    fn installed(&self) -> bool {
+        self.log_roots().iter().any(|r| r.is_dir() || r.parent().is_some_and(|p| p.is_dir())) || super::on_path("claude")
+    }
+
     fn matches(&self, path: &Path) -> bool {
         path.extension().is_some_and(|e| e == "jsonl")
             && self.log_roots().iter().any(|r| path.starts_with(r))

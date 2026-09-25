@@ -31,16 +31,20 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// Registra cada agente cuya carpeta de logs exista.
+/// Registra cada agente instalado o con carpeta de logs (aunque aún no tenga sesiones).
 pub fn register_agents(conn: &Connection, providers: &[Box<dyn Provider>]) -> Result<()> {
     for p in providers {
-        if let Some(root) = p.log_roots().into_iter().find(|r| r.is_dir()) {
-            conn.execute(
-                "INSERT INTO agents (id, name, log_root, first_seen) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(id) DO UPDATE SET log_root = excluded.log_root",
-                params![p.id(), p.name(), root.to_string_lossy(), now_ms()],
-            )?;
+        let roots = p.log_roots();
+        let existing = roots.iter().find(|r| r.is_dir());
+        if existing.is_none() && !p.installed() {
+            continue;
         }
+        let root = existing.or(roots.first()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO agents (id, name, log_root, first_seen) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET log_root = excluded.log_root",
+            params![p.id(), p.name(), root, now_ms()],
+        )?;
     }
     Ok(())
 }

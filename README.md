@@ -1,6 +1,6 @@
 # AgentBoard
 
-App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de código —Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode— y cuánto cuestan, leyendo los logs que ya tienes en el ordenador. No guarda nada en disco (los datos viven en memoria mientras la app está abierta; solo el presupuesto de Ajustes se escribe en `~/.config/agentboard/settings.json`). Sin proxy, sin API keys y sin enviar datos fuera de tu máquina.
+App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de código —Claude Code, Codex CLI, GitHub Copilot CLI, Cursor CLI, Gemini CLI, OpenCode— y cuánto cuestan, leyendo los logs que ya tienes en el ordenador. No guarda nada en disco (los datos viven en memoria mientras la app está abierta; solo el presupuesto de Ajustes se escribe en `~/.config/agentboard/settings.json`). Sin proxy, sin API keys y sin enviar datos fuera de tu máquina.
 
 - **Stack:** Tauri 2 · Rust · SQLite (WAL) · React + TypeScript + Vite
 - **Especificación:** gestionada con [OpenSpec](https://github.com/Fission-AI/OpenSpec) en `openspec/` (specs vigentes en `openspec/specs/`, cambios en `openspec/changes/`).
@@ -67,9 +67,11 @@ Agentes soportados y de dónde se leen:
 | Claude Code | `~/.claude/projects/**/*.jsonl` (o `$CLAUDE_CONFIG_DIR/projects/`) |
 | Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` y `archived_sessions/` (o `$CODEX_HOME`) |
 | GitHub Copilot CLI | `~/.copilot/session-state/*/events.jsonl` (o `$COPILOT_HOME`) |
+| Cursor CLI | `~/.cursor/projects/*/agent-transcripts/*/*.jsonl` (tokens estimados: Cursor no los apunta) |
+| Gemini CLI | `~/.gemini/tmp/*/chats/session-*.jsonl` (o `$GEMINI_CLI_HOME`) |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite, lectura incremental) |
 
-Un agente aparece solo cuando su carpeta existe. Al arrancar se leen todos los logs a una base SQLite en memoria; cada llamada se identifica por su `message_id`, así que releer nunca duplica. El texto de prompts y respuestas no se guarda en ningún sitio.
+Un agente aparece en la lista si está instalado (ejecutable en el PATH o su carpeta de configuración) aunque aún no tenga sesiones; sus datos salen en cuanto existan. Al arrancar se leen todos los logs a una base SQLite en memoria; cada llamada se identifica por su `message_id`, así que releer nunca duplica. El texto de prompts y respuestas no se guarda en ningún sitio.
 
 ## Estructura
 

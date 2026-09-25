@@ -41,6 +41,10 @@ pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
     ("codex-mini-latest", 1.5, 6.0, 0.375, 0.0, 0.0),
     ("gemini-2.5-pro", 1.25, 10.0, 0.31, 0.0, 0.0),
     ("gemini-2.5-flash", 0.30, 2.50, 0.075, 0.0, 0.0),
+    ("gemini-2.5-flash-lite", 0.10, 0.40, 0.025, 0.0, 0.0),
+    ("gemini-3-pro-preview", 2.0, 12.0, 0.20, 0.0, 0.0),
+    ("gemini-3-pro", 2.0, 12.0, 0.20, 0.0, 0.0),
+    ("gemini-3-flash", 0.50, 3.0, 0.05, 0.0, 0.0),
 ];
 
 /// Carga los precios por defecto si la tabla está vacía.

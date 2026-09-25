@@ -63,6 +63,10 @@ impl Provider for OpenCode {
         dirs::data_dir().map(|d| vec![d.join("opencode")]).unwrap_or_default()
     }
 
+    fn installed(&self) -> bool {
+        self.log_roots().iter().any(|r| r.is_dir()) || super::on_path("opencode")
+    }
+
     fn matches(&self, path: &Path) -> bool {
         path.file_name().is_some_and(|f| f == "opencode.db") && self.log_roots().iter().any(|r| path.starts_with(r))
     }

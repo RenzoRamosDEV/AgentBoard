@@ -91,7 +91,7 @@ fn ratio(num: i64, den: i64) -> f64 {
 pub fn summary(conn: &Connection, f: &Filter, now: i64) -> Result<Summary> {
     let (w, args) = f.sql("c.ts");
     let sql = format!(
-        "SELECT COALESCE(SUM(c.cost_usd),0), COUNT(*), COUNT(DISTINCT c.session_id),
+        "SELECT COALESCE(SUM(c.cost_usd),0), COUNT(*), COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
                 COALESCE(SUM(c.input_tokens),0), COALESCE(SUM(c.output_tokens),0),
                 COALESCE(SUM(c.cache_read),0), COALESCE(SUM(c.cache_write),0),
                 COALESCE(SUM(c.cache_savings_usd),0), MIN(c.ts), MAX(c.ts)
@@ -202,7 +202,7 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
                  FROM calls WHERE is_sidechain = 0) WHERE rn = 1)
              SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
                     SUM(c.cache_read), SUM(c.input_tokens + c.cache_read + c.cache_write), MIN(c.has_price),
-                    COUNT(DISTINCT c.session_id),
+                    COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
                     COALESCE(AVG(CASE WHEN f.message_id IS NOT NULL THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
              FROM call_costs c JOIN sessions s ON s.id = c.session_id {join}
              LEFT JOIN firsts f ON f.message_id = c.message_id

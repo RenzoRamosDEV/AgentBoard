@@ -112,6 +112,10 @@ impl Provider for Copilot {
         Self::home().map(|h| vec![h.join("session-state")]).unwrap_or_default()
     }
 
+    fn installed(&self) -> bool {
+        Self::home().is_some_and(|h| h.is_dir()) || super::on_path("copilot")
+    }
+
     fn matches(&self, path: &Path) -> bool {
         path.file_name().is_some_and(|f| f == "events.jsonl") && self.log_roots().iter().any(|r| path.starts_with(r))
     }

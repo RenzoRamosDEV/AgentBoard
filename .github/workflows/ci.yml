@@ -51,8 +51,8 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - name: Clippy (app + MCP)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --bins -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace -- -D warnings
       - name: Compilar app y servidor MCP
-        run: cargo build --manifest-path src-tauri/Cargo.toml --bins
+        run: cargo build --manifest-path src-tauri/Cargo.toml --workspace --bins
       - name: Tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace

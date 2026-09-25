@@ -26,6 +26,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentboard-mcp"
+version = "0.1.0"
+dependencies = [
+ "agentboard",
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde_json",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -55,7 +55,7 @@ src-tauri/src/
   queries.rs          consultas agregadas del dashboard
   pricing.rs          precios por modelo (USD / millón de tokens)
   watcher.rs          vigilante de archivos en vivo
-  bin/agentboard-mcp.rs  servidor MCP (stdio, JSON-RPC)
+src-tauri/mcp/        crate del servidor MCP (stdio, JSON-RPC)
 openspec/             propuestas y especificaciones
 ```
 

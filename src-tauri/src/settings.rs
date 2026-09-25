@@ -11,6 +11,9 @@ pub struct Settings {
     /// `system`, `light` o `dark`.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// `system`, `es`, `en`, `pt` o `fr`.
+    #[serde(default = "default_theme")]
+    pub language: String,
     /// Presupuesto mensual en USD; `None` = sin presupuesto.
     pub monthly_budget: Option<f64>,
 }
@@ -21,7 +24,7 @@ fn default_theme() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { theme: default_theme(), monthly_budget: None }
+        Self { theme: default_theme(), language: default_theme(), monthly_budget: None }
     }
 }
 
@@ -29,6 +32,9 @@ impl Settings {
     pub fn validate(&self) -> Result<()> {
         if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
             bail!("tema desconocido: {}", self.theme);
+        }
+        if !matches!(self.language.as_str(), "system" | "es" | "en" | "pt" | "fr") {
+            bail!("idioma desconocido: {}", self.language);
         }
         if let Some(b) = self.monthly_budget {
             if !b.is_finite() || b < 0.0 {
@@ -73,10 +79,11 @@ mod tests {
     fn presupuesto_persiste() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg").join("settings.json");
-        save_to(&path, &Settings { theme: "light".into(), monthly_budget: Some(50.0) }).unwrap();
+        save_to(&path, &Settings { theme: "light".into(), language: "fr".into(), monthly_budget: Some(50.0) }).unwrap();
         let loaded = load_from(&path);
-        assert_eq!((loaded.theme.as_str(), loaded.monthly_budget), ("light", Some(50.0)));
-        assert!(save_to(&path, &Settings { theme: "neon".into(), monthly_budget: None }).is_err());
+        assert_eq!((loaded.theme.as_str(), loaded.language.as_str(), loaded.monthly_budget), ("light", "fr", Some(50.0)));
+        assert!(save_to(&path, &Settings { theme: "neon".into(), ..Default::default() }).is_err());
+        assert!(save_to(&path, &Settings { language: "de".into(), ..Default::default() }).is_err());
     }
 
     #[test]

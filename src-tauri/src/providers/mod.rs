@@ -1,6 +1,7 @@
 //! Contrato para soportar un agente: dónde están sus logs y cómo se convierte cada línea en filas.
 
 pub mod claude_code;
+pub mod codex;
 pub mod opencode;
 
 use anyhow::Result;
@@ -102,7 +103,11 @@ pub struct EventRec {
 
 /// Todos los agentes soportados.
 pub fn all() -> Vec<Box<dyn Provider>> {
-    vec![Box::new(claude_code::ClaudeCode::default()), Box::new(opencode::OpenCode::default())]
+    vec![
+        Box::new(claude_code::ClaudeCode::default()),
+        Box::new(codex::Codex::default()),
+        Box::new(opencode::OpenCode::default()),
+    ]
 }
 
 /// RFC 3339 → epoch ms UTC.

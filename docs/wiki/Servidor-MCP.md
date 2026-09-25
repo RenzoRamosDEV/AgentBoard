@@ -15,6 +15,13 @@ responde a `initialize`, `tools/list` y `tools/call`.
 Es un servidor MCP estándar, así que **cualquier cliente compatible con MCP** puede usarlo
 (Claude Code, Codex, Gemini, Cursor, OpenCode…), registrándolo en cada uno con su propio método.
 
+## Dónde está
+
+Viene incluido en los instaladores de la app: `/usr/bin/agentboard-mcp` (Linux `.deb`/`.rpm`),
+`C:\Program Files\AgentBoard\agentboard-mcp.exe` (Windows) y
+`/Applications/AgentBoard.app/Contents/MacOS/agentboard-mcp` (macOS). Cada release publica además
+el binario suelto como `AgentBoard-MCP_<versión>_<sistema>`.
+
 ## Registro
 
 ```bash

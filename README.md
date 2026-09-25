@@ -22,6 +22,8 @@ Panel izquierdo para organizarlo todo: apartados, periodo (Hoy, 7 días, 30 día
 | MCP Servers | llamadas por servidor MCP | uso |
 | Claude Agent Types | llamadas y coste dentro de subagentes por tipo | coste |
 
+**Ajustes**: tema (sistema, claro u oscuro) e idioma (sistema, español, inglés, portugués o francés). Las traducciones viven en `src/lib/i18n.ts`, con el texto en español como clave.
+
 El diseño está en Claude Design: <https://claude.ai/artifact/5gfYnEQqfmuqPJu7xaunqc>.
 
 ## Requisitos

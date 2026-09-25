@@ -14,6 +14,6 @@ fn main() -> anyhow::Result<()> {
     let stats = ingest::scan_all(&mut conn, &providers::all())?;
     println!("base: {}", path.display());
     println!("escaneo: {stats:?} en {:?}", t.elapsed());
-    println!("{:#?}", queries::summary(&conn, &queries::Filter::default())?);
+    println!("{:#?}", queries::summary(&conn, &queries::Filter::default(), 0)?);
     Ok(())
 }

@@ -17,7 +17,7 @@ fn claude_code_fixture() {
     assert_eq!(stats.files, 1);
     assert_eq!(stats.errors, 0);
 
-    let s = queries::summary(&conn, &queries::Filter::default()).unwrap();
+    let s = queries::summary(&conn, &queries::Filter::default(), 0).unwrap();
     assert_eq!(s.calls, 2, "msg_demo_1 aparece dos veces por streaming");
     assert_eq!(s.sessions, 1);
     assert_eq!(s.output_tokens, 320);

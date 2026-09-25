@@ -171,6 +171,7 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
                 Err(_) => result.bad_lines += 1,
             }
         }
+        w.backfill_turns()?;
     }
     tx.execute(
         "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
@@ -188,11 +189,12 @@ struct Writer<'a> {
     tx: &'a Transaction<'a>,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
+    sessions: std::collections::HashSet<String>,
 }
 
 impl<'a> Writer<'a> {
     fn new(tx: &'a Transaction<'a>, agent_id: &'static str) -> Self {
-        Self { tx, agent_id, projects: HashMap::new() }
+        Self { tx, agent_id, projects: HashMap::new(), sessions: Default::default() }
     }
 
     fn project_id(&mut self, cwd: &str) -> Result<i64> {
@@ -209,10 +211,31 @@ impl<'a> Writer<'a> {
         Ok(id)
     }
 
+    /// Asigna turno a llamadas y herramientas que llegaron antes que él (p. ej. el archivo
+    /// de un subagente leído antes que el de su sesión).
+    fn backfill_turns(&self) -> Result<()> {
+        for sid in &self.sessions {
+            for table in ["calls", "tool_calls"] {
+                self.tx.execute(
+                    &format!(
+                        "UPDATE {table} SET turn_id = (SELECT id FROM turns t WHERE t.session_id = {table}.session_id
+                           AND t.ts <= {table}.ts ORDER BY t.ts DESC LIMIT 1)
+                         WHERE session_id = ?1 AND turn_id IS NULL"
+                    ),
+                    [sid],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Devuelve el `call_id` si se insertó una tool call nueva.
     fn apply(&mut self, rec: &Record) -> Result<Option<String>> {
         match rec {
             Record::Session(s) => {
+                if !self.sessions.contains(&s.id) {
+                    self.sessions.insert(s.id.clone());
+                }
                 let project = match &s.cwd {
                     Some(cwd) => Some(self.project_id(cwd)?),
                     None => None,
@@ -231,35 +254,58 @@ impl<'a> Writer<'a> {
             Record::Call(c) => {
                 self.tx.execute(
                     "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
-                        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, turn_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, (SELECT id FROM turns
+                       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
                      ON CONFLICT(message_id) DO UPDATE SET
                        ts = MIN(ts, excluded.ts), model = excluded.model,
                        input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
                        cache_read = excluded.cache_read, cache_write = excluded.cache_write,
                        cache_write_1h = excluded.cache_write_1h, reasoning_tokens = excluded.reasoning_tokens,
-                       activity = COALESCE(excluded.activity, activity)",
+                       activity = COALESCE(excluded.activity, activity),
+                       is_sidechain = excluded.is_sidechain, agent_id = COALESCE(excluded.agent_id, agent_id),
+                       turn_id = COALESCE(turn_id, excluded.turn_id)",
                     params![
                         c.message_id, c.session_id, c.ts, c.model, c.input_tokens, c.output_tokens,
-                        c.cache_read, c.cache_write, c.cache_write_1h, c.reasoning_tokens, c.activity
+                        c.cache_read, c.cache_write, c.cache_write_1h, c.reasoning_tokens, c.activity,
+                        c.is_sidechain, c.agent_id
                     ],
                 )?;
-                self.tx.execute("UPDATE sessions SET model = ?1 WHERE id = ?2", params![c.model, c.session_id])?;
+                if !c.is_sidechain {
+                    self.tx.execute("UPDATE sessions SET model = ?1 WHERE id = ?2", params![c.model, c.session_id])?;
+                }
             }
             Record::ToolUse(t) => {
                 let n = self.tx.execute(
-                    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(call_id) DO NOTHING",
-                    params![t.call_id, t.message_id, t.session_id, t.ts, t.tool, t.target],
+                    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, detail, turn_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT id FROM turns
+                       WHERE session_id = ?3 AND ts <= ?4 ORDER BY ts DESC LIMIT 1))
+                     ON CONFLICT(call_id) DO NOTHING",
+                    params![t.call_id, t.message_id, t.session_id, t.ts, t.tool, t.target, t.detail],
                 )?;
                 if n > 0 {
                     return Ok(Some(t.call_id.clone()));
                 }
-            }
-            Record::ToolResult { call_id, ts, is_error } => {
+                // Ya existía (relectura): completa las columnas añadidas después.
                 self.tx.execute(
-                    "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts) WHERE call_id = ?3",
-                    params![is_error, ts, call_id],
+                    "UPDATE tool_calls SET detail = COALESCE(detail, ?1),
+                       turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
+                     WHERE call_id = ?4",
+                    params![t.detail, t.session_id, t.ts, t.call_id],
+                )?;
+            }
+            Record::ToolResult { call_id, ts, is_error, agent_id } => {
+                self.tx.execute(
+                    "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
+                     WHERE call_id = ?4",
+                    params![is_error, ts, agent_id, call_id],
+                )?;
+            }
+            Record::Turn(t) => {
+                self.tx.execute(
+                    "INSERT INTO turns (id, session_id, ts, intent) VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(id) DO UPDATE SET ts = MIN(ts, excluded.ts), intent = COALESCE(intent, excluded.intent)",
+                    params![t.id, t.session_id, t.ts, t.intent],
                 )?;
             }
             Record::Event(e) => {

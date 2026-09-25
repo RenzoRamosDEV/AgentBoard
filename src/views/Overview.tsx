@@ -73,9 +73,6 @@ export function Overview({
       )}
       <Kpis items={summaryKpis(data, budget)} />
       {over && <div className="notice warn">{t("⚠ La proyección del mes supera el presupuesto de {b}.", { b: fmt.usd(budget!) })}</div>}
-      {data.summary.unpricedModels.length > 0 && (
-        <p className="muted small">{t("Modelos sin precio (cuentan como $0): {list}", { list: data.summary.unpricedModels.join(", ") })}</p>
-      )}
       <div className="grid-top">
         <Panel id="daily" title="Daily Activity" question={t("¿Cuánto gasto cada día?")} onOpen={() => open("daily")}>
           <DailyPanel data={data} full={false} singleProject={singleProject} />

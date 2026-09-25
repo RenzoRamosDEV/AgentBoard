@@ -66,7 +66,16 @@ cargo run --example scan   # importa tu historial a una base temporal e imprime 
 | Windows | `%APPDATA%\agentboard\agentboard.db` |
 | macOS | `~/Library/Application Support/agentboard/agentboard.db` |
 
-Los logs se leen de `~/.claude/projects/` (o `$CLAUDE_CONFIG_DIR/projects/`). Cada archivo se lee una vez y después solo sus líneas nuevas; cada llamada se guarda por su `message_id`, así que releer nunca duplica y borrar el original nunca quita datos. El texto de prompts y respuestas no se guarda.
+Agentes soportados y de dónde se leen:
+
+| Agente | Origen |
+| --- | --- |
+| Claude Code | `~/.claude/projects/**/*.jsonl` (o `$CLAUDE_CONFIG_DIR/projects/`) |
+| Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` y `archived_sessions/` (o `$CODEX_HOME`) |
+| GitHub Copilot CLI | `~/.copilot/session-state/*/events.jsonl` (o `$COPILOT_HOME`) |
+| OpenCode | `~/.local/share/opencode/opencode.db` (SQLite, lectura incremental) |
+
+Un agente aparece solo cuando su carpeta existe. Cada archivo se lee una vez y después solo sus líneas nuevas; cada llamada se guarda por su `message_id`, así que releer nunca duplica y borrar el original nunca quita datos. El texto de prompts y respuestas no se guarda.
 
 ## Estructura
 

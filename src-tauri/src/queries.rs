@@ -298,6 +298,7 @@ pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectRow>> {
            SELECT s.project_id AS id, SUM(c.cost_usd) AS cost, COUNT(*) AS n
            FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w} GROUP BY 1
          ) x ON x.id = p.id
+         WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = p.id)
          GROUP BY p.repo_root ORDER BY 4 DESC, 5 DESC, p.name"
     );
     let mut stmt = conn.prepare(&sql)?;

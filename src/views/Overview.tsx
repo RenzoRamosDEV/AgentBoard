@@ -20,7 +20,6 @@ export const PANELS: Record<Exclude<SectionId, "overview">, (p: PanelProps) => R
 };
 
 export function periodLabel(period: Period) {
-  if (period.kind === "custom" && period.start && period.end) return `${period.start} → ${period.end}`;
   return PERIODS.find((p) => p.kind === period.kind)?.label.toLowerCase() ?? "";
 }
 

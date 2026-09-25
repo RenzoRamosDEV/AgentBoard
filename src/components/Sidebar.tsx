@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { AgentRow, DataInfo, ProjectRow } from "../lib/api";
 import { fmt } from "../lib/format";
-import { PERIODS, toInputDate, type Period } from "../lib/period";
+import { PERIODS, type Period } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
 import { GearIcon, LogoIcon, SearchIcon, SectionIcon } from "./Icons";
 
@@ -52,28 +52,11 @@ export function Sidebar(p: Props) {
         <h3>Periodo</h3>
         <div className="chips">
           {PERIODS.map(({ kind, label }) => (
-            <button
-              key={kind}
-              className={`chip ${p.period.kind === kind ? "active" : ""}`}
-              onClick={() =>
-                p.setPeriod(
-                  kind === "custom"
-                    ? { kind, start: p.period.start ?? toInputDate(new Date(Date.now() - 6 * 864e5)), end: p.period.end ?? toInputDate(new Date()) }
-                    : { kind },
-                )
-              }
-            >
+            <button key={kind} className={`chip ${p.period.kind === kind ? "active" : ""}`} onClick={() => p.setPeriod({ kind })}>
               {label}
             </button>
           ))}
         </div>
-        {p.period.kind === "custom" && (
-          <div className="range">
-            <input type="date" value={p.period.start} onChange={(e) => p.setPeriod({ ...p.period, start: e.target.value })} aria-label="Desde" />
-            <span className="muted">a</span>
-            <input type="date" value={p.period.end} onChange={(e) => p.setPeriod({ ...p.period, end: e.target.value })} aria-label="Hasta" />
-          </div>
-        )}
       </section>
 
       <section>

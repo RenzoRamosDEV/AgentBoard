@@ -3,17 +3,22 @@
 use super::{classify_tool, parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
 use anyhow::Result;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct ClaudeCode {
     /// Carpetas fijadas a mano (tests); si es `None` se resuelven del entorno.
     roots: Option<Vec<PathBuf>>,
+    /// Primer `cwd` visto por archivo: el `cwd` de cada línea cambia con los `cd` del shell,
+    /// pero el proyecto es la carpeta donde arrancó la sesión.
+    first_cwd: Mutex<HashMap<PathBuf, String>>,
 }
 
 impl ClaudeCode {
     pub fn with_roots(roots: Vec<PathBuf>) -> Self {
-        Self { roots: Some(roots) }
+        Self { roots: Some(roots), first_cwd: Mutex::default() }
     }
 }
 
@@ -43,7 +48,11 @@ impl Provider for ClaudeCode {
             && self.log_roots().iter().any(|r| path.starts_with(r))
     }
 
-    fn parse_line(&self, _path: &Path, line: &str) -> Result<Vec<Record>> {
+    fn reset(&self, path: &Path) {
+        self.first_cwd.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
+    }
+
+    fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
         let v: Value = serde_json::from_str(line)?;
         let Some(session_id) = v["sessionId"].as_str() else {
             return Ok(vec![]);
@@ -52,9 +61,20 @@ impl Provider for ClaudeCode {
             return Ok(vec![]);
         };
         let session_id = session_id.to_string();
+        let cwd = {
+            let mut map = self.first_cwd.lock().unwrap_or_else(|e| e.into_inner());
+            match (map.get(path), v["cwd"].as_str()) {
+                (Some(first), _) => Some(first.clone()),
+                (None, Some(c)) => {
+                    map.insert(path.to_path_buf(), c.to_string());
+                    Some(c.to_string())
+                }
+                (None, None) => None,
+            }
+        };
         let mut out = vec![Record::Session(SessionRec {
             id: session_id.clone(),
-            cwd: v["cwd"].as_str().map(str::to_string),
+            cwd,
             git_branch: v["gitBranch"].as_str().filter(|b| !b.is_empty()).map(str::to_string),
             ts,
             is_subagent: false,
@@ -288,6 +308,22 @@ mod tests {
     fn compactacion_es_evento() {
         let l = r#"{"type":"system","subtype":"compact_boundary","sessionId":"s","timestamp":"2026-09-25T10:00:00Z","compactMetadata":{"trigger":"auto","preTokens":150000}}"#;
         assert!(parse(l).iter().any(|r| matches!(r, Record::Event(e) if e.kind == "compaction")));
+    }
+
+    #[test]
+    fn el_proyecto_es_la_carpeta_de_arranque() {
+        let p = ClaudeCode::with_roots(vec![]);
+        let path = Path::new("s.jsonl");
+        let a = r#"{"type":"user","sessionId":"s1","timestamp":"2026-09-25T10:00:00Z","cwd":"/h/repo","message":{"role":"user","content":"hola"}}"#;
+        let b = r#"{"type":"user","sessionId":"s1","timestamp":"2026-09-25T10:01:00Z","cwd":"/h/repo/src","message":{"role":"user","content":"hola"}}"#;
+        p.parse_line(path, a).unwrap();
+        let recs = p.parse_line(path, b).unwrap();
+        let Record::Session(s) = &recs[0] else { panic!() };
+        assert_eq!(s.cwd.as_deref(), Some("/h/repo"), "el cd del shell no crea otro proyecto");
+        p.reset(path);
+        let recs = p.parse_line(path, b).unwrap();
+        let Record::Session(s) = &recs[0] else { panic!() };
+        assert_eq!(s.cwd.as_deref(), Some("/h/repo/src"));
     }
 
     #[test]

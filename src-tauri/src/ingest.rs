@@ -59,6 +59,8 @@ fn ensure_agent(conn: &Connection, p: &dyn Provider) -> Result<()> {
 pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Result<ScanStats> {
     register_agents(conn, providers)?;
     let mut stats = ScanStats::default();
+    // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
+    conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
     for p in providers {
         for root in p.log_roots().into_iter().filter(|r| r.is_dir()) {
             for path in walk(&root) {

@@ -125,8 +125,8 @@ b { font-weight: 600; }
 @keyframes livein { from { opacity: 0; transform: translateY(-4px); } }
 
 /* Panel izquierdo */
-.sidebar { width: 264px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 20px 18px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; transition: width 0.16s ease; }
-.sidebar-toggle { align-self: flex-end; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin-bottom: -8px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.sidebar { position: relative; width: 264px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; transition: width 0.16s ease; }
+.sidebar-toggle { position: absolute; top: 12px; right: 12px; z-index: 2; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .sidebar-toggle:hover { background: var(--surface-2); color: var(--text-primary); }
 .sidebar section { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .sidebar section.grow { flex: 1 0 auto; min-height: 140px; }
@@ -145,7 +145,7 @@ b { font-weight: 600; }
 
 /* Panel colapsado: solo logo e iconos */
 .sidebar.collapsed { width: 64px; padding: 20px 10px; align-items: center; }
-.sidebar.collapsed .sidebar-toggle { align-self: center; margin-bottom: 0; }
+.sidebar.collapsed .sidebar-toggle { position: static; align-self: center; }
 .sidebar.collapsed h3,
 .sidebar.collapsed .nav-label,
 .sidebar.collapsed .brand-name { display: none; }

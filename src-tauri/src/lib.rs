@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod db;
 pub mod ingest;
+pub mod insights;
 pub mod pricing;
 pub mod providers;
 pub mod queries;
@@ -35,6 +36,7 @@ pub fn run() {
             commands::get_summary,
             commands::get_timeseries,
             commands::get_breakdown,
+            commands::get_activity,
             commands::list_agents,
             commands::list_projects,
             commands::get_data_info,

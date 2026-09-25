@@ -171,22 +171,47 @@ pub struct BreakdownRow {
     pub errors: i64,
     pub cache_hit: f64,
     pub has_price: bool,
+    pub sessions: i64,
+    /// Media de tokens de contexto de la primera llamada de cada sesión.
+    pub overhead_tokens: f64,
 }
 
-/// Coste y uso agrupado por `project | branch | model | activity | tool | command`.
+impl BreakdownRow {
+    pub fn simple(key: impl Into<String>, calls: i64, errors: i64, cost_usd: f64) -> Self {
+        let key = key.into();
+        Self { label: key.clone(), key, cost_usd, calls, errors, cache_hit: 0.0, has_price: true, sessions: 0, overhead_tokens: 0.0 }
+    }
+}
+
+/// Coste y uso agrupado por `project | branch | model | activity | tool | command | skill | mcp | agent_type`.
 pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<BreakdownRow>> {
-    let (w, args) = f.sql(if matches!(by, "tool" | "command") { "t.ts" } else { "c.ts" });
+    match by {
+        "command" => return crate::insights::shell_commands(conn, f),
+        "skill" => return crate::insights::skills_and_agents(conn, f),
+        "mcp" => return crate::insights::mcp_servers(conn, f),
+        "agent_type" => return crate::insights::agent_types(conn, f),
+        _ => {}
+    }
+    let (w, args) = f.sql(if by == "tool" { "t.ts" } else { "c.ts" });
+    // `firsts` = primera llamada principal de cada sesión, para el overhead de contexto.
     let calls = |key: &str, label: &str, join: &str| {
         format!(
-            "SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
-                    SUM(c.cache_read), SUM(c.input_tokens + c.cache_read + c.cache_write), MIN(c.has_price)
+            "WITH firsts AS (
+               SELECT message_id FROM (
+                 SELECT message_id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts) AS rn
+                 FROM calls WHERE is_sidechain = 0) WHERE rn = 1)
+             SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
+                    SUM(c.cache_read), SUM(c.input_tokens + c.cache_read + c.cache_write), MIN(c.has_price),
+                    COUNT(DISTINCT c.session_id),
+                    COALESCE(AVG(CASE WHEN f.message_id IS NOT NULL THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
              FROM call_costs c JOIN sessions s ON s.id = c.session_id {join}
+             LEFT JOIN firsts f ON f.message_id = c.message_id
              WHERE {w} GROUP BY 1 ORDER BY 3 DESC, 4 DESC"
         )
     };
     let tools = |key: &str, extra: &str| {
         format!(
-            "SELECT {key}, {key}, 0.0, COUNT(*), SUM(t.is_error), 0, 0, 1
+            "SELECT {key}, {key}, 0.0, COUNT(*), SUM(t.is_error), 0, 0, 1, 0, 0.0
              FROM tool_calls t JOIN sessions s ON s.id = t.session_id
              WHERE {w} {extra} GROUP BY 1 ORDER BY 4 DESC LIMIT 50"
         )
@@ -196,11 +221,8 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
         "branch" => calls("COALESCE(s.git_branch, '')", "COALESCE(s.git_branch, '(sin rama)')", ""),
         "model" => calls("c.model", "c.model", ""),
         "activity" => calls("COALESCE(c.activity, 'conversation')", "COALESCE(c.activity, 'conversation')", ""),
-        "tool" => tools("t.tool", ""),
-        "command" => tools(
-            "substr(ltrim(t.target), 1, instr(ltrim(t.target) || ' ', ' ') - 1)",
-            "AND t.target IS NOT NULL AND t.tool IN ('Bash', 'shell', 'exec_command', 'run_shell_command')",
-        ),
+        // Core tools: las nativas, sin las de servidores MCP.
+        "tool" => tools("t.tool", r"AND t.tool NOT LIKE 'mcp\_\_%' ESCAPE '\'"),
         other => anyhow::bail!("agrupación desconocida: {other}"),
     };
     let mut stmt = conn.prepare(&sql)?;
@@ -216,6 +238,8 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
                 errors: r.get(4)?,
                 cache_hit: ratio(r.get(5)?, r.get(6)?),
                 has_price: r.get(7)?,
+                sessions: r.get(8)?,
+                overhead_tokens: r.get(9)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -436,6 +460,7 @@ mod tests {
             .unwrap();
         }
         let cmds = breakdown(&conn, &Filter::default(), "command").unwrap();
+        assert_eq!(cmds.len(), 2);
         assert_eq!((cmds[0].key.as_str(), cmds[0].calls, cmds[0].errors), ("git", 2, 1));
         assert_eq!((cmds[1].key.as_str(), cmds[1].calls), ("npm", 1));
         let tools = breakdown(&conn, &Filter::default(), "tool").unwrap();

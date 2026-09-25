@@ -1,1 +1,18 @@
-:root{font-family:system-ui,sans-serif}
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --fg: #16181f;
+  --muted: #6b7080;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14161d; --card: #1d2029; --fg: #e8e9ee; --muted: #9296a5; }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); }
+main { padding: 24px; }
+.empty { display: grid; place-items: center; height: 100vh; padding: 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.kpi { background: var(--card); border-radius: 10px; padding: 16px; display: grid; gap: 6px; }
+.kpi span, .muted { color: var(--muted); font-size: 13px; }
+.kpi strong { font-size: 24px; font-variant-numeric: tabular-nums; }

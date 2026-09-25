@@ -4,7 +4,9 @@ import { fmt } from "../lib/format";
 import { PERIODS, type Period } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
 import { GearIcon, SearchIcon, SectionIcon } from "./Icons";
-import logo from "../assets/logo.jpg";
+import logo1x from "../assets/logo-132.png";
+import logo2x from "../assets/logo-264.png";
+import logo3x from "../assets/logo-396.png";
 
 interface Props {
   section: SectionId;
@@ -31,7 +33,7 @@ export function Sidebar(p: Props) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <img className="brand-logo" src={logo} alt="" width={132} height={132} />
+        <img className="brand-logo" src={logo1x} srcSet={`${logo1x} 1x, ${logo2x} 2x, ${logo3x} 3x`} alt="" width={132} height={132} />
         <span className="brand-name">AgentBoard</span>
       </div>
 

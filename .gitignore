@@ -1,0 +1,11 @@
+# Dependencias y builds
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Entorno local
+.directory
+.env
+*.log
+.DS_Store

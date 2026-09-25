@@ -9,3 +9,4 @@ src-tauri/gen/schemas/
 .env
 *.log
 .DS_Store
+*.tsbuildinfo

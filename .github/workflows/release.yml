@@ -16,10 +16,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             args: ""
+            sidecar: ""
+            mcp_asset: linux_x86_64
           - os: windows-latest
             args: ""
+            sidecar: ""
+            mcp_asset: windows_x64.exe
           - os: macos-latest
             args: "--target universal-apple-darwin"
+            sidecar: universal
+            mcp_asset: macos_universal
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +44,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
       - run: npm ci
+      # El servidor MCP va dentro de cada instalador como sidecar (bundle.externalBin).
+      # Compilarlo requiere el dist del frontend (generate_context! en la lib).
+      - name: Compilar servidor MCP (sidecar)
+        shell: bash
+        run: |
+          npm run build
+          bash scripts/build-mcp-sidecar.sh ${{ matrix.sidecar }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,7 +59,20 @@ jobs:
           releaseName: "AgentBoard ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.mcp.conf.json
+          # Nombres que distinguen la app del servidor MCP.
+          releaseAssetNamePattern: "AgentBoard-App_[version]_[platform]_[arch][setup][ext]"
+
+      # Además, el MCP suelto para quien solo quiera registrarlo en su agente.
+      - name: Subir servidor MCP suelto
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          SRC=$(ls src-tauri/binaries/agentboard-mcp-* | grep -E '(universal-apple-darwin|linux-gnu|msvc\.exe)$' | head -1)
+          cp "$SRC" "AgentBoard-MCP_${V}_${{ matrix.mcp_asset }}"
+          gh release upload "$GITHUB_REF_NAME" "AgentBoard-MCP_${V}_${{ matrix.mcp_asset }}" --clobber
 
       # linuxdeploy copia libwayland/libxkbcommon/libxcb de Ubuntu y rompen el EGL de Mesa moderno
       # (ventana en blanco en Fedora/Bazzite/Arch). Se quitan y se vuelve a subir el AppImage.

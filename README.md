@@ -28,9 +28,47 @@ Panel izquierdo para organizarlo todo: apartados, periodo (Hoy, 7 días, 30 día
 - **En vivo**: un vigilante (`notify`) relee los logs al vuelo mientras la app está abierta; el dashboard se actualiza sin recargar.
 - **Bandeja del sistema**: icono con el gasto del mes en el tooltip y menú Mostrar / Salir; al cerrar la ventana la app sigue en segundo plano.
 - **Avisos de presupuesto**: notificación nativa al llegar al 80 % y al 100 % de la proyección del mes.
-- **Exportar**: las llamadas del filtro activo a CSV o JSON desde el panel lateral.
+- **Exportar**: las llamadas del filtro activo a CSV o JSON desde Ajustes.
 
 El diseño está en Claude Design: <https://claude.ai/artifact/5gfYnEQqfmuqPJu7xaunqc>.
+
+## Servidor MCP
+
+`agentboard-mcp` es un binario aparte que expone estos mismos datos a cualquier agente por [Model Context Protocol](https://modelcontextprotocol.io) (transporte stdio). Escanea los logs a una base en memoria al arrancar —no necesita que la app esté abierta ni escribe nada en disco—, así un agente puede preguntar "¿cuánto llevo gastado este mes?" o "¿qué modelo me sale más caro?" durante una conversación.
+
+Compilar:
+
+```
+cd src-tauri && cargo build --release --bin agentboard-mcp
+# binario en src-tauri/target/release/agentboard-mcp
+```
+
+Registrarlo (ejemplos):
+
+```
+# Claude Code
+claude mcp add agentboard -- /ruta/a/agentboard-mcp
+
+# Codex CLI (~/.codex/config.toml)
+[mcp_servers.agentboard]
+command = "/ruta/a/agentboard-mcp"
+
+# Gemini CLI (~/.gemini/settings.json)
+{ "mcpServers": { "agentboard": { "command": "/ruta/a/agentboard-mcp" } } }
+```
+
+Todas las herramientas aceptan un filtro opcional: `period` (`7d`, `30d`, `60d`, `90d`, `all`), `agents` (ids) y `projects` (ids).
+
+| Herramienta | Devuelve |
+| --- | --- |
+| `get_summary` | coste, llamadas, sesiones, cache hit, ahorro por caché, burn rate, modelos sin precio |
+| `get_cost_by_agent` / `_model` / `_project` / `_branch` | desglose de coste y uso |
+| `get_activity` | reparto por tipo de actividad |
+| `get_tools` / `get_shell_commands` | uso y errores por herramienta / comando |
+| `get_skills` / `get_mcp_servers` / `get_agent_types` | skills y subagentes, servidores MCP, tipos de subagente |
+| `get_daily` | serie diaria (coste, llamadas, sesiones, tokens) |
+| `list_agents` / `list_projects` | detectados en la máquina, con su coste |
+| `get_data_info` | rango de fechas y totales del historial |
 
 ## Requisitos
 

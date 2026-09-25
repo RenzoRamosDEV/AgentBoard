@@ -27,7 +27,12 @@ export interface PanelProps {
   /** `true` en la vista ampliada: sin recorte y con gráficos grandes. */
   full: boolean;
   singleProject: string | null;
+  /** Abre la vista ampliada (vista general). */
+  open?: () => void;
 }
+
+/** Filas visibles en la vista general: todos los paneles iguales. */
+const PREVIEW = 5;
 
 // --- Daily Activity -------------------------------------------------------------
 
@@ -71,7 +76,7 @@ export function DailyPanel({ data, full }: PanelProps) {
     { header: "Coste", cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
     { header: "Llamadas", cell: (p) => fmt.int(p.calls), align: "right" },
   ];
-  const table = <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} limit={full ? undefined : 7} />;
+  const table = <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} limit={full ? undefined : PREVIEW} />;
   const chart = (
     <>
       <ChartTitle>Coste por día (USD)</ChartTitle>
@@ -94,7 +99,7 @@ export function ProjectPanel({ data, full, singleProject }: PanelProps) {
     ...(full ? [{ header: "Overhead", cell: (r: BreakdownRow) => (r.overheadTokens ? fmt.compact(r.overheadTokens) : "–"), align: "right" as const, width: "70px", className: "accent" }] : []),
     barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-blue)"),
   ];
-  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
 
 // --- By Activity ------------------------------------------------------------------
@@ -122,7 +127,7 @@ export function ActivityPanel({ data, full }: PanelProps) {
       : []),
     { header: "1-shot", cell: (r) => shot(r.oneShot), align: "right", width: "56px", className: (r) => shotClass(r.oneShot) },
   ];
-  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} />;
+  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
   const segments = rows.map((r) => ({ key: r.key, label: activityLabel(r.key), value: r.costUsd, color: activityColor(r.key) }));
   if (!full) {
     return (
@@ -208,7 +213,7 @@ export function ModelPanel({ data, full }: PanelProps) {
     { header: "1-shot", cell: (r) => shot(oneShot.get(r.key)), align: "right", width: "56px", className: (r) => shotClass(oneShot.get(r.key)) },
     barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-violet)"),
   ];
-  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
 
 // --- Tools / Shell / MCP (usos y errores) ----------------------------------------------
@@ -220,7 +225,7 @@ function UsesPanel({ rows, full, header, color, mono = false }: { rows: Breakdow
     { header: "Errores", cell: err, align: "right", width: "60px", className: errClass },
     barColumn("Uso", rows, (r) => r.calls, color),
   ];
-  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
 
 export const ToolsPanel = ({ data, full }: PanelProps) => <UsesPanel rows={data.tools} full={full} header="Herramienta" color="var(--series-green)" />;
@@ -236,7 +241,7 @@ function CostUsesPanel({ rows, full, header, usesHeader, color }: { rows: Breakd
     { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     barColumn("Reparto del coste", rows, (r) => r.costUsd, color),
   ];
-  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
 
 export const SkillsPanel = ({ data, full }: PanelProps) => <CostUsesPanel rows={data.skills} full={full} header="Skill / agente" usesHeader="Usos" color="var(--series-violet)" />;

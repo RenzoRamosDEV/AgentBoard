@@ -19,6 +19,7 @@ export function DataTable<T>({
   limit,
   empty,
   onRowHover,
+  onMore,
 }: {
   rows: T[];
   rowKey: (row: T) => string;
@@ -26,6 +27,8 @@ export function DataTable<T>({
   limit?: number;
   empty?: string;
   onRowHover?: (row: T | null, e?: React.MouseEvent) => void;
+  /** Con `limit`, enlace "Ver más" que abre la vista ampliada. */
+  onMore?: () => void;
 }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   const shown = limit ? rows.slice(0, limit) : rows;
@@ -56,7 +59,17 @@ export function DataTable<T>({
           ))}
         </div>
       ))}
-      {limit && rows.length > limit && <div className="table-more muted">… y {rows.length - limit} más</div>}
+      {limit && rows.length > limit && (
+        <div className="table-more">
+          {onMore ? (
+            <button className="link" onClick={onMore}>
+              Ver {rows.length - limit} más ›
+            </button>
+          ) : (
+            <span className="muted">… y {rows.length - limit} más</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

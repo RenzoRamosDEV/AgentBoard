@@ -23,13 +23,15 @@ export function Panel({
           <h2>{title}</h2>
           {question && <span className="muted">{question}</span>}
         </div>
-        {onOpen && (
-          <button className="link" onClick={onOpen}>
-            Ver todo ›
-          </button>
-        )}
       </header>
       {children}
+      {onOpen && (
+        <footer className="panel-foot">
+          <button className="link" onClick={onOpen}>
+            Ver más ›
+          </button>
+        </footer>
+      )}
     </section>
   );
 }

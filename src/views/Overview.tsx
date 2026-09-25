@@ -76,7 +76,7 @@ export function Overview({
         <p className="muted small">Modelos sin precio (cuentan como $0): {data.summary.unpricedModels.join(", ")}</p>
       )}
       <Panel id="daily" title="Daily Activity" question="¿Cuánto gasto cada día?" onOpen={() => open("daily")} wide>
-        <DailyPanel data={data} full={false} singleProject={singleProject} />
+        <DailyPanel data={data} full={false} singleProject={singleProject} open={() => open("daily")} />
       </Panel>
       <div className="grid-2">
         {SECTIONS.filter((s) => s.id !== "overview" && s.id !== "daily").map((s) => {
@@ -84,7 +84,7 @@ export function Overview({
           const title = s.id === "project" && singleProject ? `By Branch · ${singleProject}` : s.title;
           return (
             <Panel key={s.id} id={s.id} title={title} question={s.question} onOpen={() => open(s.id)}>
-              <Body data={data} full={false} singleProject={singleProject} />
+              <Body data={data} full={false} singleProject={singleProject} open={() => open(s.id)} />
             </Panel>
           );
         })}

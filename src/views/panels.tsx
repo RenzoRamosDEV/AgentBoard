@@ -202,6 +202,15 @@ export function DailyFull({ data }: { data: DashboardData }) {
       <section className="panel">
         <header className="panel-head">
           <div className="panel-title">
+            <h2>Tabla por día</h2>
+            <span className="muted">{rows.length} días con actividad, el más reciente primero</span>
+          </div>
+        </header>
+        <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} />
+      </section>
+      <section className="panel">
+        <header className="panel-head">
+          <div className="panel-title">
             <h2>Gráfico</h2>
             <span className="muted">{m.title}</span>
           </div>
@@ -234,15 +243,6 @@ export function DailyFull({ data }: { data: DashboardData }) {
           <Columns points={hourPoints} format={m.format} height={200} color="var(--series-blue)" axis={(h) => `${String(h).padStart(2, "0")}h`} />
         </section>
       </div>
-      <section className="panel">
-        <header className="panel-head">
-          <div className="panel-title">
-            <h2>Tabla por día</h2>
-            <span className="muted">{rows.length} días con actividad, el más reciente primero</span>
-          </div>
-        </header>
-        <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} />
-      </section>
     </>
   );
 }

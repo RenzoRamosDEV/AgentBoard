@@ -63,7 +63,17 @@ function ThemeCard({ value, label, selected, onSelect }: { value: Theme; label: 
 }
 
 /** Ajustes: tema (con vista previa) e idioma. Lo elegido queda como borrador hasta pulsar Aplicar. */
-export function SettingsDialog({ settings, onSave, onClose }: { settings: Settings; onSave: (s: Settings) => Promise<void>; onClose: () => void }) {
+export function SettingsDialog({
+  settings,
+  onSave,
+  onClose,
+  onExport,
+}: {
+  settings: Settings;
+  onSave: (s: Settings) => Promise<void>;
+  onClose: () => void;
+  onExport: (format: "csv" | "json") => void;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const [draft, setDraft] = useState<Settings>(settings);
   const dirty = draft.theme !== settings.theme || draft.language !== settings.language;
@@ -111,6 +121,15 @@ export function SettingsDialog({ settings, onSave, onClose }: { settings: Settin
         <h3>{t("Idioma")}</h3>
         <Segmented value={draft.language} options={LANGS.map((o) => ({ ...o, label: o.value === "system" ? t("Sistema") : o.label }))} onChange={(language: Language) => setDraft({ ...draft, language })} />
         <p className="muted small">{t('"Sistema" usa el idioma de tu escritorio (español, inglés, portugués o francés).')}</p>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t("Exportar")}</h3>
+        <div className="export-row">
+          <button type="button" className="chip" onClick={() => onExport("csv")}>CSV</button>
+          <button type="button" className="chip" onClick={() => onExport("json")}>JSON</button>
+        </div>
+        <p className="muted small">{t("Descarga los datos del periodo y los filtros actuales.")}</p>
       </section>
 
       <div className="dialog-actions">

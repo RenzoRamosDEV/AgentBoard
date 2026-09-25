@@ -139,7 +139,6 @@ export default function App() {
           period={period}
           setPeriod={setPeriod}
           onSettings={() => setShowSettings(true)}
-          onExport={doExport}
         />
         <div className="content">
           {loadError && (
@@ -152,7 +151,7 @@ export default function App() {
           {content}
         </div>
       </div>
-      {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} onExport={doExport} />}
     </TooltipProvider>
     </LangContext.Provider>
   );

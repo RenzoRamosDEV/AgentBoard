@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, type Period } from "./lib/period";
 import { applyTheme, storedTheme } from "./lib/theme";
+import { LangContext, resolveLang, setLang, t, type LangSetting } from "./lib/i18n";
 import type { SectionId } from "./lib/sections";
 import { useDashboardData } from "./lib/useData";
 import { Sidebar } from "./components/Sidebar";
@@ -10,6 +11,17 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { TooltipProvider } from "./components/Tooltip";
 import { Overview } from "./views/Overview";
 import { Section } from "./views/Section";
+
+/** Idioma recordado en este equipo, para pintar bien antes de leer los ajustes. */
+function storedLang(): LangSetting {
+  try {
+    const l = localStorage.getItem("language");
+    if (l === "es" || l === "en" || l === "pt" || l === "fr" || l === "system") return l;
+  } catch {
+    // ignorar
+  }
+  return "system";
+}
 
 export default function App() {
   const [section, setSection] = useState<SectionId>("overview");
@@ -19,7 +31,9 @@ export default function App() {
   const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), monthlyBudget: null });
+  const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), language: storedLang(), monthlyBudget: null });
+  const lang = resolveLang(settings.language);
+  setLang(lang);
   const [showSettings, setShowSettings] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
@@ -42,6 +56,13 @@ export default function App() {
   }, [range, filter.agents?.join(","), refresh]);
 
   useEffect(() => applyTheme(settings.theme), [settings.theme]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("language", settings.language);
+    } catch {
+      // sin almacenamiento
+    }
+  }, [settings.language]);
 
   useEffect(() => {
     api.settings().then(setSettings).catch(console.error);
@@ -68,15 +89,17 @@ export default function App() {
   const saveSettings = async (s: Settings) => setSettings(await api.saveSettings(s));
 
   let content;
-  if (error) content = <div className="main error">No se pudieron cargar los datos: {error}</div>;
-  else if (!data) content = <div className="main muted">Cargando…</div>;
+  if (error) content = <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
+  else if (!data) content = <div className="main muted">{t("Cargando…")}</div>;
   else if (section === "overview")
     content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} />;
   else content = <Section id={section} data={data} period={period} singleProject={singleProject} back={() => setSection("overview")} />;
 
   return (
+    <LangContext.Provider value={lang}>
     <TooltipProvider>
-      <div className="app">
+      {/* Al cambiar de idioma se vuelve a montar todo con las cadenas nuevas. */}
+      <div className="app" key={lang}>
         <Sidebar
           section={section}
           setSection={setSection}
@@ -95,5 +118,6 @@ export default function App() {
       </div>
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
     </TooltipProvider>
+    </LangContext.Provider>
   );
 }

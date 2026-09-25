@@ -1,17 +1,19 @@
+import { getLang, LOCALES } from "./i18n";
 // Cifras al estilo $1,234.56 · 21.3K · 97.6%; los textos van en español.
 const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const usd4 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
 const int = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const pct = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
+const locale = () => LOCALES[getLang()];
 
 export const fmt = {
   usd: (n: number) => (n !== 0 && Math.abs(n) < 0.01 ? usd4 : usd2).format(n),
   int: (n: number) => int.format(n),
   compact: (n: number) => compact.format(n),
   pct: (n: number) => pct.format(n),
-  date: (ts: number) => new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" }),
-  day: (ts: number) => new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+  date: (ts: number) => new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "numeric" }),
+  day: (ts: number) => new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short" }),
   bytes: (n: number) => {
     const units = ["B", "KB", "MB", "GB"];
     let i = 0;

@@ -103,8 +103,11 @@ export interface DataInfo {
 
 export type Theme = "system" | "light" | "dark";
 
+export type Language = "system" | "es" | "en" | "pt" | "fr";
+
 export interface Settings {
   theme: Theme;
+  language: Language;
   monthlyBudget: number | null;
 }
 

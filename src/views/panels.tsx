@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
+import { t } from "../lib/i18n";
 import { Bars, Columns, InlineBar, Legend, LineChart, Segmented, ShareBar } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { ChartTitle, Split } from "../components/Panel";
@@ -86,7 +87,7 @@ const SPLITS: { value: DailySplit; label: string }[] = [
 const metricOf = (m: DailyMetric) => ({
   value: (p: { costUsd: number; calls: number; outputTokens: number }) => (m === "cost" ? p.costUsd : m === "calls" ? p.calls : p.outputTokens),
   format: (v: number) => (m === "cost" ? cost(v) : m === "tokens" ? fmt.compact(v) : fmt.int(v)),
-  title: m === "cost" ? "Coste por día (USD)" : m === "calls" ? "Llamadas por día" : "Tokens de salida por día",
+  title: t(m === "cost" ? "Coste por día (USD)" : m === "calls" ? "Llamadas por día" : "Tokens de salida por día"),
 });
 
 /** Vista ampliada de Daily Activity: tabla, gráfico configurable, acumulado y reparto por hora. */
@@ -133,7 +134,7 @@ export function DailyFull({ data }: { data: DashboardData }) {
           <div>{m.format(value)}</div>
           {p && split === "total" && (
             <div className="muted">
-              {fmt.int(p.calls)} llamadas · {fmt.int(p.sessions)} sesiones
+              {t("{n} llamadas", { n: fmt.int(p.calls) })} · {t("{n} sesiones", { n: fmt.int(p.sessions) })}
             </div>
           )}
           {stack?.slice(0, 5).map((s) => (
@@ -145,7 +146,7 @@ export function DailyFull({ data }: { data: DashboardData }) {
       ),
     };
   });
-  const splitNote = split === "activity" && metric !== "cost" ? "Por actividad se cuentan turnos, no llamadas ni tokens." : null;
+  const splitNote = split === "activity" && metric !== "cost" ? t("Por actividad se cuentan turnos, no llamadas ni tokens.") : null;
 
   // Acumulado del periodo.
   let acc = 0;
@@ -158,8 +159,8 @@ export function DailyFull({ data }: { data: DashboardData }) {
       tooltip: (
         <>
           <b>{fmt.date(d.ts)}</b>
-          <div>Acumulado: {m.format(acc)}</div>
-          <div className="muted">Ese día: {m.format(p ? m.value(p) : 0)}</div>
+          <div>{t("Acumulado: {v}", { v: m.format(acc) })}</div>
+          <div className="muted">{t("Ese día: {v}", { v: m.format(p ? m.value(p) : 0) })}</div>
         </>
       ),
     };
@@ -179,21 +180,21 @@ export function DailyFull({ data }: { data: DashboardData }) {
       <>
         <b>{String(x.h).padStart(2, "0")}:00 – {String((x.h + 1) % 24).padStart(2, "0")}:00</b>
         <div>{m.format(x.value)}</div>
-        <div className="muted">{fmt.int(x.calls)} llamadas</div>
+        <div className="muted">{t("{n} llamadas", { n: fmt.int(x.calls) })}</div>
       </>
     ),
   }));
   const busiest = hours.reduce((a, b) => (b.value > a.value ? b : a), hours[0]);
 
   const columns: Column<Point>[] = [
-    { header: "Día", cell: (p) => fmt.date(p.ts), width: "120px", className: "secondary" },
-    { header: "Coste", cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
-    { header: "Llamadas", cell: (p) => fmt.int(p.calls), align: "right" },
-    { header: "Sesiones", cell: (p) => fmt.int(p.sessions), align: "right", className: "secondary" },
-    { header: "Entrada", cell: (p) => fmt.compact(p.inputTokens + p.cacheRead + p.cacheWrite), align: "right", className: "secondary" },
-    { header: "Salida", cell: (p) => fmt.compact(p.outputTokens), align: "right", className: "secondary" },
-    { header: "Cache hit", cell: (p) => { const t = p.inputTokens + p.cacheRead + p.cacheWrite; return t ? fmt.pct(p.cacheRead / t) : "–"; }, align: "right", width: "72px", className: "secondary" },
-    barColumn("Reparto del coste", data.daily, (p) => p.costUsd, "var(--accent)"),
+    { header: t("Día"), cell: (p) => fmt.date(p.ts), width: "120px", className: "secondary" },
+    { header: t("Coste"), cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
+    { header: t("Llamadas"), cell: (p) => fmt.int(p.calls), align: "right" },
+    { header: t("Sesiones"), cell: (p) => fmt.int(p.sessions), align: "right", className: "secondary" },
+    { header: t("Entrada"), cell: (p) => fmt.compact(p.inputTokens + p.cacheRead + p.cacheWrite), align: "right", className: "secondary" },
+    { header: t("Salida"), cell: (p) => fmt.compact(p.outputTokens), align: "right", className: "secondary" },
+    { header: t("Cache hit"), cell: (p) => { const total = p.inputTokens + p.cacheRead + p.cacheWrite; return total ? fmt.pct(p.cacheRead / total) : "–"; }, align: "right", width: "72px", className: "secondary" },
+    barColumn(t("Reparto del coste"), data.daily, (p) => p.costUsd, "var(--accent)"),
   ];
   const rows = [...data.daily].reverse();
 
@@ -202,8 +203,8 @@ export function DailyFull({ data }: { data: DashboardData }) {
       <section className="panel">
         <header className="panel-head">
           <div className="panel-title">
-            <h2>Tabla por día</h2>
-            <span className="muted">{rows.length} días con actividad, el más reciente primero</span>
+            <h2>{t("Tabla por día")}</h2>
+            <span className="muted">{t("{n} días con actividad, el más reciente primero", { n: rows.length })}</span>
           </div>
         </header>
         <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} />
@@ -211,24 +212,24 @@ export function DailyFull({ data }: { data: DashboardData }) {
       <section className="panel">
         <header className="panel-head">
           <div className="panel-title">
-            <h2>Gráfico</h2>
+            <h2>{t("Gráfico")}</h2>
             <span className="muted">{m.title}</span>
           </div>
           <div className="controls">
-            <Segmented value={metric} options={METRICS} onChange={setMetric} label="Métrica" />
-            <Segmented value={split} options={SPLITS} onChange={setSplit} label="Desglose" />
+            <Segmented value={metric} options={METRICS.map((o) => ({ ...o, label: t(o.label) }))} onChange={setMetric} label={t("Métrica")} />
+            <Segmented value={split} options={SPLITS.map((o) => ({ ...o, label: t(o.label) }))} onChange={setSplit} label={t("Desglose")} />
           </div>
         </header>
         <Columns points={points} format={m.format} height={260} color="var(--accent)" />
-        <Legend items={legend.size > 0 ? [...legend.values()] : [{ label: "Todos los agentes", color: "var(--accent)" }]} />
+        <Legend items={legend.size > 0 ? [...legend.values()] : [{ label: t("Todos los agentes"), color: "var(--accent)" }]} />
         {splitNote && <p className="muted small">{splitNote}</p>}
       </section>
       <div className="grid-2">
         <section className="panel">
           <header className="panel-head">
             <div className="panel-title">
-              <h2>Acumulado del periodo</h2>
-              <span className="muted">{m.format(acc)} en total</span>
+              <h2>{t("Acumulado del periodo")}</h2>
+              <span className="muted">{t("{v} en total", { v: m.format(acc) })}</span>
             </div>
           </header>
           <LineChart points={cumulative} format={m.format} height={200} />
@@ -236,8 +237,8 @@ export function DailyFull({ data }: { data: DashboardData }) {
         <section className="panel">
           <header className="panel-head">
             <div className="panel-title">
-              <h2>Por hora del día</h2>
-              <span className="muted">hora local · más actividad a las {String(busiest.h).padStart(2, "0")}:00</span>
+              <h2>{t("Por hora del día")}</h2>
+              <span className="muted">{t("hora local · más actividad a las {h}:00", { h: String(busiest.h).padStart(2, "0") })}</span>
             </div>
           </header>
           <Columns points={hourPoints} format={m.format} height={200} color="var(--series-blue)" axis={(h) => `${String(h).padStart(2, "0")}h`} />
@@ -250,14 +251,14 @@ export function DailyFull({ data }: { data: DashboardData }) {
 export function DailyPanel({ data, full }: PanelProps) {
   const rows = [...data.daily].reverse();
   const columns: Column<Point>[] = [
-    { header: "Día", cell: (p) => fmt.day(p.ts), width: "80px", className: "secondary" },
-    { header: "Coste", cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
-    { header: "Llamadas", cell: (p) => fmt.int(p.calls), align: "right" },
+    { header: t("Día"), cell: (p) => fmt.day(p.ts), width: "80px", className: "secondary" },
+    { header: t("Coste"), cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
+    { header: t("Llamadas"), cell: (p) => fmt.int(p.calls), align: "right" },
   ];
   const table = <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} limit={full ? undefined : PREVIEW} />;
   const chart = (
     <>
-      <ChartTitle>Coste por día (USD)</ChartTitle>
+      <ChartTitle>{t("Coste por día (USD)")}</ChartTitle>
       <Columns points={dayPoints(data.daily, data.filter)} format={cost} height={full ? 260 : 170} />
     </>
   );
@@ -272,7 +273,7 @@ export function AgentPanel({ data, full }: PanelProps) {
   const color = (r: BreakdownRow) => agentColor(r.key, rows.indexOf(r));
   const columns: Column<BreakdownRow>[] = [
     {
-      header: "Agente",
+      header: t("Agente"),
       cell: (r) => (
         <span className="with-dot">
           <i style={{ background: color(r) }} />
@@ -280,24 +281,24 @@ export function AgentPanel({ data, full }: PanelProps) {
         </span>
       ),
     },
-    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", width: "64px", className: "cost" },
-    { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
+    { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", width: "64px", className: "cost" },
+    { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
     ...(full
       ? [
-          { header: "Sesiones", cell: (r: BreakdownRow) => fmt.int(r.sessions), align: "right" as const, width: "64px", className: "secondary" },
-          { header: "Caché", cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" },
-          barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-blue)"),
+          { header: t("Sesiones"), cell: (r: BreakdownRow) => fmt.int(r.sessions), align: "right" as const, width: "64px", className: "secondary" },
+          { header: t("Cache hit"), cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" },
+          barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-blue)"),
         ]
       : []),
   ];
   const segments = rows.map((r) => ({ key: r.key, label: r.label, value: r.costUsd, color: color(r) }));
   const donut = (
     <>
-      <ChartTitle>Reparto del coste · {cost(total)}</ChartTitle>
+      <ChartTitle>{t("Reparto del coste")} · {cost(total)}</ChartTitle>
       <ShareBar segments={segments} format={cost} compact={!full} limit={full ? 8 : 5} />
     </>
   );
-  if (!rows.length) return <p className="empty">Todavía no se ha detectado ningún agente</p>;
+  if (!rows.length) return <p className="empty">{t("Todavía no se ha detectado ningún agente")}</p>;
   const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} />;
   if (full) {
     return (
@@ -321,12 +322,12 @@ export function ProjectPanel({ data, full, singleProject }: PanelProps) {
   const rows = data.branches ?? data.projects;
   // En la vista general caben nombre, coste y sesiones; la ampliada añade media y overhead.
   const columns: Column<BreakdownRow>[] = [
-    { header: singleProject ? "Rama" : "Proyecto", cell: (r) => r.label },
-    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", width: "68px", className: "cost" },
-    ...(full ? [{ header: "avg/ses", cell: (r: BreakdownRow) => cost(r.sessions ? r.costUsd / r.sessions : 0), align: "right" as const, width: "68px" }] : []),
-    { header: "Ses", cell: (r) => fmt.int(r.sessions), align: "right", width: "40px", className: "secondary" },
-    ...(full ? [{ header: "Overhead", cell: (r: BreakdownRow) => (r.overheadTokens ? fmt.compact(r.overheadTokens) : "–"), align: "right" as const, width: "70px", className: "accent" }] : []),
-    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-blue)"),
+    { header: t(singleProject ? "Rama" : "Proyecto"), cell: (r) => r.label },
+    { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", width: "68px", className: "cost" },
+    ...(full ? [{ header: t("$/sesión"), cell: (r: BreakdownRow) => cost(r.sessions ? r.costUsd / r.sessions : 0), align: "right" as const, width: "68px" }] : []),
+    { header: t("Ses"), cell: (r) => fmt.int(r.sessions), align: "right", width: "40px", className: "secondary" },
+    ...(full ? [{ header: t("Overhead"), cell: (r: BreakdownRow) => (r.overheadTokens ? fmt.compact(r.overheadTokens) : "–"), align: "right" as const, width: "70px", className: "accent" }] : []),
+    barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-blue)"),
   ];
   return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
@@ -338,7 +339,7 @@ export function ActivityPanel({ data, full }: PanelProps) {
   const total = rows.reduce((a, r) => a + r.costUsd, 0);
   const columns: Column<ActivityRow>[] = [
     {
-      header: "Actividad",
+      header: t("Actividad"),
       cell: (r) => (
         <span className="with-dot">
           <i style={{ background: activityColor(r.key) }} />
@@ -346,17 +347,17 @@ export function ActivityPanel({ data, full }: PanelProps) {
         </span>
       ),
     },
-    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", width: "64px", className: "cost" },
-    { header: "Turnos", cell: (r) => fmt.int(r.turns), align: "right", width: "52px" },
+    { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", width: "64px", className: "cost" },
+    { header: t("Turnos"), cell: (r) => fmt.int(r.turns), align: "right", width: "52px" },
     ...(full
       ? [
-          { header: "$/turno", cell: (r: ActivityRow) => cost(r.turns ? r.costUsd / r.turns : 0), align: "right" as const, width: "72px", className: "secondary" },
-          { header: "Con edición", cell: (r: ActivityRow) => (r.editTurns ? fmt.int(r.editTurns) : "–"), align: "right" as const, width: "84px", className: "secondary" },
+          { header: t("$/turno"), cell: (r: ActivityRow) => cost(r.turns ? r.costUsd / r.turns : 0), align: "right" as const, width: "72px", className: "secondary" },
+          { header: t("Con edición"), cell: (r: ActivityRow) => (r.editTurns ? fmt.int(r.editTurns) : "–"), align: "right" as const, width: "84px", className: "secondary" },
         ]
       : []),
     { header: "1-shot", cell: (r) => shot(r.oneShot), align: "right", width: "56px", className: (r) => shotClass(r.oneShot) },
     { header: "%", cell: (r) => (total ? fmt.pct(r.costUsd / total) : "–"), align: "right", width: "52px", className: "secondary" },
-    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--act-coding)"),
+    barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--act-coding)"),
   ];
   const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
   if (!full) return table;
@@ -395,14 +396,14 @@ export function ActivityPanel({ data, full }: PanelProps) {
       {table}
       <div className="grid-2">
         <div className="chart-box">
-          <ChartTitle>Coste por día y actividad</ChartTitle>
+          <ChartTitle>{t("Coste por día y actividad")}</ChartTitle>
           <Columns points={stackPoints} format={cost} height={220} />
           <Legend items={rows.slice(0, 6).map((r) => ({ label: activityLabel(r.key), color: activityColor(r.key) }))} />
         </div>
         <div className="chart-box">
-          <ChartTitle>1-shot por actividad (solo con ediciones)</ChartTitle>
-          {shots.length ? <Bars items={shots} thick labelWidth={120} /> : <p className="empty">Ningún turno con ediciones en este periodo</p>}
-          <p className="muted small">Un turno es 1-shot cuando ninguna edición falla y ningún archivo se edita dos veces.</p>
+          <ChartTitle>{t("1-shot por actividad (solo con ediciones)")}</ChartTitle>
+          {shots.length ? <Bars items={shots} thick labelWidth={120} /> : <p className="empty">{t("Ningún turno con ediciones en este periodo")}</p>}
+          <p className="muted small">{t("Un turno es 1-shot cuando ninguna edición falla y ningún archivo se edita dos veces.")}</p>
         </div>
       </div>
     </>
@@ -416,19 +417,19 @@ export function ModelPanel({ data, full }: PanelProps) {
   const oneShot = new Map(data.activity.models.map((m) => [m.model, m.oneShot]));
   const columns: Column<BreakdownRow>[] = [
     {
-      header: "Modelo",
+      header: t("Modelo"),
       cell: (r) => (
         <>
           {modelName(r.key)}
-          {!r.hasPrice && <span className="badge">sin precio</span>}
+          {!r.hasPrice && <span className="badge">{t("sin precio")}</span>}
         </>
       ),
     },
-    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", width: "68px", className: "cost" },
-    ...(full ? [{ header: "Caché", cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" }] : []),
-    { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
+    { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", width: "68px", className: "cost" },
+    ...(full ? [{ header: t("Cache hit"), cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" }] : []),
+    { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
     { header: "1-shot", cell: (r) => shot(oneShot.get(r.key)), align: "right", width: "56px", className: (r) => shotClass(oneShot.get(r.key)) },
-    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-violet)"),
+    barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-violet)"),
   ];
   return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
@@ -437,10 +438,10 @@ export function ModelPanel({ data, full }: PanelProps) {
 
 function UsesPanel({ rows, full, header, color, mono = false }: { rows: BreakdownRow[]; full: boolean; header: string; color: string; mono?: boolean }) {
   const columns: Column<BreakdownRow>[] = [
-    { header, cell: (r) => r.label, className: mono ? "mono" : "" },
-    { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
-    { header: "Errores", cell: err, align: "right", width: "60px", className: errClass },
-    barColumn("Uso", rows, (r) => r.calls, color),
+    { header: t(header), cell: (r) => r.label, className: mono ? "mono" : "" },
+    { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
+    { header: t("Errores"), cell: err, align: "right", width: "60px", className: errClass },
+    barColumn(t("Uso"), rows, (r) => r.calls, color),
   ];
   return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }
@@ -453,10 +454,10 @@ export const McpPanel = ({ data, full }: PanelProps) => <UsesPanel rows={data.mc
 
 function CostUsesPanel({ rows, full, header, usesHeader, color }: { rows: BreakdownRow[]; full: boolean; header: string; usesHeader: string; color: string }) {
   const columns: Column<BreakdownRow>[] = [
-    { header, cell: (r) => r.label },
-    { header: usesHeader, cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
-    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
-    barColumn("Reparto del coste", rows, (r) => r.costUsd, color),
+    { header: t(header), cell: (r) => r.label },
+    { header: t(usesHeader), cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
+    { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
+    barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, color),
   ];
   return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : PREVIEW} />;
 }

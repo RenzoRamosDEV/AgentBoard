@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Migraciones en orden; la versión aplicada se guarda en `PRAGMA user_version`.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_inicial.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/0001_inicial.sql")),
+    (2, include_str!("../migrations/0002_ajustes_y_ahorro.sql")),
+];
 
 /// Carpeta de datos de AgentBurn en este sistema (`~/.local/share/agentburn` en Linux).
 pub fn data_dir() -> Result<PathBuf> {
@@ -83,6 +86,25 @@ mod tests {
         assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.last().unwrap().0);
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1, "los datos existentes se conservan");
+    }
+
+    #[test]
+    fn base_de_fase_0_migra_sin_perder_datos() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].1).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO agents VALUES ('a','A','/',0);
+             INSERT INTO sessions (id, agent_id, started_at, ended_at) VALUES ('s','a',0,0);
+             INSERT INTO calls (message_id, session_id, ts, model, cache_read) VALUES ('m','s',1,'x',10);",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        let (n, savings): (i64, f64) = conn
+            .query_row("SELECT COUNT(*), SUM(cache_savings_usd) FROM call_costs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((n, savings), (1, 0.0));
+        assert_eq!(schema_version(&conn).unwrap(), 2);
     }
 
     #[test]

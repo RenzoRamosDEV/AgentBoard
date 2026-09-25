@@ -32,3 +32,10 @@ Cambiar la tabla de precios SHALL cambiar los costes mostrados sin volver a leer
 #### Scenario: Actualización de precios
 - **WHEN** se añade un precio nuevo con `valid_from` anterior a las llamadas
 - **THEN** el resumen refleja el nuevo coste en la siguiente consulta
+
+### Requirement: Coste reportado por el agente
+Si una llamada trae un coste reportado por el agente y su modelo no tiene precio en la tabla, el sistema SHALL usar ese coste y MUST NOT marcar el modelo como "sin precio".
+
+#### Scenario: Modelo solo conocido por OpenCode
+- **WHEN** una llamada del modelo `big-pickle` trae coste reportado 0,0123 USD y no hay precio en la tabla
+- **THEN** su coste es 0,0123 USD y el modelo no aparece como "sin precio"

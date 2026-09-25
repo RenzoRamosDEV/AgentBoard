@@ -25,6 +25,7 @@ interface Props {
   period: Period;
   setPeriod: (p: Period) => void;
   onSettings: () => void;
+  onExport: (format: "csv" | "json") => void;
 }
 
 /** Panel izquierdo: apartados, filtros, datos y ajustes. */
@@ -111,6 +112,11 @@ export function Sidebar(p: Props) {
       </section>
 
       <section className="data-info">
+        <div className="export-row">
+          <span className="muted small">{t("Exportar")}</span>
+          <button className="chip" onClick={() => p.onExport("csv")}>CSV</button>
+          <button className="chip" onClick={() => p.onExport("json")}>JSON</button>
+        </div>
         <button className="button" onClick={p.onSettings}>
           <GearIcon /> {t("Ajustes")}
         </button>

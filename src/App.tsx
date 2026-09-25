@@ -99,6 +99,21 @@ export default function App() {
   const { data, error } = useDashboardData(filter, singleProject, refresh);
   const saveSettings = async (s: Settings) => setSettings(await api.saveSettings(s));
 
+  const doExport = async (format: "csv" | "json") => {
+    try {
+      const text = await api.exportData(filter, format);
+      const blob = new Blob([text], { type: format === "csv" ? "text/csv;charset=utf-8" : "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `agentboard-${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setLoadError(String(e));
+    }
+  };
+
   let content;
   if (error) content = <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
   else if (!data) content = <div className="main muted">{t("Cargando…")}</div>;
@@ -124,6 +139,7 @@ export default function App() {
           period={period}
           setPeriod={setPeriod}
           onSettings={() => setShowSettings(true)}
+          onExport={doExport}
         />
         <div className="content">
           {loadError && (

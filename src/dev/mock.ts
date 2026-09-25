@@ -120,6 +120,8 @@ export function installMocks() {
         ];
       case "get_data_info":
         return { firstTs: now - 42 * DAY, calls: 3792, watchedFiles: 212, lastScan: now - 60_000 };
+      case "export_data":
+        return a.format === "json" ? "[]" : "ts,iso,agent,project,branch,model,input_tokens,output_tokens,cost_usd\n";
       case "get_settings":
         return { theme: "system", language: "system", monthlyBudget: 60, ...JSON.parse(localStorage.getItem("mockSettings") ?? "{}") };
       case "set_settings":

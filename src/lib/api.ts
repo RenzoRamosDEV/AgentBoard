@@ -128,4 +128,5 @@ export const api = {
   dataInfo: () => invoke<DataInfo>("get_data_info"),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
+  exportData: (filter: Filter, format: "csv" | "json") => invoke<string>("export_data", { filter, format }),
 };

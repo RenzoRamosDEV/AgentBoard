@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AgentRow, DataInfo, ProjectRow } from "../lib/api";
+import type { AgentRow, ProjectRow } from "../lib/api";
 import { fmt } from "../lib/format";
 import { PERIODS, type Period } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
@@ -20,7 +20,6 @@ interface Props {
   onlyProject: (id: number | null) => void;
   period: Period;
   setPeriod: (p: Period) => void;
-  info: DataInfo | null;
   onSettings: () => void;
 }
 
@@ -107,19 +106,6 @@ export function Sidebar(p: Props) {
       </section>
 
       <section className="data-info">
-        <h3>Datos</h3>
-        {p.info && (
-          <dl>
-            <dt>Primer registro</dt>
-            <dd>{p.info.firstTs ? fmt.date(p.info.firstTs) : "—"}</dd>
-            <dt>Archivos leídos</dt>
-            <dd>{fmt.int(p.info.watchedFiles)}</dd>
-            <dt>Llamadas</dt>
-            <dd>{fmt.int(p.info.calls)}</dd>
-            <dt>Último escaneo</dt>
-            <dd>{p.info.lastScan ? new Date(p.info.lastScan).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</dd>
-          </dl>
-        )}
         <button className="button" onClick={p.onSettings}>
           <GearIcon /> Ajustes
         </button>

@@ -148,7 +148,7 @@ b { font-weight: 600; }
 .checklist .num { font-size: 12px; }
 .checklist .only { visibility: hidden; padding: 0 6px; }
 .checklist li:hover .only { visibility: visible; }
-.data-info { margin-top: auto; border-top: 1px solid var(--border); padding-top: 16px; gap: 10px; }
+.data-info { margin-top: auto; border-top: 1px solid var(--border); padding-top: 16px; }
 .data-info dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; margin: 0; font-size: 12px; }
 .data-info dt { color: var(--text-muted); }
 .data-info dd { margin: 0; text-align: right; }

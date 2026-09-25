@@ -177,3 +177,50 @@ fn codex_fixture() {
     ingest::scan_all(&mut conn, &providers).unwrap();
     assert_eq!(queries::summary(&conn, &f, 0).unwrap().calls, 4);
 }
+
+#[test]
+fn copilot_fixture() {
+    use agentboard_lib::providers::copilot::Copilot;
+    let mut conn = db::open_in_memory().unwrap();
+    let providers: Vec<Box<dyn Provider>> = vec![Box::new(Copilot::with_roots(vec![fixtures("copilot").join("session-state")]))];
+    let stats = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!((stats.files, stats.errors), (1, 0));
+
+    let f = queries::Filter::default();
+    let s = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!(s.calls, 4, "una llamada por assistant.message");
+    assert_eq!(s.sessions, 1);
+    assert_eq!(s.input_tokens, 3000 + 2500, "totales de los cierres, repartidos entre las respuestas");
+    assert_eq!(s.cache_read, 9000);
+    assert_eq!(s.cache_write, 1000);
+    assert_eq!(s.output_tokens, 80 + 45);
+    assert!(s.unpriced_models.is_empty());
+
+    let q = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(q("SELECT COUNT(*) FROM agents WHERE id = 'copilot'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM turns"), 3);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE model = 'claude-sonnet-4-5'"), 2);
+    assert_eq!(q("SELECT SUM(input_tokens) FROM calls WHERE model = 'claude-sonnet-4-5'"), 3000);
+    assert_eq!(q("SELECT input_tokens FROM calls WHERE message_id = 'msg4'"), 500, "delta del segundo cierre");
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE turn_id = 'turn1'"), 2);
+    assert_eq!(q("SELECT is_error FROM tool_calls WHERE call_id = 'call_bash'"), 1);
+    assert_eq!(q("SELECT duration_ms FROM tool_calls WHERE call_id = 'call_bash'"), 1000);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Edit' AND target = 'src/pricing.rs'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Read'"), 1);
+    let (i1, i2): (String, String) = conn
+        .query_row("SELECT (SELECT intent FROM turns WHERE id='turn1'), (SELECT intent FROM turns WHERE id='turn2')", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((i1.as_str(), i2.as_str()), ("debug", "brainstorm"));
+    let (name, branch): (String, String) = conn
+        .query_row("SELECT p.name, s.git_branch FROM sessions s JOIN projects p ON p.id = s.project_id", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((name.as_str(), branch.as_str()), ("demo", "main"));
+    let activity = agentboard_lib::insights::activity(&conn, &f).unwrap();
+    assert!(activity.activities.iter().any(|a| a.key == "debugging" && a.one_shot == Some(1.0)));
+
+    // Reimportar desde cero no duplica ni cambia los totales.
+    conn.execute("DELETE FROM file_state", []).unwrap();
+    ingest::scan_all(&mut conn, &providers).unwrap();
+    let again = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!((again.calls, again.input_tokens), (4, 5500));
+}

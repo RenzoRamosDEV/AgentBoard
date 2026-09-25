@@ -1,0 +1,22 @@
+{"id":"s1","timestamp":1790400000000,"type":"session.start","data":{"sessionId":"caab1e17-509c-43b4-9ff2-13d1427c36a1","copilotVersion":"1.0.88","selectedModel":"claude-sonnet-4.5","startTime":"2026-09-25T09:20:00.000Z","context":{"cwd":"/home/dev/Proyectos/demo","repository":"dev/demo","branch":"main"}}}
+{"id":"u1","timestamp":1790400000100,"type":"user.message","data":{"content":"Arregla el test que falla en pricing"}}
+{"id":"t0","timestamp":1790400000150,"type":"assistant.turn_start","data":{"turnId":"turn1"}}
+{"id":"t1","timestamp":1790400000200,"type":"tool.execution_start","data":{"toolCallId":"call_bash","toolName":"bash","turnId":"turn1","arguments":{"command":"cargo test pricing 2>&1 | tail -5","description":"Run tests"}}}
+{"id":"t2","timestamp":1790400001200,"type":"tool.execution_complete","data":{"toolCallId":"call_bash","turnId":"turn1","success":false,"result":{"content":"test failed"}}}
+{"id":"a1","timestamp":1790400001800,"type":"assistant.message","data":{"content":"Veo el fallo.","messageId":"msg1","model":"claude-sonnet-4.5","outputTokens":20,"turnId":"turn1"}}
+{"id":"t3","timestamp":1790400002000,"type":"tool.execution_start","data":{"toolCallId":"call_edit","toolName":"edit","turnId":"turn1","arguments":{"path":"src/pricing.rs","old_str":"a","new_str":"b"}}}
+{"id":"t4","timestamp":1790400002500,"type":"tool.execution_complete","data":{"toolCallId":"call_edit","turnId":"turn1","success":true,"result":{"content":"ok"}}}
+{"id":"a2","timestamp":1790400003000,"type":"assistant.message","data":{"content":"Listo.","messageId":"msg2","model":"claude-sonnet-4.5","outputTokens":60,"turnId":"turn1"}}
+{"id":"c1","timestamp":1790400003500,"type":"session.task_complete","data":{"summary":"Arreglado el test"}}
+{"id":"u2","timestamp":1790400010000,"type":"user.message","data":{"content":"¿Qué opinas de usar Svelte?"}}
+{"id":"t5","timestamp":1790400010100,"type":"assistant.turn_start","data":{"turnId":"turn2"}}
+{"id":"m1","timestamp":1790400010200,"type":"session.model_change","data":{"newModel":"gpt-5.3-codex"}}
+{"id":"t6","timestamp":1790400010300,"type":"tool.execution_start","data":{"toolCallId":"call_view","toolName":"view","turnId":"turn2","arguments":{"path":"README.md"}}}
+{"id":"t7","timestamp":1790400010400,"type":"tool.execution_complete","data":{"toolCallId":"call_view","turnId":"turn2","success":true,"result":{"content":"# Demo"}}}
+{"id":"a3","timestamp":1790400011000,"type":"assistant.message","data":{"content":"Depende.","messageId":"msg3","model":"gpt-5.3-codex","outputTokens":40,"turnId":"turn2"}}
+{"id":"x1","timestamp":1790400012000,"type":"session.shutdown","data":{"currentModel":"gpt-5.3-codex","modelMetrics":{"claude-sonnet-4.5":{"requests":{"count":2,"cost":2},"usage":{"inputTokens":3000,"outputTokens":80,"cacheReadTokens":9000,"cacheWriteTokens":1000,"reasoningTokens":0}},"gpt-5.3-codex":{"requests":{"count":1,"cost":1},"usage":{"inputTokens":2000,"outputTokens":40,"cacheReadTokens":0,"cacheWriteTokens":0,"reasoningTokens":10}}}}}
+{"id":"s2","timestamp":1790400020000,"type":"session.resume","data":{"sessionId":"caab1e17-509c-43b4-9ff2-13d1427c36a1","copilotVersion":"1.0.88","selectedModel":"gpt-5.3-codex","context":{"cwd":"/home/dev/Proyectos/demo","repository":"dev/demo","branch":"main"}}}
+{"id":"u3","timestamp":1790400020100,"type":"user.message","data":{"content":"gracias"}}
+{"id":"t8","timestamp":1790400020150,"type":"assistant.turn_start","data":{"turnId":"turn3"}}
+{"id":"a4","timestamp":1790400021000,"type":"assistant.message","data":{"content":"De nada.","messageId":"msg4","model":"gpt-5.3-codex","outputTokens":5,"turnId":"turn3"}}
+{"id":"x2","timestamp":1790400022000,"type":"session.shutdown","data":{"currentModel":"gpt-5.3-codex","modelMetrics":{"claude-sonnet-4.5":{"requests":{"count":2,"cost":2},"usage":{"inputTokens":3000,"outputTokens":80,"cacheReadTokens":9000,"cacheWriteTokens":1000,"reasoningTokens":0}},"gpt-5.3-codex":{"requests":{"count":2,"cost":2},"usage":{"inputTokens":2500,"outputTokens":45,"cacheReadTokens":0,"cacheWriteTokens":0,"reasoningTokens":10}}}}}

@@ -337,7 +337,7 @@ export function ModelFull({ data }: { data: DashboardData }) {
   const color = rowColor(rows);
   const oneShot = new Map(data.activity.models.map((m) => [m.model, m.oneShot]));
   const columns: Column<BreakdownRow>[] = [
-    { header: t("Modelo"), cell: (r) => <span className="with-dot"><i style={{ background: color(r) }} />{modelName(r.key)}{!r.hasPrice && <span className="badge">{t("sin precio")}</span>}</span> },
+    { header: t("Modelo"), cell: (r) => <span className="with-dot"><i style={{ background: color(r) }} />{modelName(r.key)}</span> },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right" },
     { header: t("Sesiones"), cell: (r) => fmt.int(r.sessions), align: "right", className: "secondary" },

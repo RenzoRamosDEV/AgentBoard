@@ -416,15 +416,7 @@ export function ModelPanel({ data, full }: PanelProps) {
   const rows = data.models;
   const oneShot = new Map(data.activity.models.map((m) => [m.model, m.oneShot]));
   const columns: Column<BreakdownRow>[] = [
-    {
-      header: t("Modelo"),
-      cell: (r) => (
-        <>
-          {modelName(r.key)}
-          {!r.hasPrice && <span className="badge">{t("sin precio")}</span>}
-        </>
-      ),
-    },
+    { header: t("Modelo"), cell: (r) => modelName(r.key) },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", width: "68px", className: "cost" },
     ...(full ? [{ header: t("Cache hit"), cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" }] : []),
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },

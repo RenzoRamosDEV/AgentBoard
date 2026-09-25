@@ -22,7 +22,13 @@ Panel izquierdo para organizarlo todo: apartados, periodo (Hoy, 7 días, 30 día
 | MCP Servers | llamadas por servidor MCP | uso |
 | Claude Agent Types | llamadas y coste dentro de subagentes por tipo | coste |
 
-**Ajustes**: tema (sistema, claro u oscuro) e idioma (sistema, español, inglés, portugués o francés). Las traducciones viven en `src/lib/i18n.ts`, con el texto en español como clave.
+**Ajustes**: tema (sistema, claro u oscuro), idioma (sistema, español, inglés, portugués o francés) y presupuesto mensual. Las traducciones viven en `src/lib/i18n.ts`, con el texto en español como clave.
+
+**Funciones de escritorio**
+- **En vivo**: un vigilante (`notify`) relee los logs al vuelo mientras la app está abierta; el dashboard se actualiza sin recargar.
+- **Bandeja del sistema**: icono con el gasto del mes en el tooltip y menú Mostrar / Salir; al cerrar la ventana la app sigue en segundo plano.
+- **Avisos de presupuesto**: notificación nativa al llegar al 80 % y al 100 % de la proyección del mes.
+- **Exportar**: las llamadas del filtro activo a CSV o JSON desde el panel lateral.
 
 El diseño está en Claude Design: <https://claude.ai/artifact/5gfYnEQqfmuqPJu7xaunqc>.
 

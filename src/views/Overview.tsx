@@ -34,7 +34,7 @@ export function summaryKpis(data: DashboardData, budget: number | null): Kpi[] {
     { label: t("Coste"), value: fmt.usd(s.costUsd), hint: t("{n} llamadas", { n: fmt.int(s.calls) }), tone: "accent" },
     { label: t("Sesiones"), value: fmt.int(s.sessions), hint: s.sessions ? t("{v} por sesión", { v: fmt.usd(s.costUsd / s.sessions) }) : "" },
     { label: t("Cache hit"), value: fmt.pct(s.cacheHit), hint: t("{r} leídos · {w} escritos", { r: fmt.compact(s.cacheRead), w: fmt.compact(s.cacheWrite) }) },
-    { label: t("Ahorro por caché"), value: fmt.usd(s.cacheSavingsUsd), hint: t("frente a pagar esa entrada sin caché"), tone: "good" },
+    { label: t("Ahorro por caché"), value: fmt.usd(s.cacheSavingsUsd), hint: t("estimado: esa entrada a precio normal"), tone: "good" },
     { label: t("Burn rate"), value: `${fmt.usd(s.burnRateUsdH)}/h`, hint: t("últimos 60 minutos") },
     {
       label: t("Gasto del mes"),

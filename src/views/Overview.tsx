@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { t } from "../lib/i18n";
 import { fmt } from "../lib/format";
 import { PERIODS, projectMonth, type Period } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
@@ -21,24 +22,24 @@ export const PANELS: Record<Exclude<SectionId, "overview">, (p: PanelProps) => R
 };
 
 export function periodLabel(period: Period) {
-  return PERIODS.find((p) => p.kind === period.kind)?.label.toLowerCase() ?? "";
+  return t(PERIODS.find((p) => p.kind === period.kind)?.label ?? "").toLowerCase();
 }
 
 export function summaryKpis(data: DashboardData, budget: number | null): Kpi[] {
   const { summary: s } = data;
   const monthSpent = data.month.reduce((a, p) => a + p.costUsd, 0);
   const projection = projectMonth(monthSpent);
-  const budgetHint = budget != null ? ` · presupuesto ${fmt.usd(budget)} (${fmt.pct(budget ? monthSpent / budget : 0)})` : "";
+  const budgetHint = budget != null ? t(" · presupuesto {b} ({p})", { b: fmt.usd(budget), p: fmt.pct(budget ? monthSpent / budget : 0) }) : "";
   return [
-    { label: "Coste", value: fmt.usd(s.costUsd), hint: `${fmt.int(s.calls)} llamadas`, tone: "accent" },
-    { label: "Sesiones", value: fmt.int(s.sessions), hint: s.sessions ? `${fmt.usd(s.costUsd / s.sessions)} por sesión` : "" },
-    { label: "Cache hit", value: fmt.pct(s.cacheHit), hint: `${fmt.compact(s.cacheRead)} leídos · ${fmt.compact(s.cacheWrite)} escritos` },
-    { label: "Ahorro por caché", value: fmt.usd(s.cacheSavingsUsd), hint: "frente a pagar esa entrada sin caché", tone: "good" },
-    { label: "Burn rate", value: `${fmt.usd(s.burnRateUsdH)}/h`, hint: "últimos 60 minutos" },
+    { label: t("Coste"), value: fmt.usd(s.costUsd), hint: t("{n} llamadas", { n: fmt.int(s.calls) }), tone: "accent" },
+    { label: t("Sesiones"), value: fmt.int(s.sessions), hint: s.sessions ? t("{v} por sesión", { v: fmt.usd(s.costUsd / s.sessions) }) : "" },
+    { label: t("Cache hit"), value: fmt.pct(s.cacheHit), hint: t("{r} leídos · {w} escritos", { r: fmt.compact(s.cacheRead), w: fmt.compact(s.cacheWrite) }) },
+    { label: t("Ahorro por caché"), value: fmt.usd(s.cacheSavingsUsd), hint: t("frente a pagar esa entrada sin caché"), tone: "good" },
+    { label: t("Burn rate"), value: `${fmt.usd(s.burnRateUsdH)}/h`, hint: t("últimos 60 minutos") },
     {
-      label: "Gasto del mes",
+      label: t("Gasto del mes"),
       value: fmt.usd(monthSpent),
-      hint: `proyección ${fmt.usd(projection)}${budgetHint}`,
+      hint: t("proyección {v}", { v: fmt.usd(projection) }) + budgetHint,
       tone: budget != null && projection > budget ? "warn" : undefined,
     },
   ];
@@ -57,38 +58,38 @@ export function Overview({
   singleProject: string | null;
   open: (s: SectionId) => void;
 }) {
-  const scope = singleProject ? `proyecto ${singleProject}` : "todos los agentes y proyectos";
+  const scope = singleProject ? t("proyecto {name}", { name: singleProject }) : t("todos los agentes y proyectos");
   const monthSpent = data.month.reduce((a, p) => a + p.costUsd, 0);
   const over = budget != null && projectMonth(monthSpent) > budget;
   return (
     <div className="main">
       <header className="page-head">
         <h1>
-          Resumen <span className="muted">· {periodLabel(period)} · {scope}</span>
+          {t("Resumen")} <span className="muted">· {periodLabel(period)} · {scope}</span>
         </h1>
       </header>
       {data.summary.calls === 0 && (
-        <div className="notice">No hay llamadas en este periodo. Si acabas de instalar la app, espera a que termine el escaneo inicial o elige "Todo".</div>
+        <div className="notice">{t('No hay llamadas en este periodo. Si acabas de instalar la app, espera a que termine el escaneo inicial o elige "Todo".')}</div>
       )}
       <Kpis items={summaryKpis(data, budget)} />
-      {over && <div className="notice warn">⚠ La proyección del mes supera el presupuesto de {fmt.usd(budget!)}.</div>}
+      {over && <div className="notice warn">{t("⚠ La proyección del mes supera el presupuesto de {b}.", { b: fmt.usd(budget!) })}</div>}
       {data.summary.unpricedModels.length > 0 && (
-        <p className="muted small">Modelos sin precio (cuentan como $0): {data.summary.unpricedModels.join(", ")}</p>
+        <p className="muted small">{t("Modelos sin precio (cuentan como $0): {list}", { list: data.summary.unpricedModels.join(", ") })}</p>
       )}
       <div className="grid-top">
-        <Panel id="daily" title="Daily Activity" question="¿Cuánto gasto cada día?" onOpen={() => open("daily")}>
+        <Panel id="daily" title="Daily Activity" question={t("¿Cuánto gasto cada día?")} onOpen={() => open("daily")}>
           <DailyPanel data={data} full={false} singleProject={singleProject} />
         </Panel>
-        <Panel id="agent" title="By Agent" question="¿Qué agente uso más?" onOpen={() => open("agent")}>
+        <Panel id="agent" title="By Agent" question={t("¿Qué agente uso más?")} onOpen={() => open("agent")}>
           <AgentPanel data={data} full={false} singleProject={singleProject} />
         </Panel>
       </div>
       <div className="grid-2">
         {SECTIONS.filter((s) => !["overview", "daily", "agent"].includes(s.id)).map((s) => {
           const Body = PANELS[s.id as Exclude<SectionId, "overview">];
-          const title = s.id === "project" && singleProject ? `By Branch · ${singleProject}` : s.title;
+          const title = s.id === "project" && singleProject ? t("By Branch · {name}", { name: singleProject }) : t(s.title);
           return (
-            <Panel key={s.id} id={s.id} title={title} question={s.question} onOpen={() => open(s.id)}>
+            <Panel key={s.id} id={s.id} title={title} question={t(s.question)} onOpen={() => open(s.id)}>
               <Body data={data} full={false} singleProject={singleProject} />
             </Panel>
           );

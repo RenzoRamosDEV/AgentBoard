@@ -1,4 +1,5 @@
 import { activityLabel, fmt, modelName } from "../lib/format";
+import { t } from "../lib/i18n";
 import type { Period } from "../lib/period";
 import { sectionOf, type SectionId } from "../lib/sections";
 import type { DashboardData } from "../lib/useData";
@@ -18,27 +19,27 @@ function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): K
       const total = sum(data.daily);
       const best = [...data.daily].sort((a, b) => b.costUsd - a.costUsd)[0];
       return [
-        { label: "Coste del periodo", value: fmt.usd(total), hint: `${days} días con actividad`, tone: "accent" },
-        { label: "Media por día activo", value: fmt.usd(days ? total / days : 0), hint: `${fmt.int(calls(data.daily))} llamadas` },
-        { label: "Día más caro", value: best ? fmt.usd(best.costUsd) : "–", hint: best ? fmt.date(best.ts) : "" },
+        { label: t("Coste del periodo"), value: fmt.usd(total), hint: t("{n} días con actividad", { n: days }), tone: "accent" },
+        { label: t("Media por día activo"), value: fmt.usd(days ? total / days : 0), hint: t("{n} llamadas", { n: fmt.int(calls(data.daily)) }) },
+        { label: t("Día más caro"), value: best ? fmt.usd(best.costUsd) : "–", hint: best ? fmt.date(best.ts) : "" },
       ];
     }
     case "agent": {
       const rows = data.agents;
-      const t = top(rows);
+      const top_ = top(rows);
       return [
-        { label: "Coste total", value: fmt.usd(sum(rows)), hint: `${rows.length} agentes`, tone: "accent" },
-        { label: "Llamadas", value: fmt.int(calls(rows)), hint: `${fmt.int(rows.reduce((a, r) => a + r.sessions, 0))} sesiones` },
-        { label: "Agente principal", value: t?.label ?? "–", hint: t ? `${fmt.pct(sum(rows) ? t.costUsd / sum(rows) : 0)} del coste · ${fmt.int(t.calls)} llamadas` : "" },
+        { label: t("Coste total"), value: fmt.usd(sum(rows)), hint: t("{n} agentes", { n: rows.length }), tone: "accent" },
+        { label: t("Llamadas"), value: fmt.int(calls(rows)), hint: t("{n} sesiones", { n: fmt.int(rows.reduce((a, r) => a + r.sessions, 0)) }) },
+        { label: t("Agente principal"), value: top_?.label ?? "–", hint: top_ ? t("{p} del coste · {n} llamadas", { p: fmt.pct(sum(rows) ? top_.costUsd / sum(rows) : 0), n: fmt.int(top_.calls) }) : "" },
       ];
     }
     case "project": {
       const rows = data.branches ?? data.projects;
-      const t = top(rows);
+      const top_ = top(rows);
       return [
-        { label: "Coste total", value: fmt.usd(sum(rows)), hint: `${rows.length} ${data.branches ? "ramas" : "proyectos"}`, tone: "accent" },
-        { label: "Sesiones", value: fmt.int(rows.reduce((a, r) => a + r.sessions, 0)), hint: "en el periodo" },
-        { label: data.branches ? "Rama principal" : "Proyecto principal", value: t?.label ?? "–", hint: t ? `${fmt.usd(t.costUsd)} · ${fmt.pct(sum(rows) ? t.costUsd / sum(rows) : 0)}` : "" },
+        { label: t("Coste total"), value: fmt.usd(sum(rows)), hint: t(data.branches ? "{n} ramas" : "{n} proyectos", { n: rows.length }), tone: "accent" },
+        { label: t("Sesiones"), value: fmt.int(rows.reduce((a, r) => a + r.sessions, 0)), hint: t("en el periodo") },
+        { label: t(data.branches ? "Rama principal" : "Proyecto principal"), value: top_?.label ?? "–", hint: top_ ? `${fmt.usd(top_.costUsd)} · ${fmt.pct(sum(rows) ? top_.costUsd / sum(rows) : 0)}` : "" },
       ];
     }
     case "activity": {
@@ -46,19 +47,19 @@ function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): K
       const turns = rows.reduce((a, r) => a + r.turns, 0);
       const edits = rows.reduce((a, r) => a + r.editTurns, 0);
       const ok = rows.reduce((a, r) => a + (r.oneShot ?? 0) * r.editTurns, 0);
-      const t = top(rows);
+      const top_ = top(rows);
       return [
-        { label: "Coste total", value: fmt.usd(sum(rows)), hint: `${fmt.int(turns)} turnos · ${fmt.usd(turns ? sum(rows) / turns : 0)} por turno`, tone: "accent" },
-        { label: "1-shot global", value: edits ? fmt.pct(ok / edits) : "–", hint: `de ${fmt.int(edits)} turnos con ediciones`, tone: edits && ok / edits >= 0.95 ? "good" : undefined },
-        { label: "Actividad principal", value: t ? activityLabel(t.key) : "–", hint: t ? `${fmt.pct(sum(rows) ? t.costUsd / sum(rows) : 0)} del coste · ${fmt.int(t.turns)} turnos` : "" },
+        { label: t("Coste total"), value: fmt.usd(sum(rows)), hint: t("{n} turnos · {v} por turno", { n: fmt.int(turns), v: fmt.usd(turns ? sum(rows) / turns : 0) }), tone: "accent" },
+        { label: t("1-shot global"), value: edits ? fmt.pct(ok / edits) : "–", hint: t("de {n} turnos con ediciones", { n: fmt.int(edits) }), tone: edits && ok / edits >= 0.95 ? "good" : undefined },
+        { label: t("Actividad principal"), value: top_ ? activityLabel(top_.key) : "–", hint: top_ ? t("{p} del coste · {n} turnos", { p: fmt.pct(sum(rows) ? top_.costUsd / sum(rows) : 0), n: fmt.int(top_.turns) }) : "" },
       ];
     }
     case "model": {
-      const t = top(data.models);
+      const top_ = top(data.models);
       return [
-        { label: "Coste total", value: fmt.usd(sum(data.models)), hint: `${data.models.length} modelos`, tone: "accent" },
-        { label: "Llamadas", value: fmt.int(calls(data.models)), hint: "en el periodo" },
-        { label: "Modelo principal", value: t ? modelName(t.key) : "–", hint: t ? `${fmt.usd(t.costUsd)} · cache hit ${fmt.pct(t.cacheHit)}` : "" },
+        { label: t("Coste total"), value: fmt.usd(sum(data.models)), hint: t("{n} modelos", { n: data.models.length }), tone: "accent" },
+        { label: t("Llamadas"), value: fmt.int(calls(data.models)), hint: t("en el periodo") },
+        { label: t("Modelo principal"), value: top_ ? modelName(top_.key) : "–", hint: top_ ? t("{v} · cache hit {p}", { v: fmt.usd(top_.costUsd), p: fmt.pct(top_.cacheHit) }) : "" },
       ];
     }
     case "tools":
@@ -66,21 +67,21 @@ function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): K
     case "mcp": {
       const rows = { tools: data.tools, shell: data.commands, mcp: data.mcp }[id];
       const errors = rows.reduce((a, r) => a + r.errors, 0);
-      const t = [...rows].sort((a, b) => b.calls - a.calls)[0];
+      const top_ = [...rows].sort((a, b) => b.calls - a.calls)[0];
       return [
-        { label: "Llamadas", value: fmt.int(calls(rows)), hint: `${rows.length} distintos`, tone: "accent" },
-        { label: "Con error", value: calls(rows) ? fmt.pct(errors / calls(rows)) : "–", hint: `${fmt.int(errors)} llamadas`, tone: calls(rows) && errors / calls(rows) > 0.05 ? "warn" : undefined },
-        { label: "Más usado", value: t?.label ?? "–", hint: t ? `${fmt.int(t.calls)} llamadas` : "" },
+        { label: t("Llamadas"), value: fmt.int(calls(rows)), hint: t("{n} distintos", { n: rows.length }), tone: "accent" },
+        { label: t("Con error"), value: calls(rows) ? fmt.pct(errors / calls(rows)) : "–", hint: t("{n} llamadas", { n: fmt.int(errors) }), tone: calls(rows) && errors / calls(rows) > 0.05 ? "warn" : undefined },
+        { label: t("Más usado"), value: top_?.label ?? "–", hint: top_ ? t("{n} llamadas", { n: fmt.int(top_.calls) }) : "" },
       ];
     }
     case "skills":
     case "agents": {
       const rows = id === "skills" ? data.skills : data.agentTypes;
-      const t = top(rows);
+      const top_ = top(rows);
       return [
-        { label: "Coste", value: fmt.usd(sum(rows)), hint: `${fmt.int(calls(rows))} ${id === "skills" ? "usos" : "llamadas"}`, tone: "accent" },
-        { label: id === "skills" ? "Skills y agentes" : "Tipos", value: fmt.int(rows.length), hint: "distintos en el periodo" },
-        { label: "Más caro", value: t?.label ?? "–", hint: t ? fmt.usd(t.costUsd) : "" },
+        { label: t("Coste"), value: fmt.usd(sum(rows)), hint: t(id === "skills" ? "{n} usos" : "{n} llamadas", { n: fmt.int(calls(rows)) }), tone: "accent" },
+        { label: t(id === "skills" ? "Skills y agentes" : "Tipos"), value: fmt.int(rows.length), hint: t("distintos en el periodo") },
+        { label: t("Más caro"), value: top_?.label ?? "–", hint: top_ ? fmt.usd(top_.costUsd) : "" },
       ];
     }
   }
@@ -100,15 +101,15 @@ export function Section({
   back: () => void;
 }) {
   const s = sectionOf(id);
-  const title = id === "project" && singleProject ? `By Branch · ${singleProject}` : s.title;
+  const title = id === "project" && singleProject ? t("By Branch · {name}", { name: singleProject }) : t(s.title);
   return (
     <div className="main">
       <header className="page-head">
         <button className="link back" onClick={back}>
-          ‹ Volver al resumen
+          {t("‹ Volver al resumen")}
         </button>
         <h1>
-          {title} <span className="muted">· {s.question} · {periodLabel(period)}</span>
+          {title} <span className="muted">· {t(s.question)} · {periodLabel(period)}</span>
         </h1>
       </header>
       <Kpis items={sectionKpis(id, data)} columns={3} />

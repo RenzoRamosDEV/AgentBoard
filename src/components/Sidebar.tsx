@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { AgentRow, ProjectRow } from "../lib/api";
 import { fmt } from "../lib/format";
-import { PERIODS, type Period } from "../lib/period";
+import { PERIODS, type Period, type PeriodKind } from "../lib/period";
 import { SECTIONS, type SectionId } from "../lib/sections";
-import { GearIcon, SearchIcon, SectionIcon } from "./Icons";
+import { ChevronIcon, GearIcon, SearchIcon, SectionIcon } from "./Icons";
 import { t } from "../lib/i18n";
 import logo1x from "../assets/logo-132.png";
 import logo2x from "../assets/logo-264.png";
@@ -55,12 +55,20 @@ export function Sidebar(p: Props) {
 
       <section>
         <h3>{t("Periodo")}</h3>
-        <div className="chips">
-          {PERIODS.map(({ kind, label }) => (
-            <button key={kind} className={`chip ${p.period.kind === kind ? "active" : ""}`} onClick={() => p.setPeriod({ kind })}>
-              {t(label)}
-            </button>
-          ))}
+        <div className="select-wrap">
+          <select
+            className="select"
+            aria-label={t("Periodo")}
+            value={p.period.kind}
+            onChange={(e) => p.setPeriod({ kind: e.target.value as PeriodKind })}
+          >
+            {PERIODS.map(({ kind, label }) => (
+              <option key={kind} value={kind}>
+                {t(label)}
+              </option>
+            ))}
+          </select>
+          <ChevronIcon />
         </div>
       </section>
 

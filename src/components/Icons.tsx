@@ -56,6 +56,12 @@ export const SearchIcon = () => (
   </svg>
 );
 
+export const ChevronIcon = () => (
+  <svg {...base} width={14} height={14}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+);
+
 export const GearIcon = () => (
   <svg {...base} width={15} height={15}>
     <circle cx="12" cy="12" r="3" />

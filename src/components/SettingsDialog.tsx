@@ -9,6 +9,14 @@ const THEMES: { value: Theme; label: string }[] = [
   { value: "dark", label: "Oscuro" },
 ];
 
+type Tab = "tema" | "idioma" | "presupuesto" | "exportar";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "tema", label: "Tema" },
+  { id: "idioma", label: "Idioma" },
+  { id: "presupuesto", label: "Presupuesto" },
+  { id: "exportar", label: "Exportar" },
+];
+
 /** Miniatura de la app en un tema: panel lateral, tarjetas y barras, con colores fijos. */
 function Preview({ theme }: { theme: "light" | "dark" }) {
   const c =
@@ -75,6 +83,7 @@ export function SettingsDialog({
   onExport: (format: "csv" | "json") => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [tab, setTab] = useState<Tab>("tema");
   const [draft, setDraft] = useState<Settings>(settings);
   const dirty = draft.theme !== settings.theme || draft.language !== settings.language;
   useEffect(() => {
@@ -90,47 +99,80 @@ export function SettingsDialog({
         <h2>{t("Ajustes")}</h2>
       </header>
 
-      <section className="settings-section">
-        <h3>{t("Tema")}</h3>
-        <div className="theme-cards">
-          {THEMES.map((o) => (
-            <ThemeCard key={o.value} value={o.value} label={t(o.label)} selected={draft.theme === o.value} onSelect={() => setDraft({ ...draft, theme: o.value })} />
-          ))}
-        </div>
-        <p className="muted small">{t('"Sistema" sigue el modo claro u oscuro de tu escritorio.')}</p>
-      </section>
+      <div className="settings-tabs" role="tablist">
+        {TABS.map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === tb.id}
+            className={`settings-tab ${tab === tb.id ? "active" : ""}`}
+            onClick={() => setTab(tb.id)}
+          >
+            {t(tb.label)}
+          </button>
+        ))}
+      </div>
 
-      <section className="settings-section">
-        <h3>{t("Presupuesto mensual")}</h3>
-        <div className="budget-field">
-          <span className="budget-prefix">$</span>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            inputMode="decimal"
-            placeholder={t("sin límite")}
-            value={draft.monthlyBudget ?? ""}
-            onChange={(e) => setDraft({ ...draft, monthlyBudget: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
-          />
-        </div>
-        <p className="muted small">{t("Se avisa al llegar al 80 % y al 100 % de la proyección del mes. Vacío = sin avisos.")}</p>
-      </section>
+      <div className="settings-body" role="tabpanel">
+        {tab === "tema" && (
+          <section className="settings-section">
+            <div className="settings-intro">
+              <p className="intro-desc">{t("Cómo se ve AgentBoard: claro, oscuro o siguiendo tu escritorio.")}</p>
+            </div>
+            <div className="theme-cards">
+              {THEMES.map((o) => (
+                <ThemeCard key={o.value} value={o.value} label={t(o.label)} selected={draft.theme === o.value} onSelect={() => setDraft({ ...draft, theme: o.value })} />
+              ))}
+            </div>
+            <p className="muted small">{t('"Sistema" sigue el modo claro u oscuro de tu escritorio.')}</p>
+          </section>
+        )}
 
-      <section className="settings-section">
-        <h3>{t("Idioma")}</h3>
-        <Segmented value={draft.language} options={LANGS.map((o) => ({ ...o, label: o.value === "system" ? t("Sistema") : o.label }))} onChange={(language: Language) => setDraft({ ...draft, language })} />
-        <p className="muted small">{t('"Sistema" usa el idioma de tu escritorio (español, inglés, portugués o francés).')}</p>
-      </section>
+        {tab === "idioma" && (
+          <section className="settings-section">
+            <div className="settings-intro">
+              <p className="intro-desc">{t("El idioma en el que se muestra toda la interfaz.")}</p>
+            </div>
+            <Segmented value={draft.language} options={LANGS.map((o) => ({ ...o, label: o.value === "system" ? t("Sistema") : o.label }))} onChange={(language: Language) => setDraft({ ...draft, language })} />
+            <p className="muted small">{t('"Sistema" usa el idioma de tu escritorio (español, inglés, portugués o francés).')}</p>
+          </section>
+        )}
 
-      <section className="settings-section">
-        <h3>{t("Exportar")}</h3>
-        <div className="export-row">
-          <button type="button" className="chip" onClick={() => onExport("csv")}>CSV</button>
-          <button type="button" className="chip" onClick={() => onExport("json")}>JSON</button>
-        </div>
-        <p className="muted small">{t("Descarga los datos del periodo y los filtros actuales.")}</p>
-      </section>
+        {tab === "presupuesto" && (
+          <section className="settings-section">
+            <div className="settings-intro">
+              <p className="intro-desc">{t("Fija un tope de gasto al mes para vigilar cuánto llevas gastado.")}</p>
+            </div>
+            <div className="budget-field">
+              <span className="budget-prefix">$</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputMode="decimal"
+                placeholder={t("sin límite")}
+                value={draft.monthlyBudget ?? ""}
+                onChange={(e) => setDraft({ ...draft, monthlyBudget: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
+              />
+            </div>
+            <p className="muted small">{t("Se avisa al llegar al 80 % y al 100 % de la proyección del mes. Vacío = sin avisos.")}</p>
+          </section>
+        )}
+
+        {tab === "exportar" && (
+          <section className="settings-section">
+            <div className="settings-intro">
+              <p className="intro-desc">{t("Guarda tus datos en un archivo para usarlos fuera de la app.")}</p>
+            </div>
+            <div className="export-row">
+              <button type="button" className="chip" onClick={() => onExport("csv")}>CSV</button>
+              <button type="button" className="chip" onClick={() => onExport("json")}>JSON</button>
+            </div>
+            <p className="muted small">{t("Descarga los datos del periodo y los filtros actuales.")}</p>
+          </section>
+        )}
+      </div>
 
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>

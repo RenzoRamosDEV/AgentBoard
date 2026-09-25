@@ -40,6 +40,13 @@ export function Bars({ items, color = "var(--series-1)", limit, labelWidth = 84,
   );
 }
 
+/** Barra dentro de una fila de tabla: proporcional al máximo del conjunto, sin etiqueta ni cifra. */
+export const InlineBar = ({ value, max, color = "var(--series-1)" }: { value: number; max: number; color?: string }) => (
+  <span className="inline-bar" aria-hidden>
+    <span className="inline-bar-fill" style={{ width: `${max > 0 ? Math.max((value / max) * 100, value > 0 ? 1.5 : 0) : 0}%`, background: color }} />
+  </span>
+);
+
 export interface ColumnPoint {
   ts: number;
   value: number;

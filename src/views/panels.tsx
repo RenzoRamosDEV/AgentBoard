@@ -6,39 +6,21 @@ import type { ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
 import { activityColor, activityLabel, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
-import { Bars, Columns, Donut, Legend, type BarItem } from "../components/Charts";
+import { Bars, Columns, Donut, InlineBar, Legend } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { ChartTitle, Split } from "../components/Panel";
+
+/** Columna con la barra de reparto integrada en la fila (no repite etiqueta ni cifra). */
+function barColumn<T>(header: string, rows: T[], value: (r: T) => number, color: string): Column<T> {
+  const max = Math.max(...rows.map(value), 0);
+  return { header, cell: (r) => <InlineBar value={value(r)} max={max} color={color} />, width: "minmax(90px, 1.3fr)" };
+}
 
 const cost = (n: number) => fmt.usd(n);
 const shot = (v: number | null | undefined) => (v == null ? "–" : fmt.pct(v));
 const shotClass = (v: number | null | undefined) => (v == null ? "muted" : v >= 0.95 ? "good" : "warn");
 const errClass = (r: BreakdownRow) => (r.calls && r.errors / r.calls > 0.05 ? "warn" : "muted");
 const err = (r: BreakdownRow) => (r.errors ? fmt.pct(r.errors / r.calls) : "–");
-
-const usesTooltip = (r: BreakdownRow) => (
-  <>
-    <b>{r.label}</b>
-    <div>{fmt.int(r.calls)} llamadas</div>
-    <div className="muted">
-      {fmt.int(r.errors)} con error ({err(r)})
-    </div>
-  </>
-);
-
-const costTooltip = (label: string, r: BreakdownRow) => (
-  <>
-    <b>{label}</b>
-    <div>{cost(r.costUsd)}</div>
-    <div className="muted">{fmt.int(r.calls)} llamadas</div>
-  </>
-);
-
-export const toCostBars = (rows: BreakdownRow[], label = (r: BreakdownRow) => r.label, color?: string): BarItem[] =>
-  rows.map((r) => ({ key: r.key, label: label(r), value: r.costUsd, valueLabel: cost(r.costUsd), color, tooltip: costTooltip(label(r), r) }));
-
-export const toUseBars = (rows: BreakdownRow[], color?: string): BarItem[] =>
-  rows.map((r) => ({ key: r.key, label: r.label, value: r.calls, valueLabel: fmt.int(r.calls), color, tooltip: usesTooltip(r) }));
 
 export interface PanelProps {
   data: DashboardData;
@@ -110,15 +92,9 @@ export function ProjectPanel({ data, full, singleProject }: PanelProps) {
     ...(full ? [{ header: "avg/ses", cell: (r: BreakdownRow) => cost(r.sessions ? r.costUsd / r.sessions : 0), align: "right" as const, width: "68px" }] : []),
     { header: "Ses", cell: (r) => fmt.int(r.sessions), align: "right", width: "40px", className: "secondary" },
     ...(full ? [{ header: "Overhead", cell: (r: BreakdownRow) => (r.overheadTokens ? fmt.compact(r.overheadTokens) : "–"), align: "right" as const, width: "70px", className: "accent" }] : []),
+    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-blue)"),
   ];
-  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
-  const chart = (
-    <>
-      <ChartTitle>Reparto del coste</ChartTitle>
-      <Bars items={toCostBars(rows, undefined, "var(--series-blue)")} limit={full ? undefined : 6} thick={full} />
-    </>
-  );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={200} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
 }
 
 // --- By Activity ------------------------------------------------------------------
@@ -230,15 +206,9 @@ export function ModelPanel({ data, full }: PanelProps) {
     ...(full ? [{ header: "Caché", cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" }] : []),
     { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
     { header: "1-shot", cell: (r) => shot(oneShot.get(r.key)), align: "right", width: "56px", className: (r) => shotClass(oneShot.get(r.key)) },
+    barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-violet)"),
   ];
-  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
-  const chart = (
-    <>
-      <ChartTitle>Coste por modelo</ChartTitle>
-      <Bars items={toCostBars(rows, (r) => modelName(r.key), "var(--series-violet)")} limit={full ? undefined : 6} thick={full} />
-    </>
-  );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={200} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
 }
 
 // --- Tools / Shell / MCP (usos y errores) ----------------------------------------------
@@ -248,15 +218,9 @@ function UsesPanel({ rows, full, header, color, mono = false }: { rows: Breakdow
     { header, cell: (r) => r.label, className: mono ? "mono" : "" },
     { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
     { header: "Errores", cell: err, align: "right", width: "60px", className: errClass },
+    barColumn("Uso", rows, (r) => r.calls, color),
   ];
-  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
-  const chart = (
-    <>
-      <ChartTitle>Uso</ChartTitle>
-      <Bars items={toUseBars(rows, color)} limit={full ? undefined : 6} thick={full} />
-    </>
-  );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={200} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
 }
 
 export const ToolsPanel = ({ data, full }: PanelProps) => <UsesPanel rows={data.tools} full={full} header="Herramienta" color="var(--series-green)" />;
@@ -270,15 +234,9 @@ function CostUsesPanel({ rows, full, header, usesHeader, color }: { rows: Breakd
     { header, cell: (r) => r.label },
     { header: usesHeader, cell: (r) => fmt.int(r.calls), align: "right", width: "64px" },
     { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
+    barColumn("Reparto del coste", rows, (r) => r.costUsd, color),
   ];
-  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
-  const chart = (
-    <>
-      <ChartTitle>Coste</ChartTitle>
-      <Bars items={toCostBars(rows, undefined, color)} limit={full ? undefined : 6} thick={full} />
-    </>
-  );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={200} />;
+  return <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} limit={full ? undefined : 6} />;
 }
 
 export const SkillsPanel = ({ data, full }: PanelProps) => <CostUsesPanel rows={data.skills} full={full} header="Skill / agente" usesHeader="Usos" color="var(--series-violet)" />;

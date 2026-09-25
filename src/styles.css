@@ -193,6 +193,10 @@ b { font-weight: 600; }
 .bar-row:hover .bar-fill { filter: brightness(1.12); }
 .bar-value { color: var(--text-secondary); font-size: 11.5px; min-width: 40px; text-align: right; }
 
+.inline-bar { display: block; height: 10px; background: var(--track); border-radius: 0 4px 4px 0; }
+.inline-bar-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.table-row:hover .inline-bar-fill { filter: brightness(1.12); }
+
 /* Columnas */
 .columns { display: flex; flex-direction: column; gap: 6px; }
 .columns-max { font-size: 11px; text-align: right; }

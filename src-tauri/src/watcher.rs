@@ -21,7 +21,11 @@ const RECHECK: Duration = Duration::from_secs(20);
 pub type Providers = Arc<dyn Fn() -> Vec<Box<dyn Provider>> + Send + Sync>;
 
 /// Lanza el vigilante en su propio hilo. `on_change` se llama tras cada relectura con cambios.
-pub fn spawn(db: Arc<Mutex<Connection>>, providers: Providers, on_change: impl Fn() + Send + 'static) {
+pub fn spawn(
+    db: Arc<Mutex<Connection>>,
+    providers: Providers,
+    on_change: impl Fn() + Send + 'static,
+) {
     std::thread::spawn(move || {
         if let Err(e) = run(db, providers, on_change, RECHECK) {
             eprintln!("agentboard: el vigilante se detuvo: {e:#}");
@@ -30,10 +34,19 @@ pub fn spawn(db: Arc<Mutex<Connection>>, providers: Providers, on_change: impl F
 }
 
 fn existing_roots(providers: &Providers) -> Vec<PathBuf> {
-    providers().iter().flat_map(|p| p.log_roots()).filter(|r| r.is_dir()).collect()
+    providers()
+        .iter()
+        .flat_map(|p| p.log_roots())
+        .filter(|r| r.is_dir())
+        .collect()
 }
 
-fn run(db: Arc<Mutex<Connection>>, providers: Providers, on_change: impl Fn(), recheck: Duration) -> Result<()> {
+fn run(
+    db: Arc<Mutex<Connection>>,
+    providers: Providers,
+    on_change: impl Fn(),
+    recheck: Duration,
+) -> Result<()> {
     let (tx, rx) = channel();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if res.is_ok() {
@@ -42,7 +55,7 @@ fn run(db: Arc<Mutex<Connection>>, providers: Providers, on_change: impl Fn(), r
     })?;
 
     let mut watched: HashSet<PathBuf> = HashSet::new();
-    let mut watch_new = |watcher: &mut notify::RecommendedWatcher, watched: &mut HashSet<PathBuf>| {
+    let watch_new = |watcher: &mut notify::RecommendedWatcher, watched: &mut HashSet<PathBuf>| {
         for root in existing_roots(&providers) {
             if watched.insert(root.clone()) {
                 if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
@@ -69,7 +82,9 @@ fn run(db: Arc<Mutex<Connection>>, providers: Providers, on_change: impl Fn(), r
         while rx.recv_timeout(DEBOUNCE).is_ok() && start.elapsed() < Duration::from_secs(5) {}
 
         let scanned = match db.lock() {
-            Ok(mut conn) => ingest::scan_all(&mut conn, &providers()).map(|s| s.records).unwrap_or(0),
+            Ok(mut conn) => ingest::scan_all(&mut conn, &providers())
+                .map(|s| s.records)
+                .unwrap_or(0),
             Err(_) => 0,
         };
         // Puede haber aparecido una carpeta nueva durante la actividad.
@@ -102,23 +117,40 @@ mod tests {
 
         let db = Arc::new(Mutex::new(db::open_in_memory().unwrap()));
         let root2 = root.clone();
-        let providers: Providers = Arc::new(move || vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]);
+        let providers: Providers = Arc::new(move || {
+            vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
+        });
         let calls = Arc::new(AtomicUsize::new(0));
 
         let db2 = db.clone();
         let providers2 = providers.clone();
         let calls2 = calls.clone();
         std::thread::spawn(move || {
-            let _ = run(db2, providers2, move || { calls2.fetch_add(1, Ordering::SeqCst); }, Duration::from_millis(200));
+            let _ = run(
+                db2,
+                providers2,
+                move || {
+                    calls2.fetch_add(1, Ordering::SeqCst);
+                },
+                Duration::from_millis(200),
+            );
         });
 
-        let count = |sql: &str| db.lock().unwrap().query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+        let count = |sql: &str| {
+            db.lock()
+                .unwrap()
+                .query_row(sql, [], |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
         // Espera al escaneo inicial (que hace el propio vigilante al arrancar no; lo hace al primer evento).
         std::thread::sleep(Duration::from_millis(300));
 
         // Añade una llamada nueva: el vigilante debe detectarla y releer.
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap();
         write!(f, "{}", line("m2", "2026-09-25T10:01:00Z")).unwrap();
         f.flush().unwrap();
 
@@ -134,8 +166,16 @@ mod tests {
         assert!(calls.load(Ordering::SeqCst) >= 1, "no avisó a la UI");
 
         // Un cambio que no añade llamadas (tocar mtime reescribiendo lo mismo) no duplica.
-        std::fs::write(&file, line("m1", "2026-09-25T10:00:00Z") + &line("m2", "2026-09-25T10:01:00Z")).unwrap();
+        std::fs::write(
+            &file,
+            line("m1", "2026-09-25T10:00:00Z") + &line("m2", "2026-09-25T10:01:00Z"),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(600));
-        assert_eq!(count("SELECT COUNT(*) FROM calls"), 2, "no debe duplicar al reescribir lo mismo");
+        assert_eq!(
+            count("SELECT COUNT(*) FROM calls"),
+            2,
+            "no debe duplicar al reescribir lo mismo"
+        );
     }
 }

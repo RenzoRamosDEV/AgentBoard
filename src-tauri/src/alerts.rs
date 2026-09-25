@@ -27,7 +27,9 @@ impl Alerts {
             Err(_) => return,
         };
 
-        let _ = tray.set_tooltip(Some(&format!("AgentBoard — este mes: ${spent:.2} (proyección ${projection:.2})")));
+        let _ = tray.set_tooltip(Some(&format!(
+            "AgentBoard — este mes: ${spent:.2} (proyección ${projection:.2})"
+        )));
 
         let budget = settings::load().monthly_budget;
         if let Some(budget) = budget.filter(|b| *b > 0.0) {
@@ -37,7 +39,14 @@ impl Alerts {
                 notify(app, "Presupuesto superado", &format!("La proyección del mes (${projection:.2}) supera tu presupuesto de ${budget:.2}."));
                 done |= 0b10 | 0b01;
             } else if ratio >= 0.8 && done & 0b01 == 0 {
-                notify(app, "Cerca del presupuesto", &format!("Vas por el {:.0}% de tu presupuesto mensual de ${budget:.2}.", ratio * 100.0));
+                notify(
+                    app,
+                    "Cerca del presupuesto",
+                    &format!(
+                        "Vas por el {:.0}% de tu presupuesto mensual de ${budget:.2}.",
+                        ratio * 100.0
+                    ),
+                );
                 done |= 0b01;
             }
             self.notified.store(done, Ordering::SeqCst);

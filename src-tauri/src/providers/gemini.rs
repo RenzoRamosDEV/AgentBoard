@@ -29,7 +29,10 @@ struct FileState {
 
 impl Gemini {
     pub fn with_roots(roots: Vec<PathBuf>) -> Self {
-        Self { roots: Some(roots), state: Mutex::default() }
+        Self {
+            roots: Some(roots),
+            state: Mutex::default(),
+        }
     }
 
     fn home() -> Option<PathBuf> {
@@ -43,7 +46,11 @@ impl Gemini {
         if let Some(id) = meta["sessionId"].as_str() {
             st.session_id = id.to_string();
         }
-        if let Some(dir) = meta["directories"].as_array().and_then(|d| d.first()).and_then(|d| d.as_str()) {
+        if let Some(dir) = meta["directories"]
+            .as_array()
+            .and_then(|d| d.first())
+            .and_then(|d| d.as_str())
+        {
             st.cwd = Some(dir.to_string());
         }
         if meta["kind"].as_str() == Some("subagent") {
@@ -52,14 +59,20 @@ impl Gemini {
     }
 
     fn records_for_message(st: &mut FileState, m: &Value, out: &mut Vec<Record>) {
-        let Some(ts) = m["timestamp"].as_str().and_then(parse_ts) else { return };
+        let Some(ts) = m["timestamp"].as_str().and_then(parse_ts) else {
+            return;
+        };
         let id = m["id"].as_str().unwrap_or("").to_string();
         match m["type"].as_str() {
             Some("user") if !st.is_subagent => {
                 st.turns += 1;
                 let text = text_of(&m["content"]);
                 out.push(Record::Turn(TurnRec {
-                    id: if id.is_empty() { format!("{}:{}", st.session_id, st.turns) } else { id },
+                    id: if id.is_empty() {
+                        format!("{}:{}", st.session_id, st.turns)
+                    } else {
+                        id
+                    },
                     session_id: st.session_id.clone(),
                     ts,
                     intent: prompt_intent(&text),
@@ -93,17 +106,38 @@ impl Gemini {
                 }
                 if let Some(calls) = m["toolCalls"].as_array() {
                     for c in calls {
-                        let Some(call_id) = c["id"].as_str() else { continue };
+                        let Some(call_id) = c["id"].as_str() else {
+                            continue;
+                        };
                         let raw = c["name"].as_str().unwrap_or("?");
                         let tool = canonical_tool(raw).to_string();
                         let args = &c["args"];
-                        let target = ["command", "file_path", "absolute_path", "path", "pattern", "query", "url", "prompt"]
-                            .iter()
-                            .find_map(|k| args[*k].as_str())
-                            .map(|s| s.chars().take(500).collect::<String>());
+                        let target = [
+                            "command",
+                            "file_path",
+                            "absolute_path",
+                            "path",
+                            "pattern",
+                            "query",
+                            "url",
+                            "prompt",
+                        ]
+                        .iter()
+                        .find_map(|k| args[*k].as_str())
+                        .map(|s| s.chars().take(500).collect::<String>());
                         let detail = match tool.as_str() {
-                            "Agent" => Some(args["subagent_type"].as_str().or(args["agent"].as_str()).or(args["name"].as_str()).unwrap_or("general-purpose").to_string()),
-                            "Skill" => args["name"].as_str().or(args["skill"].as_str()).map(str::to_string),
+                            "Agent" => Some(
+                                args["subagent_type"]
+                                    .as_str()
+                                    .or(args["agent"].as_str())
+                                    .or(args["name"].as_str())
+                                    .unwrap_or("general-purpose")
+                                    .to_string(),
+                            ),
+                            "Skill" => args["name"]
+                                .as_str()
+                                .or(args["skill"].as_str())
+                                .map(str::to_string),
                             _ => None,
                         };
                         let cts = c["timestamp"].as_str().and_then(parse_ts).unwrap_or(ts);
@@ -117,7 +151,11 @@ impl Gemini {
                             detail,
                         }));
                         if let Some(status) = c["status"].as_str() {
-                            if status != "executing" && status != "scheduled" && status != "validating" && status != "awaiting_approval" {
+                            if status != "executing"
+                                && status != "scheduled"
+                                && status != "validating"
+                                && status != "awaiting_approval"
+                            {
                                 out.push(Record::ToolResult {
                                     call_id: call_id.to_string(),
                                     ts: cts,
@@ -138,7 +176,11 @@ impl Gemini {
 fn text_of(content: &Value) -> String {
     match content {
         Value::String(s) => s.clone(),
-        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str().or(p.as_str())).collect::<Vec<_>>().join(" "),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| p["text"].as_str().or(p.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
         Value::Object(_) => content["text"].as_str().unwrap_or("").to_string(),
         _ => String::new(),
     }
@@ -176,7 +218,9 @@ impl Provider for Gemini {
         if let Some(r) = &self.roots {
             return r.clone();
         }
-        Self::home().map(|h| vec![h.join("tmp")]).unwrap_or_default()
+        Self::home()
+            .map(|h| vec![h.join("tmp")])
+            .unwrap_or_default()
     }
 
     fn installed(&self) -> bool {
@@ -186,11 +230,16 @@ impl Provider for Gemini {
     fn matches(&self, path: &Path) -> bool {
         let in_chats = path.components().any(|c| c.as_os_str() == "chats");
         let ext = path.extension().and_then(|e| e.to_str());
-        in_chats && matches!(ext, Some("jsonl") | Some("json")) && self.log_roots().iter().any(|r| path.starts_with(r))
+        in_chats
+            && matches!(ext, Some("jsonl") | Some("json"))
+            && self.log_roots().iter().any(|r| path.starts_with(r))
     }
 
     fn reset(&self, path: &Path) {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(path);
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
@@ -223,7 +272,16 @@ impl Provider for Gemini {
                     _ => None,
                 })
                 .unwrap_or(0);
-            out.insert(0, Record::Session(SessionRec { id: st.session_id.clone(), cwd: st.cwd.clone(), git_branch: None, ts, is_subagent: st.is_subagent }));
+            out.insert(
+                0,
+                Record::Session(SessionRec {
+                    id: st.session_id.clone(),
+                    cwd: st.cwd.clone(),
+                    git_branch: None,
+                    ts,
+                    is_subagent: st.is_subagent,
+                }),
+            );
         }
         Ok(out)
     }
@@ -236,14 +294,19 @@ mod tests {
     #[test]
     fn detecta_sesiones() {
         let p = Gemini::with_roots(vec![PathBuf::from("/h/.gemini/tmp")]);
-        assert!(p.matches(Path::new("/h/.gemini/tmp/abc/chats/session-2026-09-25T10-00-1234abcd.jsonl")));
+        assert!(p.matches(Path::new(
+            "/h/.gemini/tmp/abc/chats/session-2026-09-25T10-00-1234abcd.jsonl"
+        )));
         assert!(p.matches(Path::new("/h/.gemini/tmp/abc/chats/parent/child.jsonl")));
         assert!(!p.matches(Path::new("/h/.gemini/tmp/abc/logs.json")));
     }
 
     #[test]
     fn texto_de_partes() {
-        assert_eq!(text_of(&serde_json::json!([{ "text": "hola" }, { "text": "mundo" }])), "hola mundo");
+        assert_eq!(
+            text_of(&serde_json::json!([{ "text": "hola" }, { "text": "mundo" }])),
+            "hola mundo"
+        );
         assert_eq!(text_of(&serde_json::json!("hola")), "hola");
     }
 }

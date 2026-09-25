@@ -5,7 +5,9 @@
 //! A diferencia de Claude Code, el modelo y la carpeta no van en cada línea: se guardan por
 //! archivo en `state` mientras se lee.
 
-use super::{parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
+use super::{
+    parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,
+};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,7 +37,10 @@ struct FileState {
 
 impl Codex {
     pub fn with_roots(roots: Vec<PathBuf>) -> Self {
-        Self { roots: Some(roots), state: Mutex::default() }
+        Self {
+            roots: Some(roots),
+            state: Mutex::default(),
+        }
     }
 
     fn home() -> Option<PathBuf> {
@@ -81,18 +86,32 @@ fn tool_target(name: &str, args: &Value) -> Option<String> {
             _ => args["cmd"].as_str().unwrap_or("").to_string(),
         },
         "Edit" => {
-            let patch = args["input"].as_str().or(args["patch"].as_str()).unwrap_or("");
+            let patch = args["input"]
+                .as_str()
+                .or(args["patch"].as_str())
+                .unwrap_or("");
             patch
                 .lines()
-                .find_map(|l| l.strip_prefix("*** Update File: ").or(l.strip_prefix("*** Add File: ")).or(l.strip_prefix("*** Delete File: ")))
+                .find_map(|l| {
+                    l.strip_prefix("*** Update File: ")
+                        .or(l.strip_prefix("*** Add File: "))
+                        .or(l.strip_prefix("*** Delete File: "))
+                })
                 .unwrap_or("")
                 .to_string()
         }
-        _ => ["path", "file_path", "pattern", "query", "url", "description"]
-            .iter()
-            .find_map(|k| args[*k].as_str())
-            .unwrap_or("")
-            .to_string(),
+        _ => [
+            "path",
+            "file_path",
+            "pattern",
+            "query",
+            "url",
+            "description",
+        ]
+        .iter()
+        .find_map(|k| args[*k].as_str())
+        .unwrap_or("")
+        .to_string(),
     };
     (!s.is_empty()).then(|| s.chars().take(500).collect())
 }
@@ -126,7 +145,9 @@ impl Provider for Codex {
         if let Some(r) = &self.roots {
             return r.clone();
         }
-        Self::home().map(|h| vec![h.join("sessions"), h.join("archived_sessions")]).unwrap_or_default()
+        Self::home()
+            .map(|h| vec![h.join("sessions"), h.join("archived_sessions")])
+            .unwrap_or_default()
     }
 
     fn installed(&self) -> bool {
@@ -135,12 +156,18 @@ impl Provider for Codex {
 
     fn matches(&self, path: &Path) -> bool {
         path.extension().is_some_and(|e| e == "jsonl")
-            && path.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.starts_with("rollout-"))
+            && path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .is_some_and(|f| f.starts_with("rollout-"))
             && self.log_roots().iter().any(|r| path.starts_with(r))
     }
 
     fn reset(&self, path: &Path) {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(path);
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
@@ -155,7 +182,11 @@ impl Provider for Codex {
 
         match v["type"].as_str() {
             Some("session_meta") => {
-                st.thread_id = payload["id"].as_str().or(payload["session_id"].as_str()).unwrap_or("").to_string();
+                st.thread_id = payload["id"]
+                    .as_str()
+                    .or(payload["session_id"].as_str())
+                    .unwrap_or("")
+                    .to_string();
                 st.cwd = payload["cwd"].as_str().map(str::to_string);
                 st.branch = payload["git"]["branch"].as_str().map(str::to_string);
                 st.is_subagent = payload["parent_thread_id"].is_string()
@@ -169,7 +200,10 @@ impl Provider for Codex {
                 if let Some(c) = payload["cwd"].as_str() {
                     st.cwd = Some(c.to_string());
                 }
-                let id = payload["turn_id"].as_str().map(str::to_string).unwrap_or_else(|| format!("{}:{ts}", st.thread_id));
+                let id = payload["turn_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("{}:{ts}", st.thread_id));
                 st.turn_id = Some(id.clone());
                 if !st.is_subagent && !st.thread_id.is_empty() {
                     out.push(Record::Turn(TurnRec {
@@ -182,7 +216,13 @@ impl Provider for Codex {
             }
             Some("token_usage_record") => {
                 st.has_usage_records = true;
-                push_call(&mut out, st, payload["response_id"].as_str().unwrap_or("").to_string(), &payload["usage"], ts);
+                push_call(
+                    &mut out,
+                    st,
+                    payload["response_id"].as_str().unwrap_or("").to_string(),
+                    &payload["usage"],
+                    ts,
+                );
             }
             Some("event_msg") => match payload["type"].as_str() {
                 Some("user_message") => {
@@ -229,13 +269,24 @@ impl Provider for Codex {
                     };
                     let args: Value = match payload["type"].as_str() {
                         Some("local_shell_call") => payload["action"].clone(),
-                        Some("custom_tool_call") => serde_json::json!({ "input": payload["input"] }),
-                        _ => payload["arguments"].as_str().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null),
+                        Some("custom_tool_call") => {
+                            serde_json::json!({ "input": payload["input"] })
+                        }
+                        _ => payload["arguments"]
+                            .as_str()
+                            .and_then(|a| serde_json::from_str(a).ok())
+                            .unwrap_or(Value::Null),
                     };
                     let detail = (tool == "Agent").then(|| {
-                        args["agent_type"].as_str().or(args["role"].as_str()).or(args["name"].as_str()).unwrap_or("general-purpose").to_string()
+                        args["agent_type"]
+                            .as_str()
+                            .or(args["role"].as_str())
+                            .or(args["name"].as_str())
+                            .unwrap_or("general-purpose")
+                            .to_string()
                     });
-                    let Some(call_id) = payload["call_id"].as_str().or(payload["id"].as_str()) else {
+                    let Some(call_id) = payload["call_id"].as_str().or(payload["id"].as_str())
+                    else {
                         return Ok(out);
                     };
                     out.push(Record::ToolUse(ToolUseRec {
@@ -310,8 +361,12 @@ mod tests {
 
     #[test]
     fn objetivo_de_shell_y_parche() {
-        let args = serde_json::json!({ "command": ["bash", "-lc", "git status | head"], "workdir": "/p" });
-        assert_eq!(tool_target("Bash", &args).as_deref(), Some("git status | head"));
+        let args =
+            serde_json::json!({ "command": ["bash", "-lc", "git status | head"], "workdir": "/p" });
+        assert_eq!(
+            tool_target("Bash", &args).as_deref(),
+            Some("git status | head")
+        );
         let args = serde_json::json!({ "command": ["ls", "-la"] });
         assert_eq!(tool_target("Bash", &args).as_deref(), Some("ls -la"));
         let patch = serde_json::json!({ "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-a\n+b\n*** End Patch" });
@@ -320,16 +375,24 @@ mod tests {
 
     #[test]
     fn error_en_la_salida() {
-        assert!(output_is_error(&serde_json::json!({ "content": "x", "success": false })));
-        assert!(!output_is_error(&serde_json::json!({ "content": "x", "success": true })));
-        assert!(output_is_error(&Value::String(r#"{"output":"boom","metadata":{"exit_code":1,"duration_seconds":0.1}}"#.into())));
+        assert!(output_is_error(
+            &serde_json::json!({ "content": "x", "success": false })
+        ));
+        assert!(!output_is_error(
+            &serde_json::json!({ "content": "x", "success": true })
+        ));
+        assert!(output_is_error(&Value::String(
+            r#"{"output":"boom","metadata":{"exit_code":1,"duration_seconds":0.1}}"#.into()
+        )));
         assert!(!output_is_error(&Value::String("todo bien".into())));
     }
 
     #[test]
     fn detecta_rollouts() {
         let p = Codex::with_roots(vec![PathBuf::from("/h/.codex/sessions")]);
-        assert!(p.matches(Path::new("/h/.codex/sessions/2026/09/25/rollout-2026-09-25T10-00-00-abc.jsonl")));
+        assert!(p.matches(Path::new(
+            "/h/.codex/sessions/2026/09/25/rollout-2026-09-25T10-00-00-abc.jsonl"
+        )));
         assert!(!p.matches(Path::new("/h/.codex/sessions/2026/09/25/otro.jsonl")));
         assert!(!p.matches(Path::new("/h/.codex/history.jsonl")));
     }

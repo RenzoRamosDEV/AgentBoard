@@ -8,7 +8,15 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const SHELL_TOOLS: &str = "('Bash', 'shell', 'exec_command', 'run_shell_command')";
-const EDIT_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "replace", "write_file"];
+const EDIT_TOOLS: &[&str] = &[
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "apply_patch",
+    "replace",
+    "write_file",
+];
 
 // ---------------------------------------------------------------------------
 // Comandos de shell
@@ -27,7 +35,11 @@ pub fn split_commands(line: &str) -> Vec<String> {
         match c {
             '\'' if !double => single = !single,
             '"' if !single => double = !double,
-            '<' if !single && !double && chars.get(i + 1) == Some(&'<') && chars.get(i + 2) != Some(&'<') => {
+            '<' if !single
+                && !double
+                && chars.get(i + 1) == Some(&'<')
+                && chars.get(i + 2) != Some(&'<') =>
+            {
                 // `<<EOF`, `<<'EOF'`, `<<-EOF`: guarda el delimitador y sigue con la línea.
                 let rest: String = chars[i + 2..].iter().collect();
                 let word: String = rest
@@ -47,7 +59,11 @@ pub fn split_commands(line: &str) -> Vec<String> {
                     // Salta el cuerpo hasta la línea que es solo el delimitador.
                     let mut j = i + 1;
                     loop {
-                        let end = chars[j.min(chars.len())..].iter().position(|c| *c == '\n').map(|p| j + p).unwrap_or(chars.len());
+                        let end = chars[j.min(chars.len())..]
+                            .iter()
+                            .position(|c| *c == '\n')
+                            .map(|p| j + p)
+                            .unwrap_or(chars.len());
                         let l: String = chars[j.min(chars.len())..end].iter().collect();
                         j = end + 1;
                         if l.trim() == delim || end >= chars.len() {
@@ -61,7 +77,8 @@ pub fn split_commands(line: &str) -> Vec<String> {
                 continue;
             }
             // `&` de redirección (`2>&1`, `&>`) no separa comandos.
-            '&' if i > 0 && matches!(chars[i - 1], '>' | '<') || chars.get(i + 1) == Some(&'>') => {}
+            '&' if i > 0 && matches!(chars[i - 1], '>' | '<') || chars.get(i + 1) == Some(&'>') => {
+            }
             '|' | ';' | '&' if !single && !double => {
                 segments.push(std::mem::take(&mut cur));
                 i += 1;
@@ -77,11 +94,15 @@ pub fn split_commands(line: &str) -> Vec<String> {
 }
 
 fn command_name(segment: &str) -> Option<String> {
-    const SKIP: &[&str] = &["sudo", "env", "time", "nohup", "exec", "command", "builtin", "then", "do", "else", "!"];
+    const SKIP: &[&str] = &[
+        "sudo", "env", "time", "nohup", "exec", "command", "builtin", "then", "do", "else", "!",
+    ];
     const NOT_COMMANDS: &[&str] = &["fi", "done", "esac", "{", "}", "(", ")", "in"];
     let mut tokens = segment.split_whitespace().peekable();
     while let Some(tok) = tokens.next() {
-        let tok = tok.trim_start_matches(['(', '{', '$']).trim_end_matches([')', '}']);
+        let tok = tok
+            .trim_start_matches(['(', '{', '$'])
+            .trim_end_matches([')', '}']);
         if tok.is_empty() || SKIP.contains(&tok) {
             continue;
         }
@@ -95,7 +116,11 @@ fn command_name(segment: &str) -> Option<String> {
             tokens.next_if(|t| t.chars().next().is_some_and(|c| c.is_ascii_digit()));
             continue;
         }
-        if NOT_COMMANDS.contains(&tok) || tok.starts_with('-') || tok.starts_with('#') || tok.starts_with('>') {
+        if NOT_COMMANDS.contains(&tok)
+            || tok.starts_with('-')
+            || tok.starts_with('#')
+            || tok.starts_with('>')
+        {
             return None;
         }
         let name = tok.rsplit('/').next().unwrap_or(tok);
@@ -121,11 +146,22 @@ pub fn shell_commands(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>
             e.1 += is_error as i64;
         }
     }
-    Ok(sorted(counts.into_iter().map(|(k, (n, e))| BreakdownRow::simple(k, n, e, 0.0)).collect(), 50))
+    Ok(sorted(
+        counts
+            .into_iter()
+            .map(|(k, (n, e))| BreakdownRow::simple(k, n, e, 0.0))
+            .collect(),
+        50,
+    ))
 }
 
 fn sorted(mut rows: Vec<BreakdownRow>, limit: usize) -> Vec<BreakdownRow> {
-    rows.sort_by(|a, b| b.calls.cmp(&a.calls).then(b.cost_usd.total_cmp(&a.cost_usd)).then(a.key.cmp(&b.key)));
+    rows.sort_by(|a, b| {
+        b.calls
+            .cmp(&a.calls)
+            .then(b.cost_usd.total_cmp(&a.cost_usd))
+            .then(a.key.cmp(&b.key))
+    });
     rows.truncate(limit);
     rows
 }
@@ -145,7 +181,12 @@ pub fn skills_and_agents(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownR
     ))?;
     let rows = stmt
         .query_map(params_from_iter(args.iter()), |r| {
-            Ok(BreakdownRow::simple(r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            Ok(BreakdownRow::simple(
+                r.get::<_, String>(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(sorted(rows, 50))
@@ -167,7 +208,13 @@ pub fn mcp_servers(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
         e.0 += r.get::<_, i64>(1)?;
         e.1 += r.get::<_, i64>(2)?;
     }
-    Ok(sorted(by_server.into_iter().map(|(k, (n, e))| BreakdownRow::simple(k, n, e, 0.0)).collect(), 50))
+    Ok(sorted(
+        by_server
+            .into_iter()
+            .map(|(k, (n, e))| BreakdownRow::simple(k, n, e, 0.0))
+            .collect(),
+        50,
+    ))
 }
 
 /// Llamadas hechas dentro de subagentes, por tipo de subagente.
@@ -181,7 +228,14 @@ pub fn agent_types(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
          WHERE {w} AND c.is_sidechain = 1 GROUP BY 1"
     ))?;
     let rows = stmt
-        .query_map(params_from_iter(args.iter()), |r| Ok(BreakdownRow::simple(r.get::<_, String>(0)?, r.get(1)?, 0, r.get(2)?)))?
+        .query_map(params_from_iter(args.iter()), |r| {
+            Ok(BreakdownRow::simple(
+                r.get::<_, String>(0)?,
+                r.get(1)?,
+                0,
+                r.get(2)?,
+            ))
+        })?
         .collect::<rusqlite::Result<_>>()?;
     let mut rows: Vec<BreakdownRow> = rows;
     rows.sort_by(|a, b| b.cost_usd.total_cmp(&a.cost_usd));
@@ -204,13 +258,20 @@ pub struct TurnStats {
 
 impl TurnStats {
     fn edits(&self) -> impl Iterator<Item = &(String, Option<String>, bool)> {
-        self.tools.iter().filter(|(t, _, _)| EDIT_TOOLS.contains(&t.as_str()))
+        self.tools
+            .iter()
+            .filter(|(t, _, _)| EDIT_TOOLS.contains(&t.as_str()))
     }
 
     fn shell(&self) -> impl Iterator<Item = &str> {
         self.tools
             .iter()
-            .filter(|(t, _, _)| matches!(t.as_str(), "Bash" | "shell" | "exec_command" | "run_shell_command"))
+            .filter(|(t, _, _)| {
+                matches!(
+                    t.as_str(),
+                    "Bash" | "shell" | "exec_command" | "run_shell_command"
+                )
+            })
             .filter_map(|(_, target, _)| target.as_deref())
     }
 
@@ -221,11 +282,15 @@ impl TurnStats {
     /// Ninguna edición falló y ningún archivo se editó dos veces.
     pub fn is_one_shot(&self) -> bool {
         let mut seen = HashSet::new();
-        self.edits().all(|(_, target, err)| !err && seen.insert(target.clone()))
+        self.edits()
+            .all(|(_, target, err)| !err && seen.insert(target.clone()))
     }
 
     pub fn dominant_model(&self) -> Option<&str> {
-        self.models.iter().max_by_key(|(m, n)| (**n, std::cmp::Reverse((*m).clone()))).map(|(m, _)| m.as_str())
+        self.models
+            .iter()
+            .max_by_key(|(m, n)| (**n, std::cmp::Reverse((*m).clone())))
+            .map(|(m, _)| m.as_str())
     }
 }
 
@@ -234,10 +299,27 @@ fn shell_matches(cmd: &str, keys: &[&str]) -> bool {
     keys.iter().any(|k| c.contains(k))
 }
 
-const TEST_KEYS: &[&str] = &["test", "pytest", "jest", "vitest", "mocha", "rspec", "cargo t ", "go t "];
+const TEST_KEYS: &[&str] = &[
+    "test", "pytest", "jest", "vitest", "mocha", "rspec", "cargo t ", "go t ",
+];
 const BUILD_KEYS: &[&str] = &[
-    "build", "deploy", "docker", "podman", "kubectl", "terraform", "make ", "cmake", "gradle", "mvn ", "compile", "release",
-    "publish", "npm i", "npm ci", "pip install", "cargo check",
+    "build",
+    "deploy",
+    "docker",
+    "podman",
+    "kubectl",
+    "terraform",
+    "make ",
+    "cmake",
+    "gradle",
+    "mvn ",
+    "compile",
+    "release",
+    "publish",
+    "npm i",
+    "npm ci",
+    "pip install",
+    "cargo check",
 ];
 
 /// Actividad de un turno según sus herramientas y la intención de su prompt.
@@ -257,10 +339,17 @@ pub fn classify_turn(t: &TurnStats) -> &'static str {
     if shell.iter().any(|c| shell_matches(c, BUILD_KEYS)) {
         return "build";
     }
-    if !shell.is_empty() && shell.iter().all(|c| split_commands(c).iter().all(|w| w == "git" || w == "gh")) {
+    if !shell.is_empty()
+        && shell
+            .iter()
+            .all(|c| split_commands(c).iter().all(|w| w == "git" || w == "gh"))
+    {
         return "git";
     }
-    if t.tools.iter().any(|(tool, _, _)| tool == "Agent" || tool == "Task") {
+    if t.tools
+        .iter()
+        .any(|(tool, _, _)| tool == "Agent" || tool == "Task")
+    {
         return "delegation";
     }
     if !t.tools.is_empty() {
@@ -302,7 +391,9 @@ pub struct ActivityReport {
 pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnStats>> {
     let mut turns: HashMap<String, TurnStats> = HashMap::new();
     let (w, args) = f.sql("t.ts");
-    let mut stmt = conn.prepare(&format!("SELECT t.id, t.intent, t.ts FROM turns t JOIN sessions s ON s.id = t.session_id WHERE {w}"))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT t.id, t.intent, t.ts FROM turns t JOIN sessions s ON s.id = t.session_id WHERE {w}"
+    ))?;
     let mut rows = stmt.query(params_from_iter(args.iter()))?;
     while let Some(r) = rows.next()? {
         let t = turns.entry(r.get(0)?).or_default();
@@ -329,7 +420,11 @@ pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnS
     ))?;
     let mut rows = stmt.query(params_from_iter(args.iter()))?;
     while let Some(r) = rows.next()? {
-        turns.entry(r.get(0)?).or_default().tools.push((r.get(1)?, r.get(2)?, r.get(3)?));
+        turns
+            .entry(r.get(0)?)
+            .or_default()
+            .tools
+            .push((r.get(1)?, r.get(2)?, r.get(3)?));
     }
     Ok(turns)
 }
@@ -374,12 +469,27 @@ pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
     let rate = |a: &Acc| (a.edit_turns > 0).then(|| a.one_shot as f64 / a.edit_turns as f64);
     let mut activities: Vec<ActivityRow> = by_activity
         .iter()
-        .map(|(k, a)| ActivityRow { key: k.clone(), cost_usd: a.cost, turns: a.turns, edit_turns: a.edit_turns, one_shot: rate(a) })
+        .map(|(k, a)| ActivityRow {
+            key: k.clone(),
+            cost_usd: a.cost,
+            turns: a.turns,
+            edit_turns: a.edit_turns,
+            one_shot: rate(a),
+        })
         .collect();
-    activities.sort_by(|a, b| b.cost_usd.total_cmp(&a.cost_usd).then(b.turns.cmp(&a.turns)).then(a.key.cmp(&b.key)));
+    activities.sort_by(|a, b| {
+        b.cost_usd
+            .total_cmp(&a.cost_usd)
+            .then(b.turns.cmp(&a.turns))
+            .then(a.key.cmp(&b.key))
+    });
     let mut models: Vec<ModelOneShot> = by_model
         .iter()
-        .map(|(k, a)| ModelOneShot { model: k.clone(), edit_turns: a.edit_turns, one_shot: rate(a) })
+        .map(|(k, a)| ModelOneShot {
+            model: k.clone(),
+            edit_turns: a.edit_turns,
+            one_shot: rate(a),
+        })
         .collect();
     models.sort_by(|a, b| a.model.cmp(&b.model));
     Ok(ActivityReport { activities, models })
@@ -396,7 +506,11 @@ pub struct ActivityDay {
 }
 
 /// Coste y turnos por día local y actividad (para el gráfico apilado).
-pub fn activity_daily(conn: &Connection, f: &Filter, tz_offset_min: i64) -> Result<Vec<ActivityDay>> {
+pub fn activity_daily(
+    conn: &Connection,
+    f: &Filter,
+    tz_offset_min: i64,
+) -> Result<Vec<ActivityDay>> {
     const DAY_MS: i64 = 86_400_000;
     let off = tz_offset_min * 60_000;
     let mut acc: BTreeMap<(i64, String), (f64, i64)> = BTreeMap::new();
@@ -411,7 +525,12 @@ pub fn activity_daily(conn: &Connection, f: &Filter, tz_offset_min: i64) -> Resu
     }
     Ok(acc
         .into_iter()
-        .map(|((ts, activity), (cost_usd, turns))| ActivityDay { ts, activity, cost_usd, turns })
+        .map(|((ts, activity), (cost_usd, turns))| ActivityDay {
+            ts,
+            activity,
+            cost_usd,
+            turns,
+        })
         .collect())
 }
 
@@ -422,16 +541,28 @@ mod tests {
     fn turn(intent: Option<&str>, tools: &[(&str, &str, bool)]) -> TurnStats {
         TurnStats {
             intent: intent.map(str::to_string),
-            tools: tools.iter().map(|(t, x, e)| (t.to_string(), Some(x.to_string()), *e)).collect(),
+            tools: tools
+                .iter()
+                .map(|(t, x, e)| (t.to_string(), Some(x.to_string()), *e))
+                .collect(),
             ..Default::default()
         }
     }
 
     #[test]
     fn separa_tuberias_y_encadenamientos() {
-        assert_eq!(split_commands("grep -r foo . | head -5 && git status"), vec!["grep", "head", "git"]);
-        assert_eq!(split_commands("cd /x; FOO=1 sudo npm test || echo 'a | b'"), vec!["cd", "npm", "echo"]);
-        assert_eq!(split_commands("timeout 30 /usr/bin/python3 x.py 2>&1 | tail -3"), vec!["python3", "tail"]);
+        assert_eq!(
+            split_commands("grep -r foo . | head -5 && git status"),
+            vec!["grep", "head", "git"]
+        );
+        assert_eq!(
+            split_commands("cd /x; FOO=1 sudo npm test || echo 'a | b'"),
+            vec!["cd", "npm", "echo"]
+        );
+        assert_eq!(
+            split_commands("timeout 30 /usr/bin/python3 x.py 2>&1 | tail -3"),
+            vec!["python3", "tail"]
+        );
     }
 
     #[test]
@@ -444,22 +575,57 @@ mod tests {
 
     #[test]
     fn clasifica_turnos() {
-        assert_eq!(classify_turn(&turn(Some("debug"), &[("Edit", "a.rs", false)])), "debugging");
-        assert_eq!(classify_turn(&turn(Some("feature"), &[("Write", "a.rs", false)])), "feature");
-        assert_eq!(classify_turn(&turn(None, &[("Edit", "a.rs", false)])), "coding");
-        assert_eq!(classify_turn(&turn(None, &[("Bash", "cargo test", false)])), "testing");
-        assert_eq!(classify_turn(&turn(None, &[("Bash", "npm run build", false)])), "build");
-        assert_eq!(classify_turn(&turn(None, &[("Bash", "git status && git diff", false)])), "git");
-        assert_eq!(classify_turn(&turn(None, &[("Agent", "x", false)])), "delegation");
-        assert_eq!(classify_turn(&turn(None, &[("Read", "a.rs", false)])), "exploration");
-        assert_eq!(classify_turn(&turn(Some("brainstorm"), &[])), "brainstorming");
+        assert_eq!(
+            classify_turn(&turn(Some("debug"), &[("Edit", "a.rs", false)])),
+            "debugging"
+        );
+        assert_eq!(
+            classify_turn(&turn(Some("feature"), &[("Write", "a.rs", false)])),
+            "feature"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Edit", "a.rs", false)])),
+            "coding"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Bash", "cargo test", false)])),
+            "testing"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Bash", "npm run build", false)])),
+            "build"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Bash", "git status && git diff", false)])),
+            "git"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Agent", "x", false)])),
+            "delegation"
+        );
+        assert_eq!(
+            classify_turn(&turn(None, &[("Read", "a.rs", false)])),
+            "exploration"
+        );
+        assert_eq!(
+            classify_turn(&turn(Some("brainstorm"), &[])),
+            "brainstorming"
+        );
         assert_eq!(classify_turn(&turn(None, &[])), "conversation");
     }
 
     #[test]
     fn one_shot() {
         assert!(turn(None, &[("Edit", "a.rs", false), ("Edit", "b.rs", false)]).is_one_shot());
-        assert!(!turn(None, &[("Edit", "a.rs", false), ("Bash", "cargo test", true), ("Edit", "a.rs", false)]).is_one_shot());
+        assert!(!turn(
+            None,
+            &[
+                ("Edit", "a.rs", false),
+                ("Bash", "cargo test", true),
+                ("Edit", "a.rs", false)
+            ]
+        )
+        .is_one_shot());
         assert!(!turn(None, &[("Edit", "a.rs", true)]).is_one_shot());
     }
 }

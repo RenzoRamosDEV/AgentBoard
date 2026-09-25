@@ -114,8 +114,12 @@ mod tests {
     }
 
     fn cost(conn: &Connection, id: &str) -> f64 {
-        conn.query_row("SELECT cost_usd FROM call_costs WHERE message_id = ?1", [id], |r| r.get(0))
-            .unwrap()
+        conn.query_row(
+            "SELECT cost_usd FROM call_costs WHERE message_id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -131,7 +135,11 @@ mod tests {
         insert_call(&conn, "b", "modelo-inventado", 1000, 1000);
         assert_eq!(cost(&conn, "b"), 0.0);
         let has: bool = conn
-            .query_row("SELECT has_price FROM call_costs WHERE message_id='b'", [], |r| r.get(0))
+            .query_row(
+                "SELECT has_price FROM call_costs WHERE message_id='b'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(!has);
     }
@@ -140,13 +148,27 @@ mod tests {
     fn coste_reportado_cuando_no_hay_precio() {
         let conn = db::open_in_memory().unwrap();
         insert_call(&conn, "r", "big-pickle", 1000, 10);
-        conn.execute("UPDATE calls SET cost_reported = 0.0123 WHERE message_id = 'r'", []).unwrap();
+        conn.execute(
+            "UPDATE calls SET cost_reported = 0.0123 WHERE message_id = 'r'",
+            [],
+        )
+        .unwrap();
         assert!((cost(&conn, "r") - 0.0123).abs() < 1e-12);
-        let has: bool = conn.query_row("SELECT has_price FROM call_costs WHERE message_id='r'", [], |r| r.get(0)).unwrap();
+        let has: bool = conn
+            .query_row(
+                "SELECT has_price FROM call_costs WHERE message_id='r'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(has, "con coste reportado no cuenta como sin precio");
         // Con precio en la tabla, manda la tabla.
         insert_call(&conn, "t", "claude-sonnet-4-5", 1_000_000, 0);
-        conn.execute("UPDATE calls SET cost_reported = 99 WHERE message_id = 't'", []).unwrap();
+        conn.execute(
+            "UPDATE calls SET cost_reported = 99 WHERE message_id = 't'",
+            [],
+        )
+        .unwrap();
         assert!((cost(&conn, "t") - 3.0).abs() < 1e-9);
     }
 
@@ -167,15 +189,25 @@ mod tests {
     fn la_base_nueva_trae_precios_de_claude() {
         let conn = db::open_in_memory().unwrap();
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM prices WHERE model LIKE 'claude-%'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM prices WHERE model LIKE 'claude-%'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(n >= 10);
     }
 
     #[test]
     fn normaliza_nombres() {
-        assert_eq!(normalize_model("claude-opus-4-5-20251101"), "claude-opus-4-5");
-        assert_eq!(normalize_model("anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5");
+        assert_eq!(
+            normalize_model("claude-opus-4-5-20251101"),
+            "claude-opus-4-5"
+        );
+        assert_eq!(
+            normalize_model("anthropic/claude-sonnet-4-5"),
+            "claude-sonnet-4-5"
+        );
         assert_eq!(normalize_model("claude-opus-5-5[1m]"), "claude-opus-5-5");
         assert_eq!(normalize_model("gpt-5"), "gpt-5");
         assert_eq!(normalize_model("claude-opus-4.7"), "claude-opus-4-7");

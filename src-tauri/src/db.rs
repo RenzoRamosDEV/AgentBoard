@@ -9,13 +9,18 @@ use std::time::Duration;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_inicial.sql")),
     (2, include_str!("../migrations/0002_ajustes_y_ahorro.sql")),
-    (3, include_str!("../migrations/0003_turnos_y_subagentes.sql")),
+    (
+        3,
+        include_str!("../migrations/0003_turnos_y_subagentes.sql"),
+    ),
     (4, include_str!("../migrations/0004_coste_reportado.sql")),
 ];
 
 /// Versiones anteriores guardaban una base en la carpeta de datos; se elimina si sigue ahí.
 pub fn remove_legacy_db() {
-    let Some(dir) = dirs::data_dir().map(|d| d.join("agentboard")) else { return };
+    let Some(dir) = dirs::data_dir().map(|d| d.join("agentboard")) else {
+        return;
+    };
     for name in ["agentboard.db", "agentburn.db"] {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
@@ -26,7 +31,8 @@ pub fn remove_legacy_db() {
 
 /// Abre una base en un archivo (solo tests) y aplica las migraciones pendientes.
 pub fn open(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
+    let conn =
+        Connection::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
     configure(&conn)?;
     migrate(&conn)?;
     crate::pricing::seed_if_empty(&conn)?;
@@ -84,7 +90,9 @@ mod tests {
         drop(conn);
         let conn = open(&path).unwrap();
         assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.last().unwrap().0);
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1, "los datos existentes se conservan");
     }
 
@@ -101,7 +109,11 @@ mod tests {
         .unwrap();
         migrate(&conn).unwrap();
         let (n, savings): (i64, f64) = conn
-            .query_row("SELECT COUNT(*), SUM(cache_savings_usd) FROM call_costs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT COUNT(*), SUM(cache_savings_usd) FROM call_costs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!((n, savings), (1, 0.0));
         assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.last().unwrap().0);
@@ -124,7 +136,9 @@ mod tests {
     fn modo_wal_en_archivo() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open(&dir.path().join("t.db")).unwrap();
-        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
     }
 }

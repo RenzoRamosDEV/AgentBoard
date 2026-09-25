@@ -39,7 +39,10 @@ pub fn register_agents(conn: &Connection, providers: &[Box<dyn Provider>]) -> Re
         if existing.is_none() && !p.installed() {
             continue;
         }
-        let root = existing.or(roots.first()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+        let root = existing
+            .or(roots.first())
+            .map(|r| r.to_string_lossy().to_string())
+            .unwrap_or_default();
         conn.execute(
             "INSERT INTO agents (id, name, log_root, first_seen) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(id) DO UPDATE SET log_root = excluded.log_root",
@@ -51,7 +54,11 @@ pub fn register_agents(conn: &Connection, providers: &[Box<dyn Provider>]) -> Re
 
 /// Garantiza la fila del agente (las sesiones la referencian).
 fn ensure_agent(conn: &Connection, p: &dyn Provider) -> Result<()> {
-    let root = p.log_roots().first().map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+    let root = p
+        .log_roots()
+        .first()
+        .map(|r| r.to_string_lossy().to_string())
+        .unwrap_or_default();
     conn.execute(
         "INSERT OR IGNORE INTO agents (id, name, log_root, first_seen) VALUES (?1, ?2, ?3, ?4)",
         params![p.id(), p.name(), root, now_ms()],
@@ -93,7 +100,9 @@ pub fn walk(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             match e.file_type() {
                 Ok(t) if t.is_dir() => stack.push(e.path()),
@@ -127,7 +136,11 @@ fn mtime_ms(meta: &fs::Metadata) -> i64 {
 }
 
 /// Lee lo nuevo de un archivo y lo guarda en una transacción.
-pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Result<FileResult> {
+pub fn ingest_file(
+    conn: &mut Connection,
+    provider: &dyn Provider,
+    path: &Path,
+) -> Result<FileResult> {
     if provider.source() == Source::Sqlite {
         return ingest_db(conn, provider, path);
     }
@@ -137,9 +150,11 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
     let key = path.to_string_lossy().to_string();
 
     let prev: Option<(String, i64)> = conn
-        .query_row("SELECT file_id, offset FROM file_state WHERE path = ?1", [&key], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+        .query_row(
+            "SELECT file_id, offset FROM file_state WHERE path = ?1",
+            [&key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .optional()?;
     let start = match &prev {
         Some((fid, off)) if *fid == file_id && size >= *off => *off,
@@ -158,7 +173,11 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
     f.read_to_end(&mut buf)?;
 
     // Solo líneas completas; lo que quede tras el último \n espera a la siguiente pasada.
-    let consumed = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1).unwrap_or(0);
+    let consumed = buf
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let mut result = FileResult::default();
     let tx = conn.transaction()?;
     ensure_agent(&tx, provider)?;
@@ -190,7 +209,15 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(path) DO UPDATE SET file_id = excluded.file_id, size = excluded.size,
            offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan",
-        params![key, provider.id(), file_id, size, start + consumed as i64, mtime_ms(&meta), now_ms()],
+        params![
+            key,
+            provider.id(),
+            file_id,
+            size,
+            start + consumed as i64,
+            mtime_ms(&meta),
+            now_ms()
+        ],
     )?;
     tx.commit()?;
     Ok(result)
@@ -201,7 +228,11 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
     let meta = fs::metadata(path)?;
     let key = path.to_string_lossy().to_string();
     let since: i64 = conn
-        .query_row("SELECT offset FROM file_state WHERE path = ?1", [&key], |r| r.get(0))
+        .query_row(
+            "SELECT offset FROM file_state WHERE path = ?1",
+            [&key],
+            |r| r.get(0),
+        )
         .optional()?
         .unwrap_or(0);
     let (records, cursor) = provider.read_db(path, since)?;
@@ -224,7 +255,14 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
          VALUES (?1, ?2, 'sqlite', ?3, ?4, ?5, ?6)
          ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset,
            mtime = excluded.mtime, last_scan = excluded.last_scan",
-        params![key, provider.id(), meta.len() as i64, cursor, mtime_ms(&meta), now_ms()],
+        params![
+            key,
+            provider.id(),
+            meta.len() as i64,
+            cursor,
+            mtime_ms(&meta),
+            now_ms()
+        ],
     )?;
     tx.commit()?;
     Ok(result)
@@ -240,7 +278,12 @@ struct Writer<'a> {
 
 impl<'a> Writer<'a> {
     fn new(tx: &'a Transaction<'a>, agent_id: &'static str) -> Self {
-        Self { tx, agent_id, projects: HashMap::new(), sessions: Default::default() }
+        Self {
+            tx,
+            agent_id,
+            projects: HashMap::new(),
+            sessions: Default::default(),
+        }
     }
 
     fn project_id(&mut self, cwd: &str) -> Result<i64> {
@@ -252,7 +295,11 @@ impl<'a> Writer<'a> {
             "INSERT INTO projects (name, cwd, repo_root) VALUES (?1, ?2, ?3) ON CONFLICT(cwd) DO NOTHING",
             params![name, cwd, repo_root],
         )?;
-        let id: i64 = self.tx.query_row("SELECT id FROM projects WHERE cwd = ?1", [cwd], |r| r.get(0))?;
+        let id: i64 = self
+            .tx
+            .query_row("SELECT id FROM projects WHERE cwd = ?1", [cwd], |r| {
+                r.get(0)
+            })?;
         self.projects.insert(cwd.to_string(), id);
         Ok(id)
     }
@@ -320,7 +367,10 @@ impl<'a> Writer<'a> {
                     ],
                 )?;
                 if !c.is_sidechain {
-                    self.tx.execute("UPDATE sessions SET model = ?1 WHERE id = ?2", params![c.model, c.session_id])?;
+                    self.tx.execute(
+                        "UPDATE sessions SET model = ?1 WHERE id = ?2",
+                        params![c.model, c.session_id],
+                    )?;
                 }
             }
             Record::ToolUse(t) => {
@@ -342,7 +392,12 @@ impl<'a> Writer<'a> {
                     params![t.detail, t.session_id, t.ts, t.call_id],
                 )?;
             }
-            Record::ToolResult { call_id, ts, is_error, agent_id } => {
+            Record::ToolResult {
+                call_id,
+                ts,
+                is_error,
+                agent_id,
+            } => {
                 self.tx.execute(
                     "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
                      WHERE call_id = ?4",
@@ -413,7 +468,13 @@ mod tests {
     #[test]
     fn streaming_deja_una_llamada_con_los_ultimos_tokens() {
         let (_d, file, p, mut conn) = setup();
-        let body = [line("m1", 10, "2026-09-25T10:00:00Z"), line("m1", 50, "2026-09-25T10:00:01Z"), line("m1", 138, "2026-09-25T10:00:02Z")].join("\n") + "\n";
+        let body = [
+            line("m1", 10, "2026-09-25T10:00:00Z"),
+            line("m1", 50, "2026-09-25T10:00:01Z"),
+            line("m1", 138, "2026-09-25T10:00:02Z"),
+        ]
+        .join("\n")
+            + "\n";
         fs::write(&file, body).unwrap();
         ingest_file(&mut conn, &p, &file).unwrap();
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 1);
@@ -451,7 +512,12 @@ mod tests {
     #[test]
     fn archivo_truncado_se_relee_sin_duplicar() {
         let (_d, file, p, mut conn) = setup();
-        let two = [line("m1", 1, "2026-09-25T10:00:00Z"), line("m2", 1, "2026-09-25T10:01:00Z")].join("\n") + "\n";
+        let two = [
+            line("m1", 1, "2026-09-25T10:00:00Z"),
+            line("m2", 1, "2026-09-25T10:01:00Z"),
+        ]
+        .join("\n")
+            + "\n";
         fs::write(&file, two).unwrap();
         ingest_file(&mut conn, &p, &file).unwrap();
         fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n").unwrap();
@@ -464,9 +530,17 @@ mod tests {
     fn borrar_el_original_conserva_las_filas() {
         let (_d, file, p, mut conn) = setup();
         fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n").unwrap();
-        scan_all(&mut conn, &[Box::new(ClaudeCode::with_roots(p.log_roots()))]).unwrap();
+        scan_all(
+            &mut conn,
+            &[Box::new(ClaudeCode::with_roots(p.log_roots()))],
+        )
+        .unwrap();
         fs::remove_file(&file).unwrap();
-        scan_all(&mut conn, &[Box::new(ClaudeCode::with_roots(p.log_roots()))]).unwrap();
+        scan_all(
+            &mut conn,
+            &[Box::new(ClaudeCode::with_roots(p.log_roots()))],
+        )
+        .unwrap();
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 1);
     }
 
@@ -474,29 +548,45 @@ mod tests {
     fn sesiones_de_la_misma_carpeta_comparten_proyecto() {
         let (_d, file, p, mut conn) = setup();
         let other = line("m2", 1, "2026-09-25T10:00:00Z").replace("\"s1\"", "\"s2\"");
-        fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n" + &other + "\n").unwrap();
+        fs::write(
+            &file,
+            line("m1", 1, "2026-09-25T10:00:00Z") + "\n" + &other + "\n",
+        )
+        .unwrap();
         ingest_file(&mut conn, &p, &file).unwrap();
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM sessions"), 2);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM projects"), 1);
-        let name: String = conn.query_row("SELECT name FROM projects", [], |r| r.get(0)).unwrap();
+        let name: String = conn
+            .query_row("SELECT name FROM projects", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(name, "AgentBoard");
     }
 
     #[test]
     fn nombre_de_proyecto_y_worktrees() {
         assert_eq!(project_of("/h/Proyectos/AgentBoard").0, "AgentBoard");
-        assert_eq!(project_of("/h/repo/.claude/worktrees/feat-x"), ("repo".into(), "/h/repo".into()));
+        assert_eq!(
+            project_of("/h/repo/.claude/worktrees/feat-x"),
+            ("repo".into(), "/h/repo".into())
+        );
         assert_eq!(project_of("C:\\Users\\r\\code\\app").0, "app");
     }
 
     #[test]
     fn no_guarda_texto_de_mensajes() {
         let (_d, file, p, mut conn) = setup();
-        let l = line("m1", 1, "2026-09-25T10:00:00Z").replace("\"content\":[]", "\"content\":[{\"type\":\"text\",\"text\":\"SECRETO\"}]");
+        let l = line("m1", 1, "2026-09-25T10:00:00Z").replace(
+            "\"content\":[]",
+            "\"content\":[{\"type\":\"text\",\"text\":\"SECRETO\"}]",
+        );
         fs::write(&file, l + "\n").unwrap();
         ingest_file(&mut conn, &p, &file).unwrap();
         let dump: String = conn
-            .query_row("SELECT group_concat(quote(message_id)||quote(activity)) FROM calls", [], |r| r.get(0))
+            .query_row(
+                "SELECT group_concat(quote(message_id)||quote(activity)) FROM calls",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(!dump.contains("SECRETO"));
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM events"), 0);

@@ -25,7 +25,10 @@ pub fn run() {
             db::remove_legacy_db();
             let db = Arc::new(Mutex::new(db::open_in_memory()?));
             let alerts = Alerts::new();
-            app.manage(AppState { db: db.clone(), alerts: alerts.clone() });
+            app.manage(AppState {
+                db: db.clone(),
+                alerts: alerts.clone(),
+            });
 
             // Bandeja del sistema: gasto del mes en el tooltip y menú Mostrar / Salir.
             let tray = build_tray(app.handle())?;

@@ -60,7 +60,9 @@ impl Provider for OpenCode {
         if let Some(r) = &self.roots {
             return r.clone();
         }
-        dirs::data_dir().map(|d| vec![d.join("opencode")]).unwrap_or_default()
+        dirs::data_dir()
+            .map(|d| vec![d.join("opencode")])
+            .unwrap_or_default()
     }
 
     fn installed(&self) -> bool {
@@ -68,7 +70,8 @@ impl Provider for OpenCode {
     }
 
     fn matches(&self, path: &Path) -> bool {
-        path.file_name().is_some_and(|f| f == "opencode.db") && self.log_roots().iter().any(|r| path.starts_with(r))
+        path.file_name().is_some_and(|f| f == "opencode.db")
+            && self.log_roots().iter().any(|r| path.starts_with(r))
     }
 
     fn parse_line(&self, _path: &Path, _line: &str) -> Result<Vec<Record>> {
@@ -76,32 +79,63 @@ impl Provider for OpenCode {
     }
 
     fn read_db(&self, path: &Path, since: i64) -> Result<(Vec<Record>, i64)> {
-        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-            .with_context(|| format!("no se pudo abrir {}", path.display()))?;
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .with_context(|| format!("no se pudo abrir {}", path.display()))?;
         let mut out = Vec::new();
         let mut cursor = since;
 
         // Sesiones: carpeta y si son hijas (subagentes). Se cargan todas: son pocas y hacen
         // falta para resolver las de los mensajes nuevos.
         let mut sessions: HashMap<String, (String, bool, i64)> = HashMap::new();
-        let mut stmt = conn.prepare("SELECT id, directory, parent_id IS NOT NULL, time_created, time_updated FROM session")?;
-        for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)))? {
+        let mut stmt = conn.prepare(
+            "SELECT id, directory, parent_id IS NOT NULL, time_created, time_updated FROM session",
+        )?;
+        for row in stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, bool>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })? {
             let (id, dir, child, created, updated) = row?;
             sessions.insert(id.clone(), (dir.clone(), child, created));
             if updated > since {
                 cursor = cursor.max(updated);
-                out.push(Record::Session(SessionRec { id, cwd: Some(dir), git_branch: None, ts: created, is_subagent: child }));
+                out.push(Record::Session(SessionRec {
+                    id,
+                    cwd: Some(dir),
+                    git_branch: None,
+                    ts: created,
+                    is_subagent: child,
+                }));
             }
         }
 
         // Mensajes nuevos o actualizados: assistant → llamada, user → turno.
         let mut stmt = conn.prepare("SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ?1 ORDER BY time_created")?;
         let mut text_parts = conn.prepare("SELECT data FROM part WHERE message_id = ?1")?;
-        for row in stmt.query_map(params![since], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?)))? {
+        for row in stmt.query_map(params![since], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })? {
             let (id, session_id, created, updated, data) = row?;
             cursor = cursor.max(updated);
-            let Ok(d) = serde_json::from_str::<Value>(&data) else { continue };
-            let Some((dir, child, s_created)) = sessions.get(&session_id) else { continue };
+            let Ok(d) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
+            let Some((dir, child, s_created)) = sessions.get(&session_id) else {
+                continue;
+            };
             out.push(Record::Session(SessionRec {
                 id: session_id.clone(),
                 cwd: Some(dir.clone()),
@@ -111,7 +145,11 @@ impl Provider for OpenCode {
             }));
             match d["role"].as_str() {
                 Some("assistant") => {
-                    let model = format!("{}/{}", d["providerID"].as_str().unwrap_or(""), d["modelID"].as_str().unwrap_or(""));
+                    let model = format!(
+                        "{}/{}",
+                        d["providerID"].as_str().unwrap_or(""),
+                        d["modelID"].as_str().unwrap_or("")
+                    );
                     let t = &d["tokens"];
                     let n = |v: &Value| v.as_i64().unwrap_or(0);
                     out.push(Record::Call(CallRec {
@@ -141,7 +179,12 @@ impl Provider for OpenCode {
                             }
                         }
                     }
-                    out.push(Record::Turn(TurnRec { id, session_id: session_id.clone(), ts: created, intent: prompt_intent(&text) }));
+                    out.push(Record::Turn(TurnRec {
+                        id,
+                        session_id: session_id.clone(),
+                        ts: created,
+                        intent: prompt_intent(&text),
+                    }));
                 }
                 _ => {}
             }
@@ -149,23 +192,52 @@ impl Provider for OpenCode {
 
         // Partes de herramienta nuevas o actualizadas.
         let mut stmt = conn.prepare("SELECT id, message_id, session_id, time_created, time_updated, data FROM part WHERE time_updated > ?1 ORDER BY time_created")?;
-        for row in stmt.query_map(params![since], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)))? {
+        for row in stmt.query_map(params![since], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })? {
             let (id, message_id, session_id, created, updated, data) = row?;
             cursor = cursor.max(updated);
-            let Ok(d) = serde_json::from_str::<Value>(&data) else { continue };
+            let Ok(d) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
             if d["type"] != "tool" {
                 continue;
             }
             let raw = d["tool"].as_str().unwrap_or("?");
             let tool = canonical_tool(raw);
             let input = &d["state"]["input"];
-            let target = ["command", "filePath", "file_path", "path", "pattern", "query", "url", "description"]
-                .iter()
-                .find_map(|k| input[*k].as_str())
-                .map(|s| s.chars().take(500).collect::<String>());
+            let target = [
+                "command",
+                "filePath",
+                "file_path",
+                "path",
+                "pattern",
+                "query",
+                "url",
+                "description",
+            ]
+            .iter()
+            .find_map(|k| input[*k].as_str())
+            .map(|s| s.chars().take(500).collect::<String>());
             let detail = match tool.as_str() {
-                "Agent" => Some(input["subagent_type"].as_str().or(input["description"].as_str()).unwrap_or("general-purpose").to_string()),
-                "Skill" => input["name"].as_str().or(input["skill"].as_str()).map(str::to_string),
+                "Agent" => Some(
+                    input["subagent_type"]
+                        .as_str()
+                        .or(input["description"].as_str())
+                        .unwrap_or("general-purpose")
+                        .to_string(),
+                ),
+                "Skill" => input["name"]
+                    .as_str()
+                    .or(input["skill"].as_str())
+                    .map(str::to_string),
                 _ => None,
             };
             let ts = d["state"]["time"]["start"].as_i64().unwrap_or(created);
@@ -185,7 +257,9 @@ impl Provider for OpenCode {
                     call_id: d["callID"].as_str().unwrap_or(&id).to_string(),
                     ts: end,
                     is_error,
-                    agent_id: d["state"]["metadata"]["sessionId"].as_str().map(str::to_string),
+                    agent_id: d["state"]["metadata"]["sessionId"]
+                        .as_str()
+                        .map(str::to_string),
                 });
             }
         }

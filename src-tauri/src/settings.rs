@@ -5,15 +5,31 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// `system`, `light` o `dark`.
+    #[serde(default = "default_theme")]
+    pub theme: String,
     /// Presupuesto mensual en USD; `None` = sin presupuesto.
     pub monthly_budget: Option<f64>,
 }
 
+fn default_theme() -> String {
+    "system".into()
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { theme: default_theme(), monthly_budget: None }
+    }
+}
+
 impl Settings {
     pub fn validate(&self) -> Result<()> {
+        if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
+            bail!("tema desconocido: {}", self.theme);
+        }
         if let Some(b) = self.monthly_budget {
             if !b.is_finite() || b < 0.0 {
                 bail!("el presupuesto debe ser un número mayor o igual que 0");
@@ -57,16 +73,18 @@ mod tests {
     fn presupuesto_persiste() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg").join("settings.json");
-        save_to(&path, &Settings { monthly_budget: Some(50.0) }).unwrap();
-        assert_eq!(load_from(&path).monthly_budget, Some(50.0));
+        save_to(&path, &Settings { theme: "light".into(), monthly_budget: Some(50.0) }).unwrap();
+        let loaded = load_from(&path);
+        assert_eq!((loaded.theme.as_str(), loaded.monthly_budget), ("light", Some(50.0)));
+        assert!(save_to(&path, &Settings { theme: "neon".into(), monthly_budget: None }).is_err());
     }
 
     #[test]
     fn negativo_se_rechaza_y_se_mantiene_el_anterior() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        save_to(&path, &Settings { monthly_budget: Some(50.0) }).unwrap();
-        assert!(save_to(&path, &Settings { monthly_budget: Some(-1.0) }).is_err());
+        save_to(&path, &Settings { monthly_budget: Some(50.0), ..Default::default() }).unwrap();
+        assert!(save_to(&path, &Settings { monthly_budget: Some(-1.0), ..Default::default() }).is_err());
         assert_eq!(load_from(&path).monthly_budget, Some(50.0));
         assert_eq!(load_from(&dir.path().join("no-existe.json")).monthly_budget, None);
     }

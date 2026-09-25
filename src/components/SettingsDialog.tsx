@@ -1,57 +1,32 @@
-import { useEffect, useRef, useState } from "react";
-import type { Settings } from "../lib/api";
+import { useEffect, useRef } from "react";
+import type { Settings, Theme } from "../lib/api";
+import { Segmented } from "./Charts";
 
-export function SettingsDialog({
-  settings,
-  onSave,
-  onClose,
-}: {
-  settings: Settings;
-  onSave: (s: Settings) => Promise<void>;
-  onClose: () => void;
-}) {
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "Sistema" },
+  { value: "light", label: "Claro" },
+  { value: "dark", label: "Oscuro" },
+];
+
+/** Ajustes: por ahora, el tema de la interfaz. Se aplica y se guarda al elegirlo. */
+export function SettingsDialog({ settings, onSave, onClose }: { settings: Settings; onSave: (s: Settings) => Promise<void>; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [budget, setBudget] = useState(settings.monthlyBudget?.toString() ?? "");
-  const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     ref.current?.showModal();
   }, []);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const raw = budget.trim().replace(",", ".");
-    const value = raw === "" ? null : Number(raw);
-    if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      setError("Introduce un número mayor o igual que 0, o déjalo vacío.");
-      return;
-    }
-    try {
-      await onSave({ ...settings, monthlyBudget: value });
-      onClose();
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
   return (
     <dialog ref={ref} className="dialog" onClose={onClose}>
-      <form onSubmit={submit}>
-        <h2>Ajustes</h2>
-        <label className="field">
-          <span>Presupuesto mensual (USD)</span>
-          <input inputMode="decimal" placeholder="Sin presupuesto" value={budget} onChange={(e) => setBudget(e.target.value)} autoFocus />
-        </label>
-        {error && <p className="error">{error}</p>}
-        <div className="dialog-actions">
-          <button type="button" className="button" onClick={onClose}>
-            Cancelar
-          </button>
-          <button type="submit" className="button primary">
-            Guardar
-          </button>
-        </div>
-      </form>
+      <h2>Ajustes</h2>
+      <div className="field">
+        <span>Tema</span>
+        <Segmented value={settings.theme} options={THEMES} onChange={(theme) => onSave({ ...settings, theme })} />
+        <p className="muted small">"Sistema" sigue el modo claro u oscuro de tu escritorio.</p>
+      </div>
+      <div className="dialog-actions">
+        <button type="button" className="button primary" onClick={onClose}>
+          Cerrar
+        </button>
+      </div>
     </dialog>
   );
 }

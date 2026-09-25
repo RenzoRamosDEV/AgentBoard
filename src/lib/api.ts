@@ -101,7 +101,10 @@ export interface DataInfo {
   lastScan: number | null;
 }
 
+export type Theme = "system" | "light" | "dark";
+
 export interface Settings {
+  theme: Theme;
   monthlyBudget: number | null;
 }
 

@@ -7,6 +7,9 @@ import { GearIcon, SearchIcon, SectionIcon } from "./Icons";
 import logo1x from "../assets/logo-132.png";
 import logo2x from "../assets/logo-264.png";
 import logo3x from "../assets/logo-396.png";
+import light1x from "../assets/logo-light-132.png";
+import light2x from "../assets/logo-light-264.png";
+import light3x from "../assets/logo-light-396.png";
 
 interface Props {
   section: SectionId;
@@ -32,7 +35,8 @@ export function Sidebar(p: Props) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <img className="brand-logo" src={logo1x} srcSet={`${logo1x} 1x, ${logo2x} 2x, ${logo3x} 3x`} alt="" width={132} height={132} />
+        <img className="brand-logo logo-dark" src={logo1x} srcSet={`${logo1x} 1x, ${logo2x} 2x, ${logo3x} 3x`} alt="" width={132} height={132} />
+        <img className="brand-logo logo-light" src={light1x} srcSet={`${light1x} 1x, ${light2x} 2x, ${light3x} 3x`} alt="" width={132} height={132} />
         <span className="brand-name">AgentBoard</span>
       </div>
 

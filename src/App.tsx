@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, type Period } from "./lib/period";
+import { applyTheme, storedTheme } from "./lib/theme";
 import type { SectionId } from "./lib/sections";
 import { useDashboardData } from "./lib/useData";
 import { Sidebar } from "./components/Sidebar";
@@ -18,7 +19,7 @@ export default function App() {
   const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [settings, setSettings] = useState<Settings>({ monthlyBudget: null });
+  const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), monthlyBudget: null });
   const [showSettings, setShowSettings] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
@@ -39,6 +40,8 @@ export default function App() {
     api.agents(range).then(setAgents).catch(console.error);
     api.projects(scope).then(setProjects).catch(console.error);
   }, [range, filter.agents?.join(","), refresh]);
+
+  useEffect(() => applyTheme(settings.theme), [settings.theme]);
 
   useEffect(() => {
     api.settings().then(setSettings).catch(console.error);

@@ -3,6 +3,8 @@ name = "agentboard"
 version = "0.1.0"
 description = "Coste y actividad de tus agentes de código, en local"
 edition = "2021"
+# La app es el binario por defecto; `agentboard-mcp` es el servidor MCP aparte.
+default-run = "agentboard"
 
 [lib]
 name = "agentboard_lib"

@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "trayIcon": { "iconPath": "icons/32x32.png", "iconAsTemplate": false, "tooltip": "AgentBoard" },
     "windows": [
       { "label": "main", "title": "AgentBoard", "width": 1280, "height": 820, "minWidth": 900, "minHeight": 600 }
     ],

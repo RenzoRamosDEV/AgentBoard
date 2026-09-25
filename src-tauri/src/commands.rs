@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 /// Base en memoria compartida entre la UI y la ingesta.
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
+    pub alerts: std::sync::Arc<crate::alerts::Alerts>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -80,7 +81,8 @@ pub fn get_settings() -> CmdResult<Settings> {
 }
 
 #[tauri::command]
-pub fn set_settings(settings: Settings) -> CmdResult<Settings> {
+pub fn set_settings(state: tauri::State<AppState>, settings: Settings) -> CmdResult<Settings> {
     settings::save(&settings).map_err(|e| format!("{e:#}"))?;
+    state.alerts.reset(); // al cambiar el presupuesto se vuelven a permitir los avisos
     Ok(settings::load())
 }

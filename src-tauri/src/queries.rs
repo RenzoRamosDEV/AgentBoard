@@ -678,3 +678,28 @@ mod export_tests {
         assert_eq!(parsed.as_array().unwrap().len(), 4);
     }
 }
+
+/// Gasto acumulado del mes en curso y proyección lineal a fin de mes (hora local del sistema).
+pub fn month_progress(conn: &Connection, f: &Filter) -> Result<(f64, f64)> {
+    use chrono::{Datelike, Local, TimeZone};
+    let now = Local::now();
+    let start = Local
+        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0);
+    let month = Filter { from: Some(start), to: None, agents: f.agents.clone(), projects: f.projects.clone() };
+    let (w, args) = month.sql("c.ts");
+    let spent: f64 = conn.query_row(
+        &format!("SELECT COALESCE(SUM(c.cost_usd),0) FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"),
+        params_from_iter(args.iter()),
+        |r| r.get(0),
+    )?;
+    let day = now.day() as f64;
+    let days_in_month = {
+        let (y, m) = if now.month() == 12 { (now.year() + 1, 1) } else { (now.year(), now.month() + 1) };
+        (Local.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap().timestamp_millis() - start) as f64 / 86_400_000.0
+    };
+    let projection = if day > 0.0 { spent / day * days_in_month } else { spent };
+    Ok((spent, projection))
+}

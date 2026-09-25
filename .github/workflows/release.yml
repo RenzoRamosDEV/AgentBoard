@@ -4,6 +4,10 @@ on:
   push:
     tags: ["v*"]
 
+# tauri-action crea el release y sube los instaladores: necesita escritura.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -21,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}

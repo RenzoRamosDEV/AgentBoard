@@ -5,10 +5,11 @@ import { SECTIONS, type SectionId } from "../lib/sections";
 import type { DashboardData } from "../lib/useData";
 import { Kpis, type Kpi } from "../components/Kpis";
 import { Panel } from "../components/Panel";
-import { ActivityPanel, AgentTypesPanel, DailyPanel, McpPanel, ModelPanel, ProjectPanel, ShellPanel, SkillsPanel, ToolsPanel, type PanelProps } from "./panels";
+import { ActivityPanel, AgentPanel, AgentTypesPanel, DailyPanel, McpPanel, ModelPanel, ProjectPanel, ShellPanel, SkillsPanel, ToolsPanel, type PanelProps } from "./panels";
 
 export const PANELS: Record<Exclude<SectionId, "overview">, (p: PanelProps) => ReactElement> = {
   daily: DailyPanel,
+  agent: AgentPanel,
   project: ProjectPanel,
   activity: ActivityPanel,
   model: ModelPanel,
@@ -74,16 +75,21 @@ export function Overview({
       {data.summary.unpricedModels.length > 0 && (
         <p className="muted small">Modelos sin precio (cuentan como $0): {data.summary.unpricedModels.join(", ")}</p>
       )}
-      <Panel id="daily" title="Daily Activity" question="¿Cuánto gasto cada día?" onOpen={() => open("daily")} wide>
-        <DailyPanel data={data} full={false} singleProject={singleProject} open={() => open("daily")} />
-      </Panel>
+      <div className="grid-top">
+        <Panel id="daily" title="Daily Activity" question="¿Cuánto gasto cada día?" onOpen={() => open("daily")}>
+          <DailyPanel data={data} full={false} singleProject={singleProject} />
+        </Panel>
+        <Panel id="agent" title="By Agent" question="¿Qué agente uso más?" onOpen={() => open("agent")}>
+          <AgentPanel data={data} full={false} singleProject={singleProject} />
+        </Panel>
+      </div>
       <div className="grid-2">
-        {SECTIONS.filter((s) => s.id !== "overview" && s.id !== "daily").map((s) => {
+        {SECTIONS.filter((s) => !["overview", "daily", "agent"].includes(s.id)).map((s) => {
           const Body = PANELS[s.id as Exclude<SectionId, "overview">];
           const title = s.id === "project" && singleProject ? `By Branch · ${singleProject}` : s.title;
           return (
             <Panel key={s.id} id={s.id} title={title} question={s.question} onOpen={() => open(s.id)}>
-              <Body data={data} full={false} singleProject={singleProject} open={() => open(s.id)} />
+              <Body data={data} full={false} singleProject={singleProject} />
             </Panel>
           );
         })}

@@ -42,7 +42,7 @@ export interface BreakdownRow {
   overheadTokens: number;
 }
 
-export type BreakdownBy = "project" | "branch" | "model" | "tool" | "command" | "skill" | "mcp" | "agent_type";
+export type BreakdownBy = "agent" | "project" | "branch" | "model" | "tool" | "command" | "skill" | "mcp" | "agent_type";
 
 export interface ActivityRow {
   key: string;

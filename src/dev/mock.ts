@@ -37,6 +37,7 @@ export function installMocks() {
       }
       case "get_breakdown":
         switch (a.by) {
+          case "agent": return [row("Claude Code", 51.9, 3460, 0, 58).key === "Claude Code" ? { ...row("Claude Code", 51.9, 3460, 0, 58), key: "claude-code" } : row("x", 0, 0), { ...row("Codex CLI", 4.1, 332, 0, 6), key: "codex" }, { ...row("OpenCode", 0, 84, 0, 3), key: "opencode" }];
           case "model": return models;
           case "project": return [row("AgentBoard", 22.1, 900, 0, 12), row("tuio-web", 18.4, 1300, 0, 9), row("infra", 9.2, 700, 0, 4), row("scripts", 6.3, 890, 0, 3)];
           case "branch": return [row("main", 12.0, 500, 0, 5), row("feat/dashboard", 8.1, 300, 0, 3), row("fix/ingesta", 2.0, 100, 0, 1)];

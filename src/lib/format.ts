@@ -40,6 +40,17 @@ export const ACTIVITIES: Record<string, { label: string; color: string }> = {
   other: { label: "General", color: "var(--act-general)" },
 };
 
+/** Color fijo por agente (token CSS); los demás rotan por la paleta. */
+const AGENT_COLORS: Record<string, string> = {
+  "claude-code": "var(--agent-claude)",
+  codex: "var(--agent-codex)",
+  copilot: "var(--agent-copilot)",
+  opencode: "var(--agent-opencode)",
+  gemini: "var(--agent-gemini)",
+};
+const FALLBACK_COLORS = ["var(--series-blue)", "var(--series-violet)", "var(--series-green)", "var(--series-yellow)", "var(--series-magenta)"];
+export const agentColor = (id: string, index = 0) => AGENT_COLORS[id] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+
 export const activityLabel = (key: string) => ACTIVITIES[key]?.label ?? key;
 export const activityColor = (key: string) => ACTIVITIES[key]?.color ?? "var(--act-general)";
 

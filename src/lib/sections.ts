@@ -2,6 +2,7 @@
 export type SectionId =
   | "overview"
   | "daily"
+  | "agent"
   | "project"
   | "activity"
   | "model"
@@ -20,6 +21,7 @@ export interface Section {
 export const SECTIONS: Section[] = [
   { id: "overview", title: "Resumen", question: "Todo de un vistazo" },
   { id: "daily", title: "Daily Activity", question: "¿Cuánto gasto cada día?" },
+  { id: "agent", title: "By Agent", question: "¿Qué agente uso más?" },
   { id: "project", title: "By Project", question: "¿Cuánto costó cada proyecto?" },
   { id: "activity", title: "By Activity", question: "¿En qué se va el gasto?" },
   { id: "model", title: "By Model", question: "¿Uso el modelo adecuado?" },

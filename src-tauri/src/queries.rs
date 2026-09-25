@@ -183,7 +183,7 @@ impl BreakdownRow {
     }
 }
 
-/// Coste y uso agrupado por `project | branch | model | activity | tool | command | skill | mcp | agent_type`.
+/// Coste y uso agrupado por `agent | project | branch | model | activity | tool | command | skill | mcp | agent_type`.
 pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<BreakdownRow>> {
     match by {
         "command" => return crate::insights::shell_commands(conn, f),
@@ -217,6 +217,7 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
         )
     };
     let sql = match by {
+        "agent" => calls("s.agent_id", "COALESCE(a.name, s.agent_id)", "LEFT JOIN agents a ON a.id = s.agent_id"),
         "project" => calls("COALESCE(p.repo_root, '')", "COALESCE(MIN(p.name), '(sin proyecto)')", "LEFT JOIN projects p ON p.id = s.project_id"),
         "branch" => calls("COALESCE(s.git_branch, '')", "COALESCE(s.git_branch, '(sin rama)')", ""),
         "model" => calls("c.model", "c.model", ""),
@@ -438,6 +439,14 @@ mod tests {
         assert_eq!(branches.len(), 1);
         assert_eq!(branches[0].label, "main");
         assert!(breakdown(&conn, &Filter::default(), "nada").is_err());
+    }
+
+    #[test]
+    fn desglose_por_agente() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        let rows = breakdown(&conn, &Filter::default(), "agent").unwrap();
+        assert_eq!(rows.iter().map(|r| (r.label.as_str(), r.calls, r.sessions)).collect::<Vec<_>>(), vec![("Claude Code", 3, 2), ("Codex", 1, 1)]);
     }
 
     #[test]

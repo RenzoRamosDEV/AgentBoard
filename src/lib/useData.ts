@@ -6,6 +6,7 @@ export interface DashboardData {
   /** Filtro con el que se cargó (para rellenar días sin actividad). */
   filter: Filter;
   summary: Summary;
+  agents: BreakdownRow[];
   daily: Point[];
   month: Point[];
   projects: BreakdownRow[];
@@ -33,6 +34,7 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
     const by = (k: Parameters<typeof api.breakdown>[1]) => api.breakdown(filter, k);
     Promise.all([
       api.summary(filter),
+      by("agent"),
       api.timeseries(filter, "day"),
       api.timeseries(monthFilter, "day"),
       by("project"),
@@ -46,9 +48,9 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
       by("mcp"),
       by("agent_type"),
     ])
-      .then(([summary, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
+      .then(([summary, agents, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
         if (!alive) return;
-        setData({ filter, summary, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
+        setData({ filter, summary, agents, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
         setError(null);
       })
       .catch((e) => alive && setError(String(e)));

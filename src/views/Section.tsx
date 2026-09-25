@@ -21,6 +21,15 @@ function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): K
         { label: "Día más caro", value: best ? fmt.usd(best.costUsd) : "–", hint: best ? fmt.date(best.ts) : "" },
       ];
     }
+    case "agent": {
+      const rows = data.agents;
+      const t = top(rows);
+      return [
+        { label: "Coste total", value: fmt.usd(sum(rows)), hint: `${rows.length} agentes`, tone: "accent" },
+        { label: "Llamadas", value: fmt.int(calls(rows)), hint: `${fmt.int(rows.reduce((a, r) => a + r.sessions, 0))} sesiones` },
+        { label: "Agente principal", value: t?.label ?? "–", hint: t ? `${fmt.pct(sum(rows) ? t.costUsd / sum(rows) : 0)} del coste · ${fmt.int(t.calls)} llamadas` : "" },
+      ];
+    }
     case "project": {
       const rows = data.branches ?? data.projects;
       const t = top(rows);

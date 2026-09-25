@@ -11,6 +11,12 @@ const PATHS: Record<SectionId, ReactElement> = {
       <path d="M3 9h18M8 2v4M16 2v4" />
     </>
   ),
+  agent: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="3" />
+      <path d="M9 12h.01M15 12h.01M12 3v3" />
+    </>
+  ),
   project: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   activity: (
     <>

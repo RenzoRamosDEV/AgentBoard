@@ -4,7 +4,7 @@
  */
 import type { ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
-import { activityColor, activityLabel, fmt, modelName } from "../lib/format";
+import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
 import { Bars, Columns, Donut, InlineBar, Legend } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
@@ -83,7 +83,58 @@ export function DailyPanel({ data, full }: PanelProps) {
       <Columns points={dayPoints(data.daily, data.filter)} format={cost} height={full ? 260 : 170} />
     </>
   );
-  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={480} />;
+  return full ? <Stacked table={table} chart={chart} /> : <Split table={table} chart={chart} chartWidth={400} />;
+}
+
+// --- By Agent ---------------------------------------------------------------------------
+
+export function AgentPanel({ data, full }: PanelProps) {
+  const rows = data.agents;
+  const total = rows.reduce((a, r) => a + r.costUsd, 0);
+  const color = (r: BreakdownRow) => agentColor(r.key, rows.indexOf(r));
+  const columns: Column<BreakdownRow>[] = [
+    {
+      header: "Agente",
+      cell: (r) => (
+        <span className="with-dot">
+          <i style={{ background: color(r) }} />
+          {r.label}
+        </span>
+      ),
+    },
+    { header: "Coste", cell: (r) => cost(r.costUsd), align: "right", width: "64px", className: "cost" },
+    { header: "Llamadas", cell: (r) => fmt.int(r.calls), align: "right", width: "60px" },
+    ...(full
+      ? [
+          { header: "Sesiones", cell: (r: BreakdownRow) => fmt.int(r.sessions), align: "right" as const, width: "64px", className: "secondary" },
+          { header: "Caché", cell: (r: BreakdownRow) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right" as const, width: "56px", className: "secondary" },
+          barColumn("Reparto del coste", rows, (r) => r.costUsd, "var(--series-blue)"),
+        ]
+      : []),
+  ];
+  const segments = rows.map((r) => ({ key: r.key, label: r.label, value: r.costUsd, color: color(r) }));
+  const donut = (
+    <>
+      <ChartTitle>Reparto del coste</ChartTitle>
+      <Donut segments={segments} center={cost(total)} format={cost} size={full ? 180 : 130} />
+    </>
+  );
+  if (!rows.length) return <p className="empty">Todavía no se ha detectado ningún agente</p>;
+  const table = <DataTable rows={rows} rowKey={(r) => r.key} columns={columns} />;
+  if (full) {
+    return (
+      <>
+        {table}
+        <div className="chart-box">{donut}</div>
+      </>
+    );
+  }
+  return (
+    <div className="agent-panel">
+      {donut}
+      {table}
+    </div>
+  );
 }
 
 // --- By Project / By Branch -------------------------------------------------------

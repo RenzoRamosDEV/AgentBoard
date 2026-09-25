@@ -124,3 +124,56 @@ fn opencode_fixture() {
     assert_eq!(again.records, 0);
     assert_eq!(queries::summary(&conn, &f, 0).unwrap().calls, 3);
 }
+
+#[test]
+fn codex_fixture() {
+    use agentboard_lib::providers::codex::Codex;
+    let mut conn = db::open_in_memory().unwrap();
+    let providers: Vec<Box<dyn Provider>> = vec![Box::new(Codex::with_roots(vec![fixtures("codex").join("sessions")]))];
+    let stats = ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!((stats.files, stats.errors), (2, 0));
+
+    let f = queries::Filter::default();
+    let s = queries::summary(&conn, &f, 0).unwrap();
+    assert_eq!(s.calls, 4, "3 respuestas + 1 del subagente; el token_count no se cuenta");
+    assert_eq!(s.sessions, 2);
+    assert_eq!(s.cache_read, 21_000);
+    assert_eq!(s.input_tokens, 12000 - 9000 + 13000 - 12000 + 2000 + 1000, "input sin la parte cacheada");
+    assert!(s.unpriced_models.is_empty());
+
+    let q = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(q("SELECT COUNT(*) FROM turns"), 2, "la sesión hija no abre turno");
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE turn_id = 'turn-1'"), 2);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE turn_id = 'turn-2'"), 1);
+    assert_eq!(q("SELECT is_error FROM tool_calls WHERE call_id = 'call_a1'"), 1);
+    assert_eq!(q("SELECT duration_ms FROM tool_calls WHERE call_id = 'call_a1'"), 3000);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Bash'"), 2, "shell + local_shell_call");
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'Edit' AND target = 'src/pricing.rs' AND is_error = 0"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM tool_calls WHERE tool = 'mcp__mcp_docs__read_file'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM events WHERE kind = 'compaction'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM events WHERE kind = 'interruption'"), 1);
+    assert_eq!(q("SELECT COUNT(*) FROM calls WHERE is_sidechain = 1"), 1);
+    let (i1, i2): (String, String) = conn
+        .query_row("SELECT (SELECT intent FROM turns WHERE id='turn-1'), (SELECT intent FROM turns WHERE id='turn-2')", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((i1.as_str(), i2.as_str()), ("debug", "brainstorm"));
+    let (name, branch, model): (String, String, String) = conn
+        .query_row(
+            "SELECT p.name, s.git_branch, s.model FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.is_subagent = 0",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((name.as_str(), branch.as_str(), model.as_str()), ("demo", "feat/codex", "gpt-5-codex"));
+    let cmds = queries::breakdown(&conn, &f, "command").unwrap();
+    assert_eq!(cmds.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), vec!["cargo", "rg", "tail"]);
+    let activity = agentboard_lib::insights::activity(&conn, &f).unwrap();
+    assert!(activity.activities.iter().any(|a| a.key == "debugging" && a.one_shot == Some(1.0)));
+    assert!(activity.activities.iter().any(|a| a.key == "exploration"));
+
+    // Reimportar no duplica.
+    ingest::scan_all(&mut conn, &providers).unwrap();
+    conn.execute("DELETE FROM file_state", []).unwrap();
+    ingest::scan_all(&mut conn, &providers).unwrap();
+    assert_eq!(queries::summary(&conn, &f, 0).unwrap().calls, 4);
+}

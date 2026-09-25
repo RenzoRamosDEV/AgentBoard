@@ -52,13 +52,27 @@ export function installMocks() {
             { key: "coding", costUsd: 24.3, turns: 268, editTurns: 250, oneShot: 0.96 },
             { key: "exploration", costUsd: 14.2, turns: 31, editTurns: 0, oneShot: null },
             { key: "testing", costUsd: 9.9, turns: 30, editTurns: 0, oneShot: null },
-            { key: "delegation", costUsd: 5.1, turns: 9, editTurns: 0, oneShot: null },
-            { key: "feature", costUsd: 3.8, turns: 4, editTurns: 4, oneShot: 1 },
-            { key: "debugging", costUsd: 2.5, turns: 6, editTurns: 6, oneShot: 1 },
+            { key: "delegation", costUsd: 2.6, turns: 9, editTurns: 0, oneShot: null },
             { key: "conversation", costUsd: 1.2, turns: 90, editTurns: 0, oneShot: null },
+            { key: "build", costUsd: 1.1, turns: 7, editTurns: 0, oneShot: null },
+            { key: "feature", costUsd: 0.9, turns: 4, editTurns: 4, oneShot: 1 },
+            { key: "debugging", costUsd: 0.8, turns: 6, editTurns: 6, oneShot: 0.83 },
+            { key: "brainstorming", costUsd: 0.6, turns: 6, editTurns: 0, oneShot: null },
+            { key: "other", costUsd: 0.4, turns: 9, editTurns: 0, oneShot: null },
           ],
           models: [{ model: "claude-opus-5-5", editTurns: 200, oneShot: 0.92 }, { model: "claude-fable-5-1", editTurns: 60, oneShot: 1 }],
         };
+      case "get_activity_daily": {
+        const out = [];
+        for (let i = 13; i >= 0; i--) {
+          const ts = Math.floor((now - i * DAY) / DAY) * DAY;
+          out.push({ ts, activity: "coding", costUsd: 1 + ((i * 7) % 5) * 0.5, turns: 10 });
+          out.push({ ts, activity: "exploration", costUsd: 0.4 + ((i * 3) % 4) * 0.3, turns: 3 });
+          out.push({ ts, activity: "testing", costUsd: 0.3 + (i % 3) * 0.3, turns: 2 });
+          out.push({ ts, activity: "conversation", costUsd: 0.1, turns: 4 });
+        }
+        return out;
+      }
       case "list_agents":
         return [
           { id: "claude-code", name: "Claude Code", logRoot: "~/.claude/projects", costUsd: 51.9, calls: 3460 },

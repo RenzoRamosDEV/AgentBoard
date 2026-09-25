@@ -1,4 +1,4 @@
-// Cifras al estilo terminal de CodeBurn ($1,234.56 · 21.3K · 97.6%); los textos siguen en español.
+// Cifras al estilo $1,234.56 · 21.3K · 97.6%; los textos van en español.
 const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const usd4 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
 const int = new Intl.NumberFormat("en-US");
@@ -23,22 +23,25 @@ export const fmt = {
   },
 };
 
-/** Etiqueta y color (token CSS) de cada actividad. */
+/** Etiqueta y color (token CSS) de cada actividad, en el orden en que se muestran. */
 export const ACTIVITIES: Record<string, { label: string; color: string }> = {
   coding: { label: "Coding", color: "var(--act-coding)" },
-  feature: { label: "Feature Dev", color: "var(--act-feature)" },
-  debugging: { label: "Debugging", color: "var(--act-debug)" },
+  exploration: { label: "Exploration", color: "var(--act-exploration)" },
   testing: { label: "Testing", color: "var(--act-testing)" },
-  build: { label: "Build/Deploy", color: "var(--act-build)" },
-  git: { label: "Git", color: "var(--act-git)" },
-  exploration: { label: "Exploration", color: "var(--act-explore)" },
   delegation: { label: "Delegation", color: "var(--act-delegation)" },
-  brainstorming: { label: "Brainstorming", color: "var(--act-brainstorm)" },
-  conversation: { label: "Conversation", color: "var(--text-muted)" },
+  conversation: { label: "Conversation", color: "var(--act-conversation)" },
+  build: { label: "Build/Deploy", color: "var(--act-build)" },
+  feature: { label: "Feature Dev", color: "var(--act-feature)" },
+  debugging: { label: "Debugging", color: "var(--act-debugging)" },
+  git: { label: "Git", color: "var(--act-git)" },
+  brainstorming: { label: "Brainstorming", color: "var(--act-brainstorming)" },
   shell: { label: "Shell", color: "var(--act-build)" },
-  research: { label: "Research", color: "var(--act-explore)" },
-  other: { label: "General", color: "var(--text-muted)" },
+  research: { label: "Research", color: "var(--act-exploration)" },
+  other: { label: "General", color: "var(--act-general)" },
 };
+
+export const activityLabel = (key: string) => ACTIVITIES[key]?.label ?? key;
+export const activityColor = (key: string) => ACTIVITIES[key]?.color ?? "var(--act-general)";
 
 /** `claude-opus-5-5` → `Opus 5.5`; otros modelos tal cual. */
 export function modelName(id: string): string {

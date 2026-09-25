@@ -57,6 +57,13 @@ export interface ActivityReport {
   models: { model: string; editTurns: number; oneShot: number | null }[];
 }
 
+export interface ActivityDay {
+  ts: number;
+  activity: string;
+  costUsd: number;
+  turns: number;
+}
+
 export interface AgentRow {
   id: string;
   name: string;
@@ -93,6 +100,7 @@ export const api = {
     invoke<Point[]>("get_timeseries", { filter, bucket, tzOffsetMin: tzOffsetMin() }),
   breakdown: (filter: Filter, by: BreakdownBy) => invoke<BreakdownRow[]>("get_breakdown", { filter, by }),
   activity: (filter: Filter) => invoke<ActivityReport>("get_activity", { filter }),
+  activityDaily: (filter: Filter) => invoke<ActivityDay[]>("get_activity_daily", { filter, tzOffsetMin: tzOffsetMin() }),
   agents: (filter: Filter) => invoke<AgentRow[]>("list_agents", { filter }),
   projects: (filter: Filter) => invoke<ProjectRow[]>("list_projects", { filter }),
   dataInfo: () => invoke<DataInfo>("get_data_info"),

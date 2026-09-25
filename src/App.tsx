@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type AgentRow, type DataInfo, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, type Period } from "./lib/period";
+import type { SectionId } from "./lib/sections";
+import { useDashboardData } from "./lib/useData";
 import { Sidebar } from "./components/Sidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TooltipProvider } from "./components/Tooltip";
-import { Dashboard } from "./views/Dashboard";
+import { Overview } from "./views/Overview";
+import { Section } from "./views/Section";
 
 export default function App() {
+  const [section, setSection] = useState<SectionId>("overview");
   const [period, setPeriod] = useState<Period>({ kind: "30d" });
   // Se guardan los *ocultos*: un agente o proyecto nuevo aparece incluido por defecto.
   const [hiddenAgents, setHiddenAgents] = useState<Set<string>>(new Set());
@@ -30,7 +34,7 @@ export default function App() {
     [range, hiddenAgents, hiddenProjects, agents, projects],
   );
 
-  // Las listas de la barra lateral dependen del periodo y de los agentes, no de los proyectos.
+  // Las listas del panel dependen del periodo y de los agentes, no de los proyectos.
   useEffect(() => {
     const scope: Filter = { ...range, agents: filter.agents };
     api.agents(range).then(setAgents).catch(console.error);
@@ -53,20 +57,28 @@ export default function App() {
   };
 
   const onlyProject = useCallback(
-    (id: number | null) =>
-      setHiddenProjects(id === null ? new Set() : new Set(projects.filter((p) => p.id !== id).map((p) => p.id))),
+    (id: number | null) => setHiddenProjects(id === null ? new Set() : new Set(projects.filter((p) => p.id !== id).map((p) => p.id))),
     [projects],
   );
 
   const visibleProjects = projects.filter((p) => !hiddenProjects.has(p.id));
   const singleProject = hiddenProjects.size && visibleProjects.length === 1 ? visibleProjects[0].name : null;
-
+  const { data, error } = useDashboardData(filter, singleProject, refresh);
   const saveSettings = async (s: Settings) => setSettings(await api.saveSettings(s));
+
+  let content;
+  if (error) content = <div className="main error">No se pudieron cargar los datos: {error}</div>;
+  else if (!data) content = <div className="main muted">Cargando…</div>;
+  else if (section === "overview")
+    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} />;
+  else content = <Section id={section} data={data} period={period} singleProject={singleProject} back={() => setSection("overview")} />;
 
   return (
     <TooltipProvider>
       <div className="app">
         <Sidebar
+          section={section}
+          setSection={setSection}
           agents={agents}
           projects={projects}
           hiddenAgents={hiddenAgents}
@@ -79,7 +91,7 @@ export default function App() {
           info={info}
           onSettings={() => setShowSettings(true)}
         />
-        <Dashboard filter={filter} period={period} singleProject={singleProject} budget={settings.monthlyBudget} refresh={refresh} />
+        {content}
       </div>
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} />}
     </TooltipProvider>

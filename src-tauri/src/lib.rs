@@ -6,6 +6,7 @@ pub mod ingest;
 pub mod pricing;
 pub mod providers;
 pub mod queries;
+pub mod settings;
 
 use commands::AppState;
 use std::sync::Mutex;
@@ -15,7 +16,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let path = db::default_db_path()?;
-            app.manage(AppState { db: Mutex::new(db::open(&path)?) });
+            app.manage(AppState { db: Mutex::new(db::open(&path)?), db_path: path.clone() });
 
             // Escaneo inicial en segundo plano con su propia conexión.
             let handle = app.handle().clone();
@@ -30,7 +31,16 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::get_summary])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_summary,
+            commands::get_timeseries,
+            commands::get_breakdown,
+            commands::list_agents,
+            commands::list_projects,
+            commands::get_data_info,
+            commands::get_settings,
+            commands::set_settings,
+        ])
         .run(tauri::generate_context!())
         .expect("error al arrancar AgentBurn");
 }

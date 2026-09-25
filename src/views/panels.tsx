@@ -220,7 +220,7 @@ export function DailyFull({ data }: { data: DashboardData }) {
           </div>
         </header>
         <Columns points={points} format={m.format} height={260} color="var(--accent)" />
-        {legend.size > 0 && <Legend items={[...legend.values()]} />}
+        <Legend items={legend.size > 0 ? [...legend.values()] : [{ label: "Todos los agentes", color: "var(--accent)" }]} />
         {splitNote && <p className="muted small">{splitNote}</p>}
       </section>
       <div className="grid-2">

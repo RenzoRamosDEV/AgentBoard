@@ -1,6 +1,6 @@
 # AgentBoard
 
-App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de código —Claude Code, Codex, Gemini CLI— y cuánto cuestan, y guarda ese historial en una base SQLite local para siempre. Sin proxy, sin API keys y sin enviar datos fuera de tu máquina.
+App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de código —Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode— y cuánto cuestan, leyendo los logs que ya tienes en el ordenador. No guarda nada en disco (los datos viven en memoria mientras la app está abierta; solo el presupuesto de Ajustes se escribe en `~/.config/agentboard/settings.json`). Sin proxy, sin API keys y sin enviar datos fuera de tu máquina.
 
 - **Stack:** Tauri 2 · Rust · SQLite (WAL) · React + TypeScript + Vite
 - **Especificación:** gestionada con [OpenSpec](https://github.com/Fission-AI/OpenSpec) en `openspec/` (specs vigentes en `openspec/specs/`, cambios en `openspec/changes/`).
@@ -55,16 +55,10 @@ Tests del núcleo y verificación con tus datos reales:
 ```sh
 cd src-tauri
 cargo test                 # parsers, ingesta incremental, precios y consultas
-cargo run --example scan   # importa tu historial a una base temporal e imprime el resumen
+cargo run --example scan   # lee tu historial en memoria e imprime cada apartado
 ```
 
-## Dónde guarda los datos
-
-| Sistema | Base de datos |
-| --- | --- |
-| Linux | `~/.local/share/agentboard/agentboard.db` |
-| Windows | `%APPDATA%\agentboard\agentboard.db` |
-| macOS | `~/Library/Application Support/agentboard/agentboard.db` |
+## De dónde salen los datos
 
 Agentes soportados y de dónde se leen:
 
@@ -75,14 +69,14 @@ Agentes soportados y de dónde se leen:
 | GitHub Copilot CLI | `~/.copilot/session-state/*/events.jsonl` (o `$COPILOT_HOME`) |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite, lectura incremental) |
 
-Un agente aparece solo cuando su carpeta existe. Cada archivo se lee una vez y después solo sus líneas nuevas; cada llamada se guarda por su `message_id`, así que releer nunca duplica y borrar el original nunca quita datos. El texto de prompts y respuestas no se guarda.
+Un agente aparece solo cuando su carpeta existe. Al arrancar se leen todos los logs a una base SQLite en memoria; cada llamada se identifica por su `message_id`, así que releer nunca duplica. El texto de prompts y respuestas no se guarda en ningún sitio.
 
 ## Estructura
 
 ```
 src/                  UI React (views/ = resumen y vista ampliada; components/ = panel lateral, tablas, gráficos)
 src-tauri/src/
-  db.rs               conexión SQLite y migraciones
+  db.rs               base SQLite en memoria y migraciones
   ingest.rs           offsets por archivo, upsert, eventos
   pricing.rs          precios por modelo (USD / millón de tokens)
   queries.rs          consultas agregadas para la UI

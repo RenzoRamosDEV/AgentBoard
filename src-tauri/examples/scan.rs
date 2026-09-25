@@ -1,18 +1,13 @@
-//! Importa el historial real de esta máquina a una base temporal e imprime cada apartado.
-//! Uso: `cargo run --example scan [ruta.db]`
+//! Lee el historial real de esta máquina en memoria e imprime cada apartado.
+//! Uso: `cargo run --example scan`
 
 use agentboard_lib::{db, ingest, insights, providers, queries};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .map(Into::into)
-        .unwrap_or_else(|| std::env::temp_dir().join("agentboard-scan.db"));
-    let mut conn = db::open(&path)?;
+    let mut conn = db::open_in_memory()?;
     let t = Instant::now();
     let stats = ingest::scan_all(&mut conn, &providers::all())?;
-    println!("base: {}", path.display());
     println!("escaneo: {stats:?} en {:?}", t.elapsed());
 
     let f = queries::Filter::default();

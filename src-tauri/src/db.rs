@@ -1,8 +1,8 @@
-//! Conexión SQLite, ubicación de la base y migraciones versionadas.
+//! Base SQLite en memoria (nada se guarda en disco) y migraciones versionadas.
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 /// Migraciones en orden; la versión aplicada se guarda en `PRAGMA user_version`.
@@ -13,20 +13,18 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, include_str!("../migrations/0004_coste_reportado.sql")),
 ];
 
-/// Carpeta de datos de AgentBoard en este sistema (`~/.local/share/agentboard` en Linux).
-pub fn data_dir() -> Result<PathBuf> {
-    let base = dirs::data_dir().context("no se encontró la carpeta de datos del sistema")?;
-    Ok(base.join("agentboard"))
+/// Versiones anteriores guardaban una base en la carpeta de datos; se elimina si sigue ahí.
+pub fn remove_legacy_db() {
+    let Some(dir) = dirs::data_dir().map(|d| d.join("agentboard")) else { return };
+    for name in ["agentboard.db", "agentburn.db"] {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
+        }
+    }
+    let _ = std::fs::remove_dir(&dir);
 }
 
-/// Ruta de la base por defecto, creando la carpeta si falta.
-pub fn default_db_path() -> Result<PathBuf> {
-    let dir = data_dir()?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
-    Ok(dir.join("agentboard.db"))
-}
-
-/// Abre (o crea) la base, activa WAL y aplica las migraciones pendientes.
+/// Abre una base en un archivo (solo tests) y aplica las migraciones pendientes.
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
     configure(&conn)?;
@@ -35,7 +33,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Base en memoria para tests.
+/// Base en memoria: la que usa la app. Se rellena al arrancar leyendo los logs del ordenador.
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     configure(&conn)?;

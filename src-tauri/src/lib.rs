@@ -10,19 +10,23 @@ pub mod queries;
 pub mod settings;
 
 use commands::AppState;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let path = db::default_db_path()?;
-            app.manage(AppState { db: Mutex::new(db::open(&path)?), db_path: path.clone() });
+            db::remove_legacy_db();
+            let db = Arc::new(Mutex::new(db::open_in_memory()?));
+            app.manage(AppState { db: db.clone() });
 
-            // Escaneo inicial en segundo plano con su propia conexión.
+            // Escaneo inicial en segundo plano: lee los logs del ordenador a la base en memoria.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let result = db::open(&path).and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
+                let result = db
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
                 match result {
                     Ok(stats) => {
                         let _ = handle.emit("ingest://done", stats);

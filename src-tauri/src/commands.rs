@@ -5,13 +5,11 @@ use crate::insights::{self, ActivityDay, ActivityReport};
 use crate::queries::{self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, Summary};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-/// Conexión para la UI; la ingesta usa la suya propia (WAL).
+/// Base en memoria compartida entre la UI y la ingesta.
 pub struct AppState {
-    pub db: Mutex<Connection>,
-    pub db_path: PathBuf,
+    pub db: Arc<Mutex<Connection>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -63,18 +61,16 @@ pub fn list_projects(state: tauri::State<AppState>, filter: Option<Filter>) -> C
 
 #[tauri::command]
 pub fn get_data_info(state: tauri::State<AppState>) -> CmdResult<DataInfo> {
-    with_db(&state, |c| queries::data_info(c, &state.db_path))
+    with_db(&state, queries::data_info)
 }
 
 #[tauri::command]
-pub fn get_settings(state: tauri::State<AppState>) -> CmdResult<Settings> {
-    with_db(&state, settings::load)
+pub fn get_settings() -> CmdResult<Settings> {
+    Ok(settings::load())
 }
 
 #[tauri::command]
-pub fn set_settings(state: tauri::State<AppState>, settings: Settings) -> CmdResult<Settings> {
-    with_db(&state, |c| {
-        settings::save(c, &settings)?;
-        settings::load(c)
-    })
+pub fn set_settings(settings: Settings) -> CmdResult<Settings> {
+    settings::save(&settings).map_err(|e| format!("{e:#}"))?;
+    Ok(settings::load())
 }

@@ -82,9 +82,9 @@ export interface ProjectRow {
 
 export interface DataInfo {
   firstTs: number | null;
-  dbBytes: number;
+  calls: number;
   watchedFiles: number;
-  dbPath: string;
+  lastScan: number | null;
 }
 
 export interface Settings {

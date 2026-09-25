@@ -111,10 +111,12 @@ export function Sidebar(p: Props) {
           <dl>
             <dt>Primer registro</dt>
             <dd>{p.info.firstTs ? fmt.date(p.info.firstTs) : "—"}</dd>
-            <dt>Base de datos</dt>
-            <dd>{fmt.bytes(p.info.dbBytes)}</dd>
-            <dt>Archivos vigilados</dt>
+            <dt>Archivos leídos</dt>
             <dd>{fmt.int(p.info.watchedFiles)}</dd>
+            <dt>Llamadas</dt>
+            <dd>{fmt.int(p.info.calls)}</dd>
+            <dt>Último escaneo</dt>
+            <dd>{p.info.lastScan ? new Date(p.info.lastScan).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</dd>
           </dl>
         )}
         <button className="button" onClick={p.onSettings}>

@@ -1,9 +1,6 @@
-# ajustes Specification
+# Spec Delta
 
-## Purpose
-Guarda en la base local las preferencias del usuario para que sobrevivan a reinicios y actualizaciones de la app.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Presupuesto mensual
 El usuario SHALL poder fijar un presupuesto mensual en USD (o dejarlo vacío) y el valor MUST persistir entre reinicios en `settings.json` dentro de la carpeta de configuración del usuario (`~/.config/agentboard/` en Linux).

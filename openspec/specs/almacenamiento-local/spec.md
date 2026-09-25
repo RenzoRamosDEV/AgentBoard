@@ -5,24 +5,6 @@ Define dónde guarda AgentBoard su base de datos local, cómo evoluciona el esqu
 
 ## Requirements
 
-### Requirement: Base de datos en la carpeta de datos del usuario
-El sistema SHALL guardar su base SQLite en la carpeta de datos estándar del sistema operativo (`~/.local/share/agentboard/` en Linux, `%APPDATA%\agentboard\` en Windows, `~/Library/Application Support/agentboard/` en macOS), creándola si no existe.
-
-#### Scenario: Primer arranque
-- **WHEN** la app arranca y la carpeta de datos no existe
-- **THEN** se crea la carpeta y un archivo `agentboard.db` dentro
-
-### Requirement: Migraciones versionadas
-El sistema SHALL aplicar al arrancar, en orden y una sola vez, las migraciones de esquema pendientes.
-
-#### Scenario: Arranque con base ya migrada
-- **WHEN** la app arranca con todas las migraciones aplicadas
-- **THEN** no se ejecuta ninguna migración y los datos existentes se conservan
-
-#### Scenario: Arranque tras actualizar la app
-- **WHEN** la app incluye una migración nueva
-- **THEN** solo esa migración se aplica y se registra su versión
-
 ### Requirement: Lectura concurrente
 La base MUST permitir que la interfaz lea mientras la ingesta escribe (modo WAL).
 
@@ -36,3 +18,21 @@ Las marcas de tiempo SHALL guardarse como milisegundos epoch UTC y convertirse a
 #### Scenario: Registro con zona horaria
 - **WHEN** se importa una línea con `timestamp` `2026-09-25T09:57:51.467Z`
 - **THEN** se guarda como `1790330271467`
+
+### Requirement: Datos en memoria
+El sistema SHALL mantener los datos en una base SQLite en memoria que se rellena al arrancar leyendo los logs del ordenador y MUST NOT escribir esos datos en disco.
+
+#### Scenario: Reinicio de la app
+- **WHEN** se cierra y se vuelve a abrir la app
+- **THEN** los datos se vuelven a leer de los logs y no queda ningún archivo de base de datos
+
+#### Scenario: Base heredada
+- **WHEN** existe `~/.local/share/agentboard/agentboard.db` de una versión anterior
+- **THEN** se elimina al arrancar
+
+### Requirement: Esquema en memoria
+El sistema SHALL aplicar en orden todas las migraciones de esquema a la base en memoria en cada arranque, antes del primer escaneo.
+
+#### Scenario: Arranque
+- **WHEN** la app arranca
+- **THEN** la base en memoria tiene la última versión del esquema antes de leer ningún log

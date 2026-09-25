@@ -314,25 +314,18 @@ pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectRow>> {
 #[serde(rename_all = "camelCase")]
 pub struct DataInfo {
     pub first_ts: Option<i64>,
-    pub db_bytes: u64,
+    pub calls: i64,
     pub watched_files: i64,
-    pub db_path: String,
+    pub last_scan: Option<i64>,
 }
 
-pub fn data_info(conn: &Connection, db_path: &std::path::Path) -> Result<DataInfo> {
-    let first_ts = conn.query_row("SELECT MIN(ts) FROM calls", [], |r| r.get(0))?;
-    let watched_files = conn.query_row("SELECT COUNT(*) FROM file_state", [], |r| r.get(0))?;
-    let size = |suffix: &str| {
-        let mut p = db_path.as_os_str().to_owned();
-        p.push(suffix);
-        std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
-    };
-    Ok(DataInfo {
-        first_ts,
-        db_bytes: size("") + size("-wal"),
-        watched_files,
-        db_path: db_path.to_string_lossy().into(),
-    })
+pub fn data_info(conn: &Connection) -> Result<DataInfo> {
+    conn.query_row(
+        "SELECT MIN(ts), COUNT(*), (SELECT COUNT(*) FROM file_state), (SELECT MAX(last_scan) FROM file_state) FROM calls",
+        [],
+        |r| Ok(DataInfo { first_ts: r.get(0)?, calls: r.get(1)?, watched_files: r.get(2)?, last_scan: r.get(3)? }),
+    )
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -500,13 +493,9 @@ mod tests {
 
     #[test]
     fn info_de_datos() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.db");
-        let conn = db::open(&path).unwrap();
+        let conn = db::open_in_memory().unwrap();
         testdata::seed(&conn);
-        let info = data_info(&conn, &path).unwrap();
-        assert_eq!(info.first_ts, Some(1000));
-        assert!(info.db_bytes > 0);
-        assert_eq!(info.watched_files, 0);
+        let info = data_info(&conn).unwrap();
+        assert_eq!((info.first_ts, info.calls, info.watched_files, info.last_scan), (Some(1000), 4, 0, None));
     }
 }

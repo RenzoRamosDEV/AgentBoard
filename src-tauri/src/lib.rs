@@ -39,6 +39,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_summary,
             commands::get_timeseries,
+            commands::get_timeseries_by,
             commands::get_breakdown,
             commands::get_activity,
             commands::get_activity_daily,

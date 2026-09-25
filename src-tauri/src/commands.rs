@@ -2,7 +2,7 @@
 
 use crate::ingest::now_ms;
 use crate::insights::{self, ActivityDay, ActivityReport};
-use crate::queries::{self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, Summary};
+use crate::queries::{self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, SeriesPoint, Summary};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,11 @@ pub fn get_timeseries(
     tz_offset_min: i64,
 ) -> CmdResult<Vec<Point>> {
     with_db(&state, |c| queries::timeseries(c, &filter.unwrap_or_default(), &bucket, tz_offset_min))
+}
+
+#[tauri::command]
+pub fn get_timeseries_by(state: tauri::State<AppState>, filter: Option<Filter>, by: String, tz_offset_min: i64) -> CmdResult<Vec<SeriesPoint>> {
+    with_db(&state, |c| queries::timeseries_by(c, &filter.unwrap_or_default(), &by, tz_offset_min))
 }
 
 #[tauri::command]

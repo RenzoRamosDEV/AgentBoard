@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type ActivityDay, type ActivityReport, type BreakdownRow, type Filter, type Point, type Summary } from "./api";
+import { api, type ActivityDay, type ActivityReport, type BreakdownRow, type Filter, type Point, type SeriesPoint, type Summary } from "./api";
 import { monthStart } from "./period";
 
 export interface DashboardData {
@@ -8,6 +8,9 @@ export interface DashboardData {
   summary: Summary;
   agents: BreakdownRow[];
   daily: Point[];
+  /** Coste por hora local, para el reparto por hora del día. */
+  hourly: Point[];
+  dailyByAgent: SeriesPoint[];
   month: Point[];
   projects: BreakdownRow[];
   /** Solo con un proyecto seleccionado. */
@@ -36,6 +39,8 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
       api.summary(filter),
       by("agent"),
       api.timeseries(filter, "day"),
+      api.timeseries(filter, "hour"),
+      api.timeseriesBy(filter, "agent"),
       api.timeseries(monthFilter, "day"),
       by("project"),
       singleProject ? by("branch") : Promise.resolve(null),
@@ -48,9 +53,9 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
       by("mcp"),
       by("agent_type"),
     ])
-      .then(([summary, agents, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
+      .then(([summary, agents, daily, hourly, dailyByAgent, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes]) => {
         if (!alive) return;
-        setData({ filter, summary, agents, daily, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
+        setData({ filter, summary, agents, daily, hourly, dailyByAgent, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes });
         setError(null);
       })
       .catch((e) => alive && setError(String(e)));

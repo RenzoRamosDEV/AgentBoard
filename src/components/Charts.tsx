@@ -118,6 +118,94 @@ export function Columns({
   );
 }
 
+/** Línea con área bajo la curva (p. ej. acumulado del periodo), con tooltip por punto. */
+export function LineChart({
+  points,
+  height = 200,
+  color = "var(--accent)",
+  format,
+  axis = (ts: number) => new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+}: {
+  points: { ts: number; value: number; tooltip?: ReactNode }[];
+  height?: number;
+  color?: string;
+  format: (v: number) => string;
+  axis?: (ts: number) => string;
+}) {
+  const setTip = useTooltip();
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  if (!points.length) return <Empty />;
+  const pad = { top: 12, right: 12, bottom: 4, left: 4 };
+  const w = Math.max(width, 100);
+  const max = Math.max(...points.map((p) => p.value), 1e-12);
+  const iw = w - pad.left - pad.right;
+  const ih = height - pad.top - pad.bottom;
+  const x = (i: number) => pad.left + (points.length > 1 ? (i / (points.length - 1)) * iw : iw / 2);
+  const y = (v: number) => pad.top + ih - (v / max) * ih;
+  const path = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join("");
+  const area = `${path}L${x(points.length - 1).toFixed(1)},${(pad.top + ih).toFixed(1)}L${x(0).toFixed(1)},${(pad.top + ih).toFixed(1)}Z`;
+  const mid = Math.floor(points.length / 2);
+  const onMove = (e: React.MouseEvent<SVGRectElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const i = Math.round(((e.clientX - rect.left) / rect.width) * (points.length - 1));
+    const idx = Math.min(points.length - 1, Math.max(0, i));
+    setHover(idx);
+    if (points[idx].tooltip) setTip({ x: e.clientX, y: e.clientY, content: points[idx].tooltip });
+  };
+  return (
+    <div className="linechart" ref={ref}>
+      <div className="columns-max muted">máx. {format(max)}</div>
+      <svg width={w} height={height} role="img" aria-label="Evolución">
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} className="grid" x1={pad.left} x2={pad.left + iw} y1={y(max * f)} y2={y(max * f)} />
+        ))}
+        <path d={area} fill={color} opacity={0.12} />
+        <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        {hover != null && (
+          <>
+            <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={pad.top} y2={pad.top + ih} />
+            <circle cx={x(hover)} cy={y(points[hover].value)} r={4} fill={color} stroke="var(--surface-1)" strokeWidth={2} />
+          </>
+        )}
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={iw}
+          height={ih}
+          fill="transparent"
+          onMouseMove={onMove}
+          onMouseLeave={() => {
+            setHover(null);
+            setTip(null);
+          }}
+        />
+      </svg>
+      <div className="columns-axis muted" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+        <span className="first">{axis(points[0].ts)}</span>
+        <span style={{ gridColumn: 2 }}>{points.length > 2 ? axis(points[mid].ts) : ""}</span>
+        <span className="last">{points.length > 1 ? axis(points[points.length - 1].ts) : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Selector de opciones excluyentes (métrica, desglose…). */
+export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label?: string }) {
+  return (
+    <div className="segmented-group">
+      {label && <span className="segmented-label">{label}</span>}
+      <div className="segmented" role="group" aria-label={label}>
+        {options.map((o) => (
+          <button key={o.value} className={`segment ${o.value === value ? "active" : ""}`} onClick={() => onChange(o.value)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export interface Segment {
   key: string;
   label: string;

@@ -28,6 +28,20 @@ export interface Point {
   ts: number;
   costUsd: number;
   calls: number;
+  sessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface SeriesPoint {
+  ts: number;
+  key: string;
+  label: string;
+  costUsd: number;
+  calls: number;
+  outputTokens: number;
 }
 
 export interface BreakdownRow {
@@ -98,6 +112,8 @@ export const api = {
   summary: (filter: Filter) => invoke<Summary>("get_summary", { filter }),
   timeseries: (filter: Filter, bucket: "day" | "hour") =>
     invoke<Point[]>("get_timeseries", { filter, bucket, tzOffsetMin: tzOffsetMin() }),
+  timeseriesBy: (filter: Filter, by: "agent" | "model") =>
+    invoke<SeriesPoint[]>("get_timeseries_by", { filter, by, tzOffsetMin: tzOffsetMin() }),
   breakdown: (filter: Filter, by: BreakdownBy) => invoke<BreakdownRow[]>("get_breakdown", { filter, by }),
   activity: (filter: Filter) => invoke<ActivityReport>("get_activity", { filter }),
   activityDaily: (filter: Filter) => invoke<ActivityDay[]>("get_activity_daily", { filter, tzOffsetMin: tzOffsetMin() }),

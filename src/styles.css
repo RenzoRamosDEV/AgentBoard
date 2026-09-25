@@ -237,6 +237,18 @@ b { font-weight: 600; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: var(--text-secondary); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 
+.controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.segmented-group { display: inline-flex; align-items: center; gap: 8px; }
+.segmented { display: inline-flex; align-items: center; gap: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.segmented-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+.segment { border: 0; background: transparent; color: var(--text-secondary); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.segment:hover { color: var(--text-primary); }
+.segment.active { background: var(--surface-1); color: var(--text-primary); font-weight: 500; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); }
+.linechart { display: flex; flex-direction: column; gap: 6px; }
+.linechart svg { display: block; width: 100%; }
+svg .grid { stroke: var(--row-border); stroke-width: 1; }
+svg .crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+
 .tooltip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.3); max-width: 280px; display: flex; flex-direction: column; gap: 2px; }
 
 .dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-1); color: var(--text-primary); padding: 20px; width: min(420px, 92vw); }

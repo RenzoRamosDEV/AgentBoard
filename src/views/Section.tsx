@@ -4,6 +4,7 @@ import { sectionOf, type SectionId } from "../lib/sections";
 import type { DashboardData } from "../lib/useData";
 import { Kpis, type Kpi } from "../components/Kpis";
 import { PANELS, periodLabel } from "./Overview";
+import { DailyFull } from "./panels";
 
 /** Tres cifras clave de cada apartado. */
 function sectionKpis(id: Exclude<SectionId, "overview">, data: DashboardData): Kpi[] {
@@ -111,9 +112,13 @@ export function Section({
         </h1>
       </header>
       <Kpis items={sectionKpis(id, data)} columns={3} />
-      <section className="panel">
-        <Body data={data} full singleProject={singleProject} />
-      </section>
+      {id === "daily" ? (
+        <DailyFull data={data} />
+      ) : (
+        <section className="panel">
+          <Body data={data} full singleProject={singleProject} />
+        </section>
+      )}
     </div>
   );
 }

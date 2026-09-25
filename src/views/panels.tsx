@@ -2,11 +2,11 @@
  * Cada apartado como par tabla + gráfico, reutilizado por la vista general (recortado)
  * y por la vista ampliada (completo).
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
-import { Bars, Columns, Donut, InlineBar, Legend } from "../components/Charts";
+import { Bars, Columns, Donut, InlineBar, Legend, LineChart, Segmented } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { ChartTitle, Split } from "../components/Panel";
 
@@ -67,6 +67,184 @@ function dayPoints(daily: Point[], filter: { from?: number; to?: number }) {
     });
   }
   return out;
+}
+
+type DailyMetric = "cost" | "calls" | "tokens";
+type DailySplit = "total" | "agent" | "activity";
+
+const METRICS: { value: DailyMetric; label: string }[] = [
+  { value: "cost", label: "Coste" },
+  { value: "calls", label: "Llamadas" },
+  { value: "tokens", label: "Tokens de salida" },
+];
+const SPLITS: { value: DailySplit; label: string }[] = [
+  { value: "total", label: "Total" },
+  { value: "agent", label: "Por agente" },
+  { value: "activity", label: "Por actividad" },
+];
+
+const metricOf = (m: DailyMetric) => ({
+  value: (p: { costUsd: number; calls: number; outputTokens: number }) => (m === "cost" ? p.costUsd : m === "calls" ? p.calls : p.outputTokens),
+  format: (v: number) => (m === "cost" ? cost(v) : m === "tokens" ? fmt.compact(v) : fmt.int(v)),
+  title: m === "cost" ? "Coste por día (USD)" : m === "calls" ? "Llamadas por día" : "Tokens de salida por día",
+});
+
+/** Vista ampliada de Daily Activity: tabla, gráfico configurable, acumulado y reparto por hora. */
+export function DailyFull({ data }: { data: DashboardData }) {
+  const [metric, setMetric] = useState<DailyMetric>("cost");
+  const [split, setSplit] = useState<DailySplit>("total");
+  const m = metricOf(metric);
+  const days = dayPoints(data.daily, data.filter);
+  const byDay = new Map(data.daily.map((p) => [startOfDay(p.ts), p]));
+
+  // Series apiladas por agente o actividad.
+  const seriesByDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
+  const legend = new Map<string, { label: string; color: string }>();
+  if (split === "agent") {
+    const order = data.agents.map((a) => a.key);
+    for (const s of data.dailyByAgent) {
+      const color = agentColor(s.key, Math.max(order.indexOf(s.key), 0));
+      legend.set(s.key, { label: s.label, color });
+      const list = seriesByDay.get(startOfDay(s.ts)) ?? [];
+      list.push({ key: s.key, label: s.label, value: m.value(s), color });
+      seriesByDay.set(startOfDay(s.ts), list);
+    }
+  } else if (split === "activity") {
+    for (const d of data.activityDaily) {
+      const color = activityColor(d.activity);
+      legend.set(d.activity, { label: activityLabel(d.activity), color });
+      const list = seriesByDay.get(startOfDay(d.ts)) ?? [];
+      // La actividad se calcula por turno: coste o turnos (no hay tokens por actividad).
+      list.push({ key: d.activity, label: activityLabel(d.activity), value: metric === "cost" ? d.costUsd : d.turns, color });
+      seriesByDay.set(startOfDay(d.ts), list);
+    }
+  }
+  const points = days.map((d) => {
+    const p = byDay.get(d.ts);
+    const stack = seriesByDay.get(d.ts)?.sort((a, b) => b.value - a.value);
+    const value = split === "total" ? (p ? m.value(p) : 0) : (stack ?? []).reduce((a, s) => a + s.value, 0);
+    return {
+      ts: d.ts,
+      value,
+      stack: split === "total" ? undefined : stack ?? [],
+      tooltip: (
+        <>
+          <b>{fmt.date(d.ts)}</b>
+          <div>{m.format(value)}</div>
+          {p && split === "total" && (
+            <div className="muted">
+              {fmt.int(p.calls)} llamadas · {fmt.int(p.sessions)} sesiones
+            </div>
+          )}
+          {stack?.slice(0, 5).map((s) => (
+            <div key={s.key} className="muted">
+              {s.label}: {m.format(s.value)}
+            </div>
+          ))}
+        </>
+      ),
+    };
+  });
+  const splitNote = split === "activity" && metric !== "cost" ? "Por actividad se cuentan turnos, no llamadas ni tokens." : null;
+
+  // Acumulado del periodo.
+  let acc = 0;
+  const cumulative = days.map((d) => {
+    const p = byDay.get(d.ts);
+    acc += p ? m.value(p) : 0;
+    return {
+      ts: d.ts,
+      value: acc,
+      tooltip: (
+        <>
+          <b>{fmt.date(d.ts)}</b>
+          <div>Acumulado: {m.format(acc)}</div>
+          <div className="muted">Ese día: {m.format(p ? m.value(p) : 0)}</div>
+        </>
+      ),
+    };
+  });
+
+  // Reparto por hora del día (hora local).
+  const hours = Array.from({ length: 24 }, (_, h) => ({ h, value: 0, calls: 0 }));
+  for (const p of data.hourly) {
+    const h = new Date(p.ts).getHours();
+    hours[h].value += m.value(p);
+    hours[h].calls += p.calls;
+  }
+  const hourPoints = hours.map((x) => ({
+    ts: x.h,
+    value: x.value,
+    tooltip: (
+      <>
+        <b>{String(x.h).padStart(2, "0")}:00 – {String((x.h + 1) % 24).padStart(2, "0")}:00</b>
+        <div>{m.format(x.value)}</div>
+        <div className="muted">{fmt.int(x.calls)} llamadas</div>
+      </>
+    ),
+  }));
+  const busiest = hours.reduce((a, b) => (b.value > a.value ? b : a), hours[0]);
+
+  const columns: Column<Point>[] = [
+    { header: "Día", cell: (p) => fmt.date(p.ts), width: "120px", className: "secondary" },
+    { header: "Coste", cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
+    { header: "Llamadas", cell: (p) => fmt.int(p.calls), align: "right" },
+    { header: "Sesiones", cell: (p) => fmt.int(p.sessions), align: "right", className: "secondary" },
+    { header: "Entrada", cell: (p) => fmt.compact(p.inputTokens + p.cacheRead + p.cacheWrite), align: "right", className: "secondary" },
+    { header: "Salida", cell: (p) => fmt.compact(p.outputTokens), align: "right", className: "secondary" },
+    { header: "Cache hit", cell: (p) => { const t = p.inputTokens + p.cacheRead + p.cacheWrite; return t ? fmt.pct(p.cacheRead / t) : "–"; }, align: "right", width: "72px", className: "secondary" },
+    barColumn("Reparto del coste", data.daily, (p) => p.costUsd, "var(--accent)"),
+  ];
+  const rows = [...data.daily].reverse();
+
+  return (
+    <>
+      <section className="panel">
+        <header className="panel-head">
+          <div className="panel-title">
+            <h2>Gráfico</h2>
+            <span className="muted">{m.title}</span>
+          </div>
+          <div className="controls">
+            <Segmented value={metric} options={METRICS} onChange={setMetric} label="Métrica" />
+            <Segmented value={split} options={SPLITS} onChange={setSplit} label="Desglose" />
+          </div>
+        </header>
+        <Columns points={points} format={m.format} height={260} color="var(--accent)" />
+        {legend.size > 0 && <Legend items={[...legend.values()]} />}
+        {splitNote && <p className="muted small">{splitNote}</p>}
+      </section>
+      <div className="grid-2">
+        <section className="panel">
+          <header className="panel-head">
+            <div className="panel-title">
+              <h2>Acumulado del periodo</h2>
+              <span className="muted">{m.format(acc)} en total</span>
+            </div>
+          </header>
+          <LineChart points={cumulative} format={m.format} height={200} />
+        </section>
+        <section className="panel">
+          <header className="panel-head">
+            <div className="panel-title">
+              <h2>Por hora del día</h2>
+              <span className="muted">hora local · más actividad a las {String(busiest.h).padStart(2, "0")}:00</span>
+            </div>
+          </header>
+          <Columns points={hourPoints} format={m.format} height={200} color="var(--series-blue)" axis={(h) => `${String(h).padStart(2, "0")}h`} />
+        </section>
+      </div>
+      <section className="panel">
+        <header className="panel-head">
+          <div className="panel-title">
+            <h2>Tabla por día</h2>
+            <span className="muted">{rows.length} días con actividad, el más reciente primero</span>
+          </div>
+        </header>
+        <DataTable rows={rows} rowKey={(p) => String(p.ts)} columns={columns} />
+      </section>
+    </>
+  );
 }
 
 export function DailyPanel({ data, full }: PanelProps) {

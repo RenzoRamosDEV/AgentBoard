@@ -140,6 +140,11 @@ pub struct Point {
     pub ts: i64,
     pub cost_usd: f64,
     pub calls: i64,
+    pub sessions: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
 }
 
 /// Coste por día u hora local. `tz_offset_min` = minutos a sumar a UTC para la hora local.
@@ -148,7 +153,9 @@ pub fn timeseries(conn: &Connection, f: &Filter, bucket: &str, tz_offset_min: i6
     let off = tz_offset_min * 60_000;
     let (w, mut args) = f.sql("c.ts");
     let sql = format!(
-        "SELECT ((c.ts + ?) / ?) * ? - ? AS b, SUM(c.cost_usd), COUNT(*)
+        "SELECT ((c.ts + ?) / ?) * ? - ? AS b, SUM(c.cost_usd), COUNT(*),
+                COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
+                SUM(c.input_tokens), SUM(c.output_tokens), SUM(c.cache_read), SUM(c.cache_write)
          FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}
          GROUP BY b ORDER BY b"
     );
@@ -156,7 +163,54 @@ pub fn timeseries(conn: &Connection, f: &Filter, bucket: &str, tz_offset_min: i6
     all.append(&mut args);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params_from_iter(all.iter()), |r| Ok(Point { ts: r.get(0)?, cost_usd: r.get(1)?, calls: r.get(2)? }))?
+        .query_map(params_from_iter(all.iter()), |r| {
+            Ok(Point {
+                ts: r.get(0)?,
+                cost_usd: r.get(1)?,
+                calls: r.get(2)?,
+                sessions: r.get(3)?,
+                input_tokens: r.get(4)?,
+                output_tokens: r.get(5)?,
+                cache_read: r.get(6)?,
+                cache_write: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesPoint {
+    pub ts: i64,
+    pub key: String,
+    pub label: String,
+    pub cost_usd: f64,
+    pub calls: i64,
+    pub output_tokens: i64,
+}
+
+/// Coste por día local y agente (`by = "agent"`) o modelo (`by = "model"`).
+pub fn timeseries_by(conn: &Connection, f: &Filter, by: &str, tz_offset_min: i64) -> Result<Vec<SeriesPoint>> {
+    let off = tz_offset_min * 60_000;
+    let (key, label, join) = match by {
+        "agent" => ("s.agent_id", "COALESCE(a.name, s.agent_id)", "LEFT JOIN agents a ON a.id = s.agent_id"),
+        "model" => ("c.model", "c.model", ""),
+        other => anyhow::bail!("serie desconocida: {other}"),
+    };
+    let (w, mut args) = f.sql("c.ts");
+    let sql = format!(
+        "SELECT ((c.ts + ?) / ?) * ? - ? AS b, {key}, {label}, SUM(c.cost_usd), COUNT(*), SUM(c.output_tokens)
+         FROM call_costs c JOIN sessions s ON s.id = c.session_id {join} WHERE {w}
+         GROUP BY b, {key} ORDER BY b, 4 DESC"
+    );
+    let mut all: Vec<Value> = vec![off.into(), DAY_MS.into(), DAY_MS.into(), off.into()];
+    all.append(&mut args);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_from_iter(all.iter()), |r| {
+            Ok(SeriesPoint { ts: r.get(0)?, key: r.get(1)?, label: r.get(2)?, cost_usd: r.get(3)?, calls: r.get(4)?, output_tokens: r.get(5)? })
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
@@ -439,6 +493,18 @@ mod tests {
         assert_eq!(branches.len(), 1);
         assert_eq!(branches[0].label, "main");
         assert!(breakdown(&conn, &Filter::default(), "nada").is_err());
+    }
+
+    #[test]
+    fn serie_diaria_por_agente() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        let rows = timeseries_by(&conn, &Filter::default(), "agent", 0).unwrap();
+        assert_eq!(rows.len(), 2, "un día, dos agentes");
+        assert_eq!((rows[0].label.as_str(), rows[0].calls), ("Claude Code", 3));
+        let day = timeseries(&conn, &Filter::default(), "day", 0).unwrap();
+        assert_eq!((day[0].sessions, day[0].input_tokens, day[0].output_tokens), (3, 2_000_005, 100_005));
+        assert!(timeseries_by(&conn, &Filter::default(), "nada", 0).is_err());
     }
 
     #[test]

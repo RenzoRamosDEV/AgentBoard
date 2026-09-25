@@ -31,9 +31,31 @@ export function installMocks() {
           burnRateUsdH: 2.35, firstTs: now - 42 * DAY, lastTs: now, unpricedModels: ["modelo-local"],
         };
       case "get_timeseries": {
+        const pt = (ts: number, costUsd: number, calls: number) => ({
+          ts, costUsd, calls, sessions: Math.max(1, Math.round(calls / 40)),
+          inputTokens: calls * 120, outputTokens: calls * 350, cacheRead: calls * 9000, cacheWrite: calls * 400,
+        });
+        if (a.bucket === "hour") {
+          const out = [];
+          for (let d = 0; d < 14; d++) for (const h of [9, 10, 11, 12, 15, 16, 17, 18, 22]) {
+            const ts = new Date(new Date(now - d * DAY).setHours(h, 0, 0, 0)).getTime();
+            out.push(pt(ts, 0.2 + ((d * h) % 7) * 0.15, 10 + ((d + h) % 9)));
+          }
+          return out;
+        }
         // Solo algunos días tienen actividad, como en la realidad.
         const days = Math.floor((now - monthStart) / DAY) + 1;
-        return Array.from({ length: days }, (_, i) => ({ ts: monthStart + i * DAY, costUsd: 1 + ((i * 37) % 11) * 0.6, calls: 100 })).filter((_, i) => i % 3 !== 1);
+        return Array.from({ length: days }, (_, i) => pt(monthStart + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
+      }
+      case "get_timeseries_by": {
+        const out = [];
+        for (let d = 13; d >= 0; d--) {
+          const ts = Math.floor((now - d * DAY) / DAY) * DAY;
+          out.push({ ts, key: "claude-code", label: "Claude Code", costUsd: 1 + ((d * 37) % 11) * 0.5, calls: 80, outputTokens: 30000 });
+          out.push({ ts, key: "codex", label: "Codex CLI", costUsd: ((d * 3) % 4) * 0.2, calls: 12, outputTokens: 4000 });
+          if (d % 2) out.push({ ts, key: "opencode", label: "OpenCode", costUsd: 0, calls: 6, outputTokens: 2000 });
+        }
+        return out;
       }
       case "get_breakdown":
         switch (a.by) {

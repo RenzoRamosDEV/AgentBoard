@@ -22,8 +22,17 @@ pub enum Record {
     Session(SessionRec),
     Call(CallRec),
     ToolUse(ToolUseRec),
-    ToolResult { call_id: String, ts: i64, is_error: bool },
+    ToolResult { call_id: String, ts: i64, is_error: bool, agent_id: Option<String> },
     Event(EventRec),
+    Turn(TurnRec),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnRec {
+    pub id: String,
+    pub session_id: String,
+    pub ts: i64,
+    pub intent: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +57,8 @@ pub struct CallRec {
     pub cache_write_1h: i64,
     pub reasoning_tokens: i64,
     pub activity: Option<String>,
+    pub is_sidechain: bool,
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +69,8 @@ pub struct ToolUseRec {
     pub ts: i64,
     pub tool: String,
     pub target: Option<String>,
+    /// Skill invocada o tipo de subagente lanzado.
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,9 +111,48 @@ pub fn classify_tool(tool: &str, target: Option<&str>) -> &'static str {
     }
 }
 
+/// Intención de un prompt por palabras clave (español e inglés). Solo se guarda la etiqueta.
+pub fn prompt_intent(text: &str) -> Option<&'static str> {
+    let t = text.to_lowercase();
+    let words: Vec<&str> = t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let has_word = |list: &[&str]| words.iter().any(|w| list.contains(w));
+    let has_prefix = |list: &[&str]| words.iter().any(|w| list.iter().any(|p| w.starts_with(p)));
+    let has_phrase = |list: &[&str]| list.iter().any(|p| t.contains(p));
+
+    if has_word(&["fix", "bug", "bugs", "error", "errors", "crash", "broken", "debug", "fails", "failing", "roto", "rota", "bug"])
+        || has_prefix(&["arregl", "falla", "fallo", "depur", "corrig", "exception", "excepci"])
+        || has_phrase(&["no funciona", "doesn't work", "not working", "why does", "por qué falla"])
+    {
+        return Some("debug");
+    }
+    if has_word(&["add", "implement", "create", "build", "haz", "hazlo", "nueva", "nuevo", "feature", "support"])
+        || has_prefix(&["añad", "agreg", "implement", "crea", "constru", "desarroll"])
+        || has_phrase(&["quiero que", "i want", "new feature", "make it"])
+    {
+        return Some("feature");
+    }
+    if has_word(&["idea", "ideas", "brainstorm", "opinas", "opinion", "alternatives", "pros", "compare", "deberíamos", "should"])
+        || has_prefix(&["alternativ", "propon", "propuest", "compar", "pienso", "piensa"])
+        || has_phrase(&["what if", "qué te parece", "que te parece", "what do you think"])
+    {
+        return Some("brainstorm");
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intencion_del_prompt() {
+        assert_eq!(prompt_intent("Fix the failing test"), Some("debug"));
+        assert_eq!(prompt_intent("Arregla el error de la ingesta"), Some("debug"));
+        assert_eq!(prompt_intent("Añade un filtro por proyecto"), Some("feature"));
+        assert_eq!(prompt_intent("¿Qué te parece usar Svelte?"), Some("brainstorm"));
+        assert_eq!(prompt_intent("Please address the review"), None, "address no es add");
+        assert_eq!(prompt_intent("gracias"), None);
+    }
 
     #[test]
     fn fecha_utc_a_epoch() {

@@ -1,6 +1,6 @@
 //! Sesiones de Claude Code: `~/.claude/projects/<proyecto>/<sesión>.jsonl`.
 
-use super::{classify_tool, parse_ts, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec};
+use super::{classify_tool, parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
 use anyhow::Result;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -95,7 +95,13 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
     if let Some(blocks) = msg["content"].as_array() {
         for b in blocks.iter().filter(|b| b["type"] == "tool_use") {
             let tool = b["name"].as_str().unwrap_or("?").to_string();
-            let target = tool_target(&b["input"]);
+            let input = &b["input"];
+            let target = tool_target(input);
+            let detail = match tool.as_str() {
+                "Skill" => input["skill"].as_str().map(str::to_string),
+                "Agent" | "Task" => Some(input["subagent_type"].as_str().unwrap_or("general-purpose").to_string()),
+                _ => None,
+            };
             activity = Some(classify_tool(&tool, target.as_deref()).to_string());
             if let Some(call_id) = b["id"].as_str() {
                 out.push(Record::ToolUse(ToolUseRec {
@@ -105,6 +111,7 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
                     ts,
                     tool,
                     target,
+                    detail,
                 }));
             }
         }
@@ -128,6 +135,8 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
                 cache_write_1h: n(&usage["cache_creation"]["ephemeral_1h_input_tokens"]),
                 reasoning_tokens: n(&usage["output_tokens_details"]["thinking_tokens"]),
                 activity,
+                is_sidechain: v["isSidechain"].as_bool().unwrap_or(false),
+                agent_id: v["agentId"].as_str().map(str::to_string),
             }),
         );
     }
@@ -135,6 +144,9 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
 
 fn parse_user(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) {
     let content = &v["message"]["content"];
+    let sidechain = v["isSidechain"].as_bool().unwrap_or(false);
+    // El texto del prompt humano: se usa para la intención y se descarta.
+    let mut prompt: Option<String> = None;
     if let Some(blocks) = content.as_array() {
         for b in blocks {
             match b["type"].as_str() {
@@ -144,17 +156,34 @@ fn parse_user(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) {
                             call_id: id.to_string(),
                             ts,
                             is_error: b["is_error"].as_bool().unwrap_or(false),
+                            agent_id: v["toolUseResult"]["agentId"].as_str().map(str::to_string),
                         });
                     }
                 }
                 Some("text") if is_interruption(b["text"].as_str()) => {
                     out.push(interruption(session_id, ts));
                 }
+                Some("text") => {
+                    prompt.get_or_insert_with(String::new).push_str(b["text"].as_str().unwrap_or(""));
+                }
                 _ => {}
             }
         }
     } else if is_interruption(content.as_str()) {
         out.push(interruption(session_id, ts));
+    } else if let Some(text) = content.as_str() {
+        prompt = Some(text.to_string());
+    }
+
+    // Las líneas de un turno comparten promptId; las de subagentes no abren turno propio.
+    if let (Some(id), false) = (v["promptId"].as_str(), sidechain) {
+        let is_human = !v["isMeta"].as_bool().unwrap_or(false);
+        out.push(Record::Turn(TurnRec {
+            id: id.to_string(),
+            session_id: session_id.to_string(),
+            ts,
+            intent: prompt.filter(|_| is_human).as_deref().and_then(prompt_intent),
+        }));
     }
 }
 
@@ -212,7 +241,7 @@ mod tests {
         assert!(recs.iter().any(|r| matches!(r, Record::ToolUse(t) if t.tool == "Bash" && t.target.as_deref() == Some("npm install"))));
         let u = r#"{"type":"user","sessionId":"s1","timestamp":"2026-09-25T10:00:05Z","cwd":"/p",
           "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"x"}]}}"#;
-        assert!(parse(u).contains(&Record::ToolResult { call_id: "toolu_1".into(), ts: parse_ts("2026-09-25T10:00:05Z").unwrap(), is_error: true }));
+        assert!(parse(u).contains(&Record::ToolResult { call_id: "toolu_1".into(), ts: parse_ts("2026-09-25T10:00:05Z").unwrap(), is_error: true, agent_id: None }));
     }
 
     #[test]
@@ -221,6 +250,37 @@ mod tests {
         let synth = r#"{"type":"assistant","sessionId":"s","timestamp":"2026-09-25T10:00:00Z","message":{"model":"<synthetic>","id":"m","content":[],"usage":{"input_tokens":0}}}"#;
         assert!(!parse(synth).iter().any(|r| matches!(r, Record::Call(_))));
         assert!(ClaudeCode::default().parse_line(Path::new("x"), "{no json").is_err());
+    }
+
+    #[test]
+    fn prompt_abre_turno_con_intencion_sin_texto() {
+        let u = r#"{"type":"user","sessionId":"s1","promptId":"p1","timestamp":"2026-09-25T10:00:00Z","cwd":"/p",
+          "message":{"role":"user","content":"Arregla el test que falla"}}"#;
+        let recs = parse(u);
+        let turn = recs.iter().find_map(|r| if let Record::Turn(t) = r { Some(t) } else { None }).unwrap();
+        assert_eq!((turn.id.as_str(), turn.intent), ("p1", Some("debug")));
+        assert!(!format!("{recs:?}").contains("Arregla"), "el texto no sale del parser");
+        let side = u.replace(r#""promptId""#, r#""isSidechain":true,"promptId""#);
+        assert!(!parse(&side).iter().any(|r| matches!(r, Record::Turn(_))));
+    }
+
+    #[test]
+    fn skills_y_subagentes() {
+        let a = r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-25T10:00:00Z",
+          "message":{"model":"claude-opus-5-5","id":"m","content":[
+            {"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"dataviz"}},
+            {"type":"tool_use","id":"t2","name":"Agent","input":{"description":"x","prompt":"y","subagent_type":"Explore"}}],
+          "usage":{"input_tokens":1,"output_tokens":1}}}"#;
+        let details: Vec<_> = parse(a).into_iter().filter_map(|r| if let Record::ToolUse(t) = r { t.detail } else { None }).collect();
+        assert_eq!(details, vec!["dataviz".to_string(), "Explore".to_string()]);
+
+        let res = r#"{"type":"user","sessionId":"s1","timestamp":"2026-09-25T10:01:00Z","toolUseResult":{"agentId":"a1","status":"completed"},
+          "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}"#;
+        assert!(parse(res).iter().any(|r| matches!(r, Record::ToolResult { agent_id: Some(a), .. } if a == "a1")));
+
+        let side = r#"{"type":"assistant","isSidechain":true,"agentId":"a1","sessionId":"s1","timestamp":"2026-09-25T10:00:30Z",
+          "message":{"model":"claude-haiku-4-5","id":"ms","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}"#;
+        assert!(parse(side).iter().any(|r| matches!(r, Record::Call(c) if c.is_sidechain && c.agent_id.as_deref() == Some("a1"))));
     }
 
     #[test]

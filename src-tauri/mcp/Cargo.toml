@@ -1,6 +1,6 @@
 [package]
 name = "agentboard-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Servidor MCP de AgentBoard (stdio, JSON-RPC): expone el uso de los agentes"
 edition = "2021"
 

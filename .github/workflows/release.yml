@@ -47,3 +47,11 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # linuxdeploy copia libwayland/libxkbcommon/libxcb de Ubuntu y rompen el EGL de Mesa moderno
+      # (ventana en blanco en Fedora/Bazzite/Arch). Se quitan y se vuelve a subir el AppImage.
+      - name: Arreglar AppImage (librerías de display)
+        if: matrix.os == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/fix-appimage.sh "${{ github.ref_name }}"

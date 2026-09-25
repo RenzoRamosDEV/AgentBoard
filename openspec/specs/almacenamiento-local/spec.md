@@ -1,16 +1,16 @@
 # almacenamiento-local Specification
 
 ## Purpose
-Define dónde guarda AgentBurn su base de datos local, cómo evoluciona el esquema y cómo se representan las fechas para que el historial sea fiable y portable.
+Define dónde guarda AgentBoard su base de datos local, cómo evoluciona el esquema y cómo se representan las fechas para que el historial sea fiable y portable.
 
 ## Requirements
 
 ### Requirement: Base de datos en la carpeta de datos del usuario
-El sistema SHALL guardar su base SQLite en la carpeta de datos estándar del sistema operativo (`~/.local/share/agentburn/` en Linux, `%APPDATA%\agentburn\` en Windows, `~/Library/Application Support/agentburn/` en macOS), creándola si no existe.
+El sistema SHALL guardar su base SQLite en la carpeta de datos estándar del sistema operativo (`~/.local/share/agentboard/` en Linux, `%APPDATA%\agentboard\` en Windows, `~/Library/Application Support/agentboard/` en macOS), creándola si no existe.
 
 #### Scenario: Primer arranque
 - **WHEN** la app arranca y la carpeta de datos no existe
-- **THEN** se crea la carpeta y un archivo `agentburn.db` dentro
+- **THEN** se crea la carpeta y un archivo `agentboard.db` dentro
 
 ### Requirement: Migraciones versionadas
 El sistema SHALL aplicar al arrancar, en orden y una sola vez, las migraciones de esquema pendientes.

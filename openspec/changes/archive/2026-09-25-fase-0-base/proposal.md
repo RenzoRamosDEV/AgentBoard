@@ -2,7 +2,7 @@
 
 ## Why
 
-AgentBurn necesita una base sobre la que construir todas las vistas: una app Tauri que arranque, una base SQLite local con esquema versionado y un parser de Claude Code que importe el historial real. Sin esto no hay datos que enseñar ni forma de comprobar que los totales cuadran.
+AgentBoard necesita una base sobre la que construir todas las vistas: una app Tauri que arranque, una base SQLite local con esquema versionado y un parser de Claude Code que importe el historial real. Sin esto no hay datos que enseñar ni forma de comprobar que los totales cuadran.
 
 ## What Changes
 

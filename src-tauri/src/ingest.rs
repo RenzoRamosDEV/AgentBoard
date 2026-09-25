@@ -73,7 +73,7 @@ pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Resul
                     }
                     Err(e) => {
                         stats.errors += 1;
-                        eprintln!("agentburn: error leyendo {}: {e:#}", path.display());
+                        eprintln!("agentboard: error leyendo {}: {e:#}", path.display());
                     }
                 }
             }

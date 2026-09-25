@@ -12,17 +12,17 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("../migrations/0003_turnos_y_subagentes.sql")),
 ];
 
-/// Carpeta de datos de AgentBurn en este sistema (`~/.local/share/agentburn` en Linux).
+/// Carpeta de datos de AgentBoard en este sistema (`~/.local/share/agentboard` en Linux).
 pub fn data_dir() -> Result<PathBuf> {
     let base = dirs::data_dir().context("no se encontró la carpeta de datos del sistema")?;
-    Ok(base.join("agentburn"))
+    Ok(base.join("agentboard"))
 }
 
 /// Ruta de la base por defecto, creando la carpeta si falta.
 pub fn default_db_path() -> Result<PathBuf> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
-    Ok(dir.join("agentburn.db"))
+    Ok(dir.join("agentboard.db"))
 }
 
 /// Abre (o crea) la base, activa WAL y aplica las migraciones pendientes.

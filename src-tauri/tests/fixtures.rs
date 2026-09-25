@@ -1,8 +1,8 @@
 //! Importa los fixtures anonimizados de `tests/fixtures/` y comprueba los totales.
 
-use agentburn_lib::providers::claude_code::ClaudeCode;
-use agentburn_lib::providers::Provider;
-use agentburn_lib::{db, ingest, queries};
+use agentboard_lib::providers::claude_code::ClaudeCode;
+use agentboard_lib::providers::Provider;
+use agentboard_lib::{db, ingest, queries};
 use std::path::PathBuf;
 
 fn fixtures(agent: &str) -> PathBuf {
@@ -47,7 +47,7 @@ fn claude_code_fixture() {
     assert_eq!(model, "claude-opus-5-5", "las llamadas del subagente no cambian el modelo de la sesión");
 
     let f = queries::Filter::default();
-    let activity = agentburn_lib::insights::activity(&conn, &f).unwrap();
+    let activity = agentboard_lib::insights::activity(&conn, &f).unwrap();
     let debug = activity.activities.iter().find(|a| a.key == "debugging").expect("turno p1 = debugging");
     assert_eq!((debug.turns, debug.one_shot), (1, Some(0.0)), "reeditó lib.rs → no es 1-shot");
     assert!(activity.activities.iter().any(|a| a.key == "delegation" && a.turns == 1));

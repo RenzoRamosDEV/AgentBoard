@@ -106,7 +106,7 @@ export function Dashboard({
 
   return (
     <div className="main">
-      <TermPanel title={<>AgentBurn <span className="muted">{periodLabel}</span></>} color={C.header} className="span-2 term-header">
+      <TermPanel title={<>AgentBoard <span className="muted">{periodLabel}</span></>} color={C.header} className="span-2 term-header">
         <p>
           <span className="cost">{fmt.usd(s.costUsd)}</span> cost <b>{fmt.int(s.calls)}</b> calls <b>{fmt.int(s.sessions)}</b> sessions{" "}
           <b>{fmt.pct(s.cacheHit)}</b> cache hit

@@ -1,4 +1,4 @@
-//! Núcleo de AgentBurn: lee logs de agentes, los guarda en SQLite y los sirve a la UI.
+//! Núcleo de AgentBoard: lee logs de agentes, los guarda en SQLite y los sirve a la UI.
 
 pub mod commands;
 pub mod db;
@@ -27,7 +27,7 @@ pub fn run() {
                     Ok(stats) => {
                         let _ = handle.emit("ingest://done", stats);
                     }
-                    Err(e) => eprintln!("agentburn: falló el escaneo inicial: {e:#}"),
+                    Err(e) => eprintln!("agentboard: falló el escaneo inicial: {e:#}"),
                 }
             });
             Ok(())
@@ -44,5 +44,5 @@ pub fn run() {
             commands::set_settings,
         ])
         .run(tauri::generate_context!())
-        .expect("error al arrancar AgentBurn");
+        .expect("error al arrancar AgentBoard");
 }

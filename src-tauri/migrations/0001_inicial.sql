@@ -1,4 +1,4 @@
--- Esquema inicial de AgentBurn. Fechas en epoch ms UTC.
+-- Esquema inicial de AgentBoard. Fechas en epoch ms UTC.
 
 CREATE TABLE agents (
   id         TEXT PRIMARY KEY,           -- claude-code, codex, gemini

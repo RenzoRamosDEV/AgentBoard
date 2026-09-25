@@ -1,4 +1,4 @@
-# AgentBurn
+# AgentBoard
 
 App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de código —Claude Code, Codex, Gemini CLI— y cuánto cuestan, y guarda ese historial en una base SQLite local para siempre. Sin proxy, sin API keys y sin enviar datos fuera de tu máquina.
 
@@ -18,8 +18,8 @@ App de escritorio (Linux, Windows y macOS) que muestra qué hacen tus agentes de
 En distros inmutables se compila dentro de un contenedor que comparte tu `$HOME`:
 
 ```sh
-distrobox create -n agentburn-dev -i registry.fedoraproject.org/fedora-toolbox:44
-distrobox enter agentburn-dev -- sudo dnf install -y webkit2gtk4.1-devel openssl-devel \
+distrobox create -n agentboard-dev -i registry.fedoraproject.org/fedora-toolbox:44
+distrobox enter agentboard-dev -- sudo dnf install -y webkit2gtk4.1-devel openssl-devel \
   libappindicator-gtk3-devel librsvg2-devel libxdo-devel gcc gcc-c++ make
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ```
@@ -28,7 +28,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 ```sh
 npm install
-npm run tauri dev          # en Bazzite: distrobox enter agentburn-dev -- npm run tauri dev
+npm run tauri dev          # en Bazzite: distrobox enter agentboard-dev -- npm run tauri dev
 ```
 
 Tests del núcleo y verificación con tus datos reales:
@@ -43,9 +43,9 @@ cargo run --example scan   # importa tu historial a una base temporal e imprime 
 
 | Sistema | Base de datos |
 | --- | --- |
-| Linux | `~/.local/share/agentburn/agentburn.db` |
-| Windows | `%APPDATA%\agentburn\agentburn.db` |
-| macOS | `~/Library/Application Support/agentburn/agentburn.db` |
+| Linux | `~/.local/share/agentboard/agentboard.db` |
+| Windows | `%APPDATA%\agentboard\agentboard.db` |
+| macOS | `~/Library/Application Support/agentboard/agentboard.db` |
 
 Los logs se leen de `~/.claude/projects/` (o `$CLAUDE_CONFIG_DIR/projects/`). Cada archivo se lee una vez y después solo sus líneas nuevas; cada llamada se guarda por su `message_id`, así que releer nunca duplica y borrar el original nunca quita datos. El texto de prompts y respuestas no se guarda.
 

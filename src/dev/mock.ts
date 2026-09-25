@@ -72,7 +72,7 @@ export function installMocks() {
           { id: 4, name: "scripts", cwd: "/home/u/scripts", costUsd: 6.3, calls: 890 },
         ];
       case "get_data_info":
-        return { firstTs: now - 42 * DAY, dbBytes: 18_400_000, watchedFiles: 212, dbPath: "~/.local/share/agentburn/agentburn.db" };
+        return { firstTs: now - 42 * DAY, dbBytes: 18_400_000, watchedFiles: 212, dbPath: "~/.local/share/agentboard/agentboard.db" };
       case "get_settings":
         return { monthlyBudget: 60 };
       case "set_settings":

@@ -1,11 +1,11 @@
 [package]
-name = "agentburn"
+name = "agentboard"
 version = "0.1.0"
 description = "Coste y actividad de tus agentes de código, en local"
 edition = "2021"
 
 [lib]
-name = "agentburn_lib"
+name = "agentboard_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

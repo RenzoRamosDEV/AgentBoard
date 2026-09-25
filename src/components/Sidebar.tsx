@@ -28,7 +28,7 @@ export function Sidebar(p: Props) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        AgentBurn
+        AgentBoard
       </div>
 
       <section>

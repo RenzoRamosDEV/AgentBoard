@@ -2,7 +2,7 @@
 
 ## Context
 
-Repositorio vacío; la especificación de producto (Claude Doc "AgentBurn — especificación y arquitectura") fija Tauri 2 + Rust + SQLite + React. El entorno de desarrollo es Bazzite (inmutable): la compilación nativa se hace dentro de un distrobox Fedora con WebKitGTK 4.1; Node vive en `~/.nvm` y Rust en `~/.cargo`, ambos compartidos con el contenedor.
+Repositorio vacío; la especificación de producto (Claude Doc "AgentBoard — especificación y arquitectura") fija Tauri 2 + Rust + SQLite + React. El entorno de desarrollo es Bazzite (inmutable): la compilación nativa se hace dentro de un distrobox Fedora con WebKitGTK 4.1; Node vive en `~/.nvm` y Rust en `~/.cargo`, ambos compartidos con el contenedor.
 
 ## Goals / Non-Goals
 

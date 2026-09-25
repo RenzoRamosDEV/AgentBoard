@@ -1,14 +1,31 @@
 //! Contrato para soportar un agente: dónde están sus logs y cómo se convierte cada línea en filas.
 
 pub mod claude_code;
+pub mod opencode;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+
+/// Cómo guarda sus datos el agente.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Archivos JSONL que se leen línea a línea desde un offset.
+    Jsonl,
+    /// Una base SQLite que se consulta desde un cursor de tiempo.
+    Sqlite,
+}
 
 pub trait Provider: Send + Sync {
     /// Identificador estable que se guarda en la base (`claude-code`).
     fn id(&self) -> &'static str;
     fn name(&self) -> &'static str;
+    fn source(&self) -> Source {
+        Source::Jsonl
+    }
+    /// Solo para `Source::Sqlite`: registros modificados después de `since` y el nuevo cursor.
+    fn read_db(&self, _path: &Path, since: i64) -> Result<(Vec<Record>, i64)> {
+        Ok((vec![], since))
+    }
     /// Carpetas a vigilar en este sistema (ya resueltas con `dirs`).
     fn log_roots(&self) -> Vec<PathBuf>;
     /// ¿Este archivo es una sesión de este agente?
@@ -59,6 +76,8 @@ pub struct CallRec {
     pub activity: Option<String>,
     pub is_sidechain: bool,
     pub agent_id: Option<String>,
+    /// Coste calculado por el propio agente, si lo trae (OpenCode).
+    pub cost_reported: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,7 +102,7 @@ pub struct EventRec {
 
 /// Todos los agentes soportados.
 pub fn all() -> Vec<Box<dyn Provider>> {
-    vec![Box::new(claude_code::ClaudeCode::default())]
+    vec![Box::new(claude_code::ClaudeCode::default()), Box::new(opencode::OpenCode::default())]
 }
 
 /// RFC 3339 → epoch ms UTC.

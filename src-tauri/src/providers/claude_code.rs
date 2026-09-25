@@ -137,6 +137,7 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
                 activity,
                 is_sidechain: v["isSidechain"].as_bool().unwrap_or(false),
                 agent_id: v["agentId"].as_str().map(str::to_string),
+                cost_reported: None,
             }),
         );
     }

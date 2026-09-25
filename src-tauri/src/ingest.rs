@@ -1,6 +1,6 @@
 //! Lectura incremental de logs: offset por archivo, upsert por id y nada se borra solo.
 
-use crate::providers::{Provider, Record};
+use crate::providers::{Provider, Record, Source};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
@@ -122,6 +122,9 @@ fn mtime_ms(meta: &fs::Metadata) -> i64 {
 
 /// Lee lo nuevo de un archivo y lo guarda en una transacción.
 pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Result<FileResult> {
+    if provider.source() == Source::Sqlite {
+        return ingest_db(conn, provider, path);
+    }
     let meta = fs::metadata(path)?;
     let size = meta.len() as i64;
     let file_id = file_identity(&meta);
@@ -179,6 +182,40 @@ pub fn ingest_file(conn: &mut Connection, provider: &dyn Provider, path: &Path) 
          ON CONFLICT(path) DO UPDATE SET file_id = excluded.file_id, size = excluded.size,
            offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan",
         params![key, provider.id(), file_id, size, start + consumed as i64, mtime_ms(&meta), now_ms()],
+    )?;
+    tx.commit()?;
+    Ok(result)
+}
+
+/// Base SQLite de un agente: el "offset" de `file_state` es el cursor de `time_updated`.
+fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Result<FileResult> {
+    let meta = fs::metadata(path)?;
+    let key = path.to_string_lossy().to_string();
+    let since: i64 = conn
+        .query_row("SELECT offset FROM file_state WHERE path = ?1", [&key], |r| r.get(0))
+        .optional()?
+        .unwrap_or(0);
+    let (records, cursor) = provider.read_db(path, since)?;
+    let mut result = FileResult::default();
+    let tx = conn.transaction()?;
+    ensure_agent(&tx, provider)?;
+    {
+        let mut w = Writer::new(&tx, provider.id());
+        for rec in &records {
+            if let Some(id) = w.apply(rec)? {
+                result.new_tool_calls.push(id);
+            }
+            result.records += 1;
+        }
+        w.backfill_turns()?;
+    }
+    result.lines = records.len();
+    tx.execute(
+        "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
+         VALUES (?1, ?2, 'sqlite', ?3, ?4, ?5, ?6)
+         ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset,
+           mtime = excluded.mtime, last_scan = excluded.last_scan",
+        params![key, provider.id(), meta.len() as i64, cursor, mtime_ms(&meta), now_ms()],
     )?;
     tx.commit()?;
     Ok(result)
@@ -247,15 +284,16 @@ impl<'a> Writer<'a> {
                        started_at = MIN(started_at, excluded.started_at),
                        ended_at   = MAX(ended_at, excluded.ended_at),
                        git_branch = COALESCE(excluded.git_branch, git_branch),
-                       project_id = COALESCE(project_id, excluded.project_id)",
+                       project_id = COALESCE(project_id, excluded.project_id),
+                       is_subagent = MAX(is_subagent, excluded.is_subagent)",
                     params![s.id, self.agent_id, project, s.git_branch, s.ts, s.is_subagent],
                 )?;
             }
             Record::Call(c) => {
                 self.tx.execute(
                     "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
-                        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, turn_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, (SELECT id FROM turns
+                        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
                        WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
                      ON CONFLICT(message_id) DO UPDATE SET
                        ts = MIN(ts, excluded.ts), model = excluded.model,
@@ -264,11 +302,12 @@ impl<'a> Writer<'a> {
                        cache_write_1h = excluded.cache_write_1h, reasoning_tokens = excluded.reasoning_tokens,
                        activity = COALESCE(excluded.activity, activity),
                        is_sidechain = excluded.is_sidechain, agent_id = COALESCE(excluded.agent_id, agent_id),
+                       cost_reported = COALESCE(excluded.cost_reported, cost_reported),
                        turn_id = COALESCE(turn_id, excluded.turn_id)",
                     params![
                         c.message_id, c.session_id, c.ts, c.model, c.input_tokens, c.output_tokens,
                         c.cache_read, c.cache_write, c.cache_write_1h, c.reasoning_tokens, c.activity,
-                        c.is_sidechain, c.agent_id
+                        c.is_sidechain, c.agent_id, c.cost_reported
                     ],
                 )?;
                 if !c.is_sidechain {

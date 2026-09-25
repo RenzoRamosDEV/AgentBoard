@@ -37,7 +37,12 @@ impl Filter {
             args.extend(agents.iter().cloned().map(Value::from));
         }
         if let Some(projects) = &self.projects {
-            conds.push(format!("s.project_id IN ({})", placeholders(projects.len())));
+            // Un proyecto incluye todas las carpetas (worktrees) de su mismo repo.
+            conds.push(format!(
+                "s.project_id IN (SELECT id FROM projects WHERE repo_root IN
+                   (SELECT repo_root FROM projects WHERE id IN ({})))",
+                placeholders(projects.len())
+            ));
             args.extend(projects.iter().map(|p| Value::from(*p)));
         }
         (conds.join(" AND "), args)
@@ -187,7 +192,7 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
         )
     };
     let sql = match by {
-        "project" => calls("CAST(s.project_id AS TEXT)", "COALESCE(p.name, '(sin proyecto)')", "LEFT JOIN projects p ON p.id = s.project_id"),
+        "project" => calls("COALESCE(p.repo_root, '')", "COALESCE(MIN(p.name), '(sin proyecto)')", "LEFT JOIN projects p ON p.id = s.project_id"),
         "branch" => calls("COALESCE(s.git_branch, '')", "COALESCE(s.git_branch, '(sin rama)')", ""),
         "model" => calls("c.model", "c.model", ""),
         "activity" => calls("COALESCE(c.activity, 'conversation')", "COALESCE(c.activity, 'conversation')", ""),
@@ -448,6 +453,23 @@ mod tests {
         assert_eq!(projects.len(), 2);
         assert_eq!((projects[0].name.as_str(), projects[0].calls), ("web", 1));
         assert_eq!(projects[1].calls, 0);
+    }
+
+    #[test]
+    fn worktrees_cuentan_en_su_proyecto() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        conn.execute_batch(
+            "INSERT INTO projects (id,name,cwd,repo_root) VALUES (3,'web','/w/.claude/worktrees/x','/w');
+             INSERT INTO sessions (id,agent_id,project_id,started_at,ended_at) VALUES ('s4','claude-code',3,0,0);
+             INSERT INTO calls (message_id,session_id,ts,model,input_tokens) VALUES ('m5','s4',1,'claude-sonnet-4-5',1000000);",
+        )
+        .unwrap();
+        let web = summary(&conn, &Filter { projects: Some(vec![1]), ..Default::default() }, 0).unwrap();
+        assert_eq!(web.calls, 4, "3 de /w + 1 del worktree");
+        let rows = breakdown(&conn, &Filter::default(), "project").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(list_projects(&conn, &Filter::default()).unwrap().len(), 2);
     }
 
     #[test]

@@ -43,6 +43,140 @@ fn canonical_tool(name: &str) -> String {
     .to_string()
 }
 
+/// OpenCode nombra sus tools MCP como `<servidor>_<tool>` (ver `toolName()` en su código:
+/// concatena servidor y tool con un solo `_`), a diferencia de la convención `mcp__servidor__tool`
+/// que usan Claude Code y Codex. Sin reescribirlo, el panel de MCP (que filtra por `mcp__%`)
+/// nunca vería estas llamadas. Si `raw` empieza por uno de los servidores configurados en
+/// `opencode.jsonc`, lo reescribimos a esa convención común; si no, es una tool nativa normal.
+fn resolve_tool_name(raw: &str, mcp_servers: &[String]) -> String {
+    let mut servers: Vec<&String> = mcp_servers.iter().collect();
+    servers.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for server in servers {
+        if let Some(rest) = raw
+            .strip_prefix(server.as_str())
+            .and_then(|r| r.strip_prefix('_'))
+            .filter(|r| !r.is_empty())
+        {
+            return format!("mcp__{server}__{rest}");
+        }
+    }
+    canonical_tool(raw)
+}
+
+/// Servidores MCP configurados en `~/.config/opencode/opencode.jsonc` (o `.json`), para poder
+/// reconocer sus tool calls. Se relee en cada `read_db`: es un fichero pequeño y puede cambiar
+/// entre sondeos si el usuario añade o quita servidores.
+fn configured_mcp_servers() -> Vec<String> {
+    let Some(config_dir) = dirs::config_dir() else {
+        return Vec::new();
+    };
+    for name in ["opencode.jsonc", "opencode.json"] {
+        let path = config_dir.join("opencode").join(name);
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let cleaned = strip_trailing_commas(&strip_jsonc_comments(&raw));
+        let Ok(value) = serde_json::from_str::<Value>(&cleaned) else {
+            continue;
+        };
+        if let Some(map) = value["mcp"].as_object() {
+            return map.keys().cloned().collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Quita comentarios `//` y `/* */` de fuera de strings, para poder parsear JSONC con serde_json.
+fn strip_jsonc_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    let mut in_string = false;
+    let mut escape = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                for c2 in chars.by_ref() {
+                    if c2 == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = ' ';
+                for c2 in chars.by_ref() {
+                    if prev == '*' && c2 == '/' {
+                        break;
+                    }
+                    prev = c2;
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Quita comas finales antes de `}` o `]` (habituales en JSONC), sin tocar las de dentro de strings.
+fn strip_trailing_commas(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut in_string = false;
+    let mut escape = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 impl Provider for OpenCode {
     fn id(&self) -> &'static str {
         "opencode"
@@ -86,6 +220,7 @@ impl Provider for OpenCode {
         .with_context(|| format!("no se pudo abrir {}", path.display()))?;
         let mut out = Vec::new();
         let mut cursor = since;
+        let mcp_servers = configured_mcp_servers();
 
         // Sesiones: carpeta y si son hijas (subagentes). Se cargan todas: son pocas y hacen
         // falta para resolver las de los mensajes nuevos.
@@ -211,7 +346,7 @@ impl Provider for OpenCode {
                 continue;
             }
             let raw = d["tool"].as_str().unwrap_or("?");
-            let tool = canonical_tool(raw);
+            let tool = resolve_tool_name(raw, &mcp_servers);
             let input = &d["state"]["input"];
             let target = [
                 "command",
@@ -285,5 +420,49 @@ mod tests {
         assert!(p.matches(Path::new("/d/opencode/opencode.db")));
         assert!(!p.matches(Path::new("/d/opencode/opencode.db-wal")));
         assert!(!p.matches(Path::new("/otro/opencode.db")));
+    }
+
+    #[test]
+    fn reescribe_tools_de_servidores_mcp_configurados() {
+        let servers = vec!["codebase-memory".to_string(), "agentboard".to_string()];
+        assert_eq!(
+            resolve_tool_name("codebase-memory_search_graph", &servers),
+            "mcp__codebase-memory__search_graph"
+        );
+        assert_eq!(
+            resolve_tool_name("agentboard_get_mcp_servers", &servers),
+            "mcp__agentboard__get_mcp_servers"
+        );
+        // Tool nativa: no coincide con ningún servidor, pasa por canonical_tool.
+        assert_eq!(resolve_tool_name("bash", &servers), "Bash");
+        // Prefijo de servidor sin resto tras el "_": no es una tool MCP válida.
+        assert_eq!(resolve_tool_name("agentboard_", &servers), "agentboard_");
+    }
+
+    #[test]
+    fn elige_el_servidor_mas_largo_que_encaje() {
+        // "foo" y "foo-bar" son ambos prefijos válidos de "foo-bar_tool"; debe ganar el más largo.
+        let servers = vec!["foo".to_string(), "foo-bar".to_string()];
+        assert_eq!(
+            resolve_tool_name("foo-bar_tool", &servers),
+            "mcp__foo-bar__tool"
+        );
+    }
+
+    #[test]
+    fn quita_comentarios_jsonc() {
+        let src = "{\n  // comentario de línea\n  \"a\": 1, /* bloque \"con comillas\" */ \"b\": \"//no es comentario\"\n}";
+        let cleaned = strip_jsonc_comments(src);
+        let v: Value = serde_json::from_str(&strip_trailing_commas(&cleaned)).unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"], "//no es comentario");
+    }
+
+    #[test]
+    fn quita_comas_finales() {
+        let src = r#"{"a": [1, 2,], "b": 3,}"#;
+        let v: Value = serde_json::from_str(&strip_trailing_commas(src)).unwrap();
+        assert_eq!(v["a"][1], 2);
+        assert_eq!(v["b"], 3);
     }
 }

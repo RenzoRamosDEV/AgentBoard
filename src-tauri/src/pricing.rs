@@ -1,8 +1,16 @@
 //! Tabla de precios embebida (USD por millón de tokens) y normalización de nombres de modelo.
 //!
-//! Los precios de Claude salen de la tabla oficial de modelos (caché de 2026-06-24);
-//! escritura de caché = 1,25× entrada (5 min) y 2× entrada (1 h). Los de OpenAI y Gemini
-//! son aproximados. Una fase posterior los actualizará desde LiteLLM sin reimportar.
+//! Los precios de Claude salen de la tabla oficial de modelos (revisada el 2026-10-09);
+//! escritura de caché = 1,25× entrada (5 min) y 2× entrada (1 h), salvo que la propia tabla
+//! marque otro multiplicador de lectura de caché (p. ej. Opus 5.5 y Sonnet 5.5 van a 0,05×,
+//! Fable 5.1 y Mythos 5.1 a 0,025×, el resto al 0,1× estándar). Los de OpenAI salen de su
+//! página de precios oficial (misma revisión); los Codex ya no comparten precio con su
+//! modelo base (gpt-5.3-codex cuesta más que gpt-5.3); desde GPT-5.6 la escritura en caché
+//! se cobra (1,25× la entrada, sin distinción de 5 min/1 h), antes era gratis. Claude
+//! Haiku 5.5 sube sus precios ×5 pasados los 100K tokens de prompt, y GPT-5.5 / GPT-5.6
+//! Terra tienen un recargo pasados los 272K tokens de entrada; esta tabla no modela
+//! precios por tramos de contexto. Los de Gemini son aproximados. Una fase posterior
+//! los actualizará desde LiteLLM sin reimportar.
 
 use crate::queries::Filter;
 use crate::settings::PriceOverride;
@@ -15,7 +23,8 @@ use std::collections::{HashMap, HashSet};
 pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
     ("claude-fable-5-1", 10.0, 50.0, 0.25, 12.5, 20.0),
     ("claude-fable-5", 10.0, 50.0, 1.0, 12.5, 20.0),
-    ("claude-mythos-5-1", 10.0, 50.0, 1.0, 12.5, 20.0),
+    ("claude-mythos-5-1", 10.0, 50.0, 0.25, 12.5, 20.0),
+    ("claude-mythos-5", 10.0, 50.0, 1.0, 12.5, 20.0),
     ("claude-opus-5-5", 4.0, 20.0, 0.20, 5.0, 8.0),
     ("claude-opus-5", 5.0, 25.0, 0.5, 6.25, 10.0),
     ("claude-opus-4-8", 5.0, 25.0, 0.5, 6.25, 10.0),
@@ -24,16 +33,23 @@ pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
     ("claude-opus-4-5", 5.0, 25.0, 0.5, 6.25, 10.0),
     ("claude-opus-4-1", 15.0, 75.0, 1.5, 18.75, 30.0),
     ("claude-opus-4", 15.0, 75.0, 1.5, 18.75, 30.0),
+    ("claude-sonnet-5-5", 2.0, 10.0, 0.1, 2.5, 4.0),
     ("claude-sonnet-5", 2.0, 10.0, 0.2, 2.5, 4.0),
     ("claude-sonnet-4-6", 3.0, 15.0, 0.3, 3.75, 6.0),
     ("claude-sonnet-4-5", 3.0, 15.0, 0.3, 3.75, 6.0),
     ("claude-sonnet-4", 3.0, 15.0, 0.3, 3.75, 6.0),
+    ("claude-haiku-5-5", 0.10, 0.50, 0.01, 0.125, 0.20),
     ("claude-haiku-4-5", 1.0, 5.0, 0.1, 1.25, 2.0),
     ("claude-3-5-haiku", 0.8, 4.0, 0.08, 1.0, 1.6),
-    // Familia GPT-6 (precio estándar, contexto corto; septiembre de 2026).
-    ("gpt-6-astra", 10.0, 50.0, 1.0, 0.0, 0.0),
-    ("gpt-6-sol", 2.0, 10.0, 0.2, 0.0, 0.0),
-    ("gpt-6-luna", 0.10, 0.50, 0.01, 0.0, 0.0),
+    // Familia GPT-6 y GPT-5.6 (precio estándar, contexto corto; tabla oficial de octubre de 2026).
+    // Desde GPT-5.6 la escritura en caché sí se cobra (1,25× la entrada); antes era gratis.
+    ("gpt-6-astra", 10.0, 50.0, 1.0, 12.5, 0.0),
+    ("gpt-6.1-sol", 2.0, 10.0, 0.10, 2.5, 0.0),
+    ("gpt-6-sol", 2.0, 10.0, 0.2, 2.5, 0.0),
+    ("gpt-6-luna", 0.10, 0.50, 0.01, 0.125, 0.0),
+    ("gpt-5.6-sol", 4.0, 20.0, 0.40, 5.0, 0.0),
+    ("gpt-5.6-terra", 2.0, 12.0, 0.20, 2.5, 0.0),
+    ("gpt-5.6-luna", 0.20, 1.20, 0.02, 0.25, 0.0),
     ("gpt-5", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5.1", 1.25, 10.0, 0.125, 0.0, 0.0),
@@ -41,10 +57,13 @@ pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
     ("gpt-5.1-codex-max", 1.25, 10.0, 0.125, 0.0, 0.0),
     ("gpt-5.1-codex-mini", 0.25, 2.0, 0.025, 0.0, 0.0),
     ("gpt-5.2-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
-    ("gpt-5.3-codex", 1.25, 10.0, 0.125, 0.0, 0.0),
+    ("gpt-5.3-codex", 1.75, 14.0, 0.175, 0.0, 0.0),
+    ("gpt-5.5-pro", 30.0, 180.0, 0.0, 0.0, 0.0),
+    ("gpt-5.5", 5.0, 30.0, 0.5, 0.0, 0.0),
     ("gpt-5-mini", 0.25, 2.0, 0.025, 0.0, 0.0),
     ("gpt-5-nano", 0.05, 0.4, 0.005, 0.0, 0.0),
     ("o3", 2.0, 8.0, 0.5, 0.0, 0.0),
+    ("o3-mini", 1.1, 4.4, 0.55, 0.0, 0.0),
     ("o4-mini", 1.1, 4.4, 0.275, 0.0, 0.0),
     ("codex-mini-latest", 1.5, 6.0, 0.375, 0.0, 0.0),
     ("gemini-2.5-pro", 1.25, 10.0, 0.31, 0.0, 0.0),
@@ -442,6 +461,73 @@ mod tests {
         insert_call(&conn, "l", "gpt-6-luna", 1_000_000, 100_000);
         assert!((cost(&conn, "a") - 15.0).abs() < 1e-9);
         assert!((cost(&conn, "l") - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gpt_6_cobra_la_escritura_en_cache() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO agents VALUES ('a','A','/',0);
+             INSERT OR IGNORE INTO sessions (id, agent_id, started_at, ended_at) VALUES ('s','a',0,0);",
+        )
+        .unwrap();
+        // 1M de tokens escritos en caché en Astra a 1,25× la entrada (10): 12.5 USD.
+        conn.execute(
+            "INSERT INTO calls (message_id, session_id, ts, model, cache_write)
+             VALUES ('w', 's', 1000, 'gpt-6-astra', 1000000)",
+            [],
+        )
+        .unwrap();
+        assert!((cost(&conn, "w") - 12.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn precios_de_la_familia_5_5() {
+        let conn = db::open_in_memory().unwrap();
+        // 1M de entrada + 100K de salida en Sonnet 5.5: 2 + 1 = 3 USD.
+        insert_call(&conn, "s", "claude-sonnet-5-5", 1_000_000, 100_000);
+        // 1M de entrada + 100K de salida en Haiku 5.5: 0.10 + 0.05 = 0.15 USD.
+        insert_call(&conn, "h", "claude-haiku-5-5", 1_000_000, 100_000);
+        // 1M de entrada + 100K de salida en GPT-5.5: 5 + 3 = 8 USD.
+        insert_call(&conn, "g", "gpt-5.5", 1_000_000, 100_000);
+        assert!((cost(&conn, "s") - 3.0).abs() < 1e-9);
+        assert!((cost(&conn, "h") - 0.15).abs() < 1e-9);
+        assert!((cost(&conn, "g") - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn multiplicador_de_cache_de_sonnet_5_5_y_mythos() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO agents VALUES ('a','A','/',0);
+             INSERT OR IGNORE INTO sessions (id, agent_id, started_at, ended_at) VALUES ('s','a',0,0);",
+        )
+        .unwrap();
+        let insert_cached = |id: &str, model: &str| {
+            conn.execute(
+                "INSERT INTO calls (message_id, session_id, ts, model, cache_read)
+                 VALUES (?1, 's', 1000, ?2, 1000000)",
+                params![id, model],
+            )
+            .unwrap();
+        };
+        // Sonnet 5.5 lee caché al 0,05× (0,10 USD/M), no al 0,1× de Sonnet 5 (0,20 USD/M).
+        insert_cached("sonnet55", "claude-sonnet-5-5");
+        assert!((cost(&conn, "sonnet55") - 0.10).abs() < 1e-9);
+        // Mythos 5.1 lee caché al 0,025× (0,25 USD/M), igual que Fable 5.1.
+        insert_cached("mythos51", "claude-mythos-5-1");
+        assert!((cost(&conn, "mythos51") - 0.25).abs() < 1e-9);
+        // Mythos 5 (sin "-1") lee caché al 0,1× estándar (1 USD/M), igual que Fable 5.
+        insert_cached("mythos5", "claude-mythos-5");
+        assert!((cost(&conn, "mythos5") - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gpt_5_3_codex_no_comparte_precio_con_su_base() {
+        let conn = db::open_in_memory().unwrap();
+        // 1M de entrada + 100K de salida: 1.75 + 1.40 = 3.15 USD (más caro que gpt-5, que daría 2.25).
+        insert_call(&conn, "c", "gpt-5.3-codex", 1_000_000, 100_000);
+        assert!((cost(&conn, "c") - 3.15).abs() < 1e-9);
     }
 
     #[test]

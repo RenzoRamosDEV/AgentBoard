@@ -35,7 +35,9 @@ fn fixture_sintetico_se_importa_sin_errores_con_los_cinco_agentes() {
     let providers: Vec<Box<dyn Provider>> = vec![
         Box::new(ClaudeCode::with_roots(vec![root.join("claude_code")])),
         Box::new(Codex::with_roots(vec![root.join("codex/sessions")])),
-        Box::new(Copilot::with_roots(vec![root.join("copilot/session-state")])),
+        Box::new(Copilot::with_roots(
+            vec![root.join("copilot/session-state")],
+        )),
         Box::new(Cursor::with_roots(vec![root.join("cursor/projects")])),
         Box::new(Gemini::with_roots(vec![root.join("gemini/tmp")])),
     ];

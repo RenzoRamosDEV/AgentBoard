@@ -48,8 +48,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 7. Binario de medición
 
-- [ ] 7.1 Tests en rojo de las piezas puras de `perf_scan` (en el módulo común): parseo de argumentos (falta `--fixtures` → error; valores por defecto), lectura de `VmHWM` desde un texto de ejemplo, y el guard que borra el archivo de refresco al soltarse; verificar que fallan
-- [ ] 7.2 Implementar `src-tauri/examples/perf_scan.rs` según D6 (fases `cold|live|queries|all`, `--live-lines`, `--repeat`, llamada completa del Resumen, RSS pico, sin `providers::all()`); verificar los tests de 7.1 en verde y `cargo run --release --example perf_scan -- --fixtures target/perf-fixtures/50m` imprime todas las fases, sin errores de escaneo, y que tras la ejecución no queda ningún `perf-live-*.jsonl`
+- [x] 7.1 Tests en rojo de las piezas puras de `perf_scan` (en el módulo común): parseo de argumentos (falta `--fixtures` → error; valores por defecto), lectura de `VmHWM` desde un texto de ejemplo, y el guard que borra el archivo de refresco al soltarse; verificar que fallan
+- [x] 7.2 Implementar `src-tauri/examples/perf_scan.rs` según D6 (fases `cold|live|queries|all`, `--live-lines`, `--repeat`, llamada completa del Resumen, RSS pico, sin `providers::all()`); verificar los tests de 7.1 en verde y `cargo run --release --example perf_scan -- --fixtures target/perf-fixtures/50m` imprime todas las fases, sin errores de escaneo, y que tras la ejecución no queda ningún `perf-live-*.jsonl`
 
 ## 8. Perfilado y línea base
 

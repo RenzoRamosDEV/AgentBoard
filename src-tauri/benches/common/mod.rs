@@ -125,3 +125,111 @@ pub fn full_summary(conn: &Connection, f: &queries::Filter) -> Result<usize> {
     }
     Ok(18)
 }
+
+// ------------------------------------------------------------------ perf_scan
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Cold,
+    Live,
+    Queries,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Args {
+    pub fixtures: PathBuf,
+    pub phase: Phase,
+    pub live_lines: usize,
+    pub repeat: usize,
+}
+
+pub const USAGE: &str =
+    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|all] [--live-lines N] [--repeat R]";
+
+pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let mut fixtures = None;
+    let mut phase = Phase::All;
+    let mut live_lines = 1000;
+    let mut repeat = 1;
+    let mut it = args.into_iter();
+    while let Some(flag) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("falta el valor de {flag}"));
+        match flag.as_str() {
+            "--fixtures" => fixtures = Some(PathBuf::from(value()?)),
+            "--phase" => {
+                phase = match value()?.as_str() {
+                    "cold" => Phase::Cold,
+                    "live" => Phase::Live,
+                    "queries" => Phase::Queries,
+                    "all" => Phase::All,
+                    other => return Err(format!("fase desconocida: {other}")),
+                }
+            }
+            "--live-lines" => live_lines = positive(&flag, &value()?)?,
+            "--repeat" => repeat = positive(&flag, &value()?)?,
+            other => return Err(format!("argumento desconocido: {other}")),
+        }
+    }
+    Ok(Args {
+        fixtures: fixtures.ok_or("falta --fixtures <dir>")?,
+        phase,
+        live_lines,
+        repeat,
+    })
+}
+
+fn positive(flag: &str, raw: &str) -> Result<usize, String> {
+    match raw.parse::<usize>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("{flag} necesita un entero positivo, no {raw:?}")),
+    }
+}
+
+/// Memoria residente pico (`VmHWM`, en KiB) de un texto con el formato de `/proc/self/status`.
+pub fn vm_hwm_kib(status: &str) -> Option<u64> {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))
+        .and_then(|rest| rest.trim().strip_suffix("kB"))
+        .and_then(|n| n.trim().parse().ok())
+}
+
+/// `VmHWM` del proceso actual; `None` fuera de Linux.
+pub fn peak_rss_kib() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .as_deref()
+        .and_then(vm_hwm_kib)
+}
+
+/// Archivo de actividad simulada: se borra al soltarse, también si la medición falla.
+pub struct LiveFile {
+    pub path: PathBuf,
+}
+
+impl LiveFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for LiveFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// `n` líneas nuevas de Claude Code (ids únicos a partir de `start`), terminadas en salto de línea.
+pub fn live_lines(session: &str, start: usize, n: usize) -> String {
+    let mut out = String::with_capacity(n * 600);
+    for i in start..start + n {
+        let secs = i % 60;
+        let mins = (i / 60) % 60;
+        out.push_str(&format!(
+            r#"{{"type":"assistant","timestamp":"2026-08-31T23:{mins:02}:{secs:02}.000Z","cwd":"/home/dev/Proyectos/proyecto-00","sessionId":"{session}","version":"2.1.282","gitBranch":"main","isSidechain":false,"message":{{"model":"claude-sonnet-4-5","id":"msg_live_{session}_{i}","type":"message","role":"assistant","content":[{{"type":"tool_use","id":"toolu_live_{session}_{i}","name":"Bash","input":{{"command":"cargo test"}}}}],"usage":{{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":20000,"output_tokens":120}}}}}}"#
+        ));
+        out.push('\n');
+    }
+    out
+}

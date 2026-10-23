@@ -50,3 +50,12 @@ fn aviso_de_variable_invalida_sale_por_stderr_y_no_por_stdout() {
     assert_only_jsonrpc(&stdout);
     assert!(stderr.contains("AGENTBOARD_LOG"), "stderr: {stderr}");
 }
+
+#[test]
+fn con_debug_los_spans_van_a_stderr_y_stdout_sigue_limpio() {
+    let home = empty_home("mcp-debug");
+    let (stdout, stderr) = run_mcp("debug", &home);
+    assert_only_jsonrpc(&stdout);
+    assert!(stderr.contains("scan_all"), "stderr: {stderr}");
+    assert!(stderr.contains("time.busy"), "stderr: {stderr}");
+}

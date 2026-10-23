@@ -29,7 +29,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 - [x] 4.3 Test en rojo: llamar a `queries::summary`, `queries::breakdown`, `queries::timeseries`, `queries::timeseries_by`, `insights::activity`, `insights::activity_daily`, `sessions::list_sessions` sobre una base sembrada genera un span por consulta; verificar que falla
 - [x] 4.4 Instrumentar las consultas de `queries.rs`, `sessions.rs`, `insights.rs` (y `findings.rs` si la invoca un comando) llamadas desde comandos, y cada `#[tauri::command]` de `commands.rs` con span `cmd.<nombre>` (D3); verificar el test 4.3 en verde y `cargo build`
 - [x] 4.5 Envolver las dos emisiones de `ingest://done` (escaneo inicial en `lib.rs` y callback del vigilante) en el span `emit.ingest_done` con campo `origen`; verificar con `cargo build` y, en la app (`npm run tauri dev` con `AGENTBOARD_LOG=debug`), que stderr muestra spans de escaneo, archivo, inserción, comando y emisión con duración
-- [ ] 4.6 Test de no regresión: el mismo escaneo de `tests/fixtures` con subscriber `debug` y sin subscriber da `ScanStats` y `summary` idénticos; verificar en verde junto con `cargo test` completo
+- [x] 4.6 Test de no regresión: el mismo escaneo de `tests/fixtures` con subscriber `debug` y sin subscriber da `ScanStats` y `summary` idénticos; verificar en verde junto con `cargo test` completo
 
 ## 5. Generador de fixtures sintéticos
 

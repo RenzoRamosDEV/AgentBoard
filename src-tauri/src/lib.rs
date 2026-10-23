@@ -83,7 +83,9 @@ pub fn run() {
                     .and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
                 match result {
                     Ok(stats) => {
-                        let _ = handle.emit("ingest://done", stats);
+                        tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
+                            .in_scope(|| handle.emit("ingest://done", stats))
+                            .ok();
                         after_scan();
                     }
                     Err(e) => tracing::error!("agentboard: falló el escaneo inicial: {e:#}"),
@@ -93,7 +95,9 @@ pub fn run() {
             // Vigilante en vivo: relee al vuelo cuando los agentes escriben en sus logs.
             let watch_handle = app.handle().clone();
             watcher::spawn(db.clone(), Arc::new(providers::all), move || {
-                let _ = watch_handle.emit("ingest://done", ());
+                tracing::debug_span!("emit.ingest_done", origen = "vigilante")
+                    .in_scope(|| watch_handle.emit("ingest://done", ()))
+                    .ok();
                 refresh_alerts();
             });
             Ok(())

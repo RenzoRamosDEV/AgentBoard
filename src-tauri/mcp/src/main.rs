@@ -7,7 +7,9 @@
 //! Registro (ejemplo Claude Code):
 //!   claude mcp add agentboard -- /ruta/a/agentboard-mcp
 
-use agentboard_lib::{db, findings, ingest, pricing, providers, queries, sessions, settings};
+use agentboard_lib::{
+    db, findings, ingest, pricing, providers, queries, sessions, settings, telemetry,
+};
 use anyhow::{anyhow, bail, Result};
 use chrono::TimeZone;
 use rusqlite::Connection;
@@ -18,6 +20,7 @@ use std::sync::OnceLock;
 const PROTOCOL: &str = "2025-06-18";
 
 fn main() {
+    telemetry::init();
     let conn = match scan() {
         Ok(c) => c,
         Err(e) => {

@@ -11,11 +11,11 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 2. Inicialización de trazas
 
-- [ ] 2.1 Añadir `tracing` y `tracing-subscriber` (feature `env-filter`, `fmt`) a `[dependencies]` del crate `agentboard`; verificar con `cargo build`
-- [ ] 2.2 Tests en rojo en `src/telemetry.rs` (escritor en búfer + `tracing::subscriber::with_default`): sin variable un span `debug` y un `info!` no escriben nada y un `warn!` sí; con `debug` el cierre de un span escribe su nombre y `time.busy`; un valor inválido se comporta como `warn`; el escritor por defecto es stderr (nunca stdout); verificar que `cargo test telemetry` falla
-- [ ] 2.3 Implementar `filter_from`, `subscriber_with_writer` e `init()` idempotente leyendo `AGENTBOARD_LOG` (D1, D2); verificar `cargo test telemetry` en verde
-- [ ] 2.4 Llamar a `telemetry::init()` al principio de `lib.rs::run` y de `mcp/src/main.rs`; verificar que `cargo test -p agentboard-mcp` sigue en verde y que con `AGENTBOARD_LOG=debug` stdout del MCP solo contiene JSON-RPC (prueba manual con una petición `initialize` por stdin)
-- [ ] 2.5 Documentar `AGENTBOARD_LOG` (valores de ejemplo y nivel por defecto) en `CONTRIBUTING.md` y `docs/wiki/Arquitectura.md`; verificar que el ejemplo documentado funciona con `cargo run --example scan`
+- [x] 2.1 Añadir `tracing` y `tracing-subscriber` (feature `env-filter`, `fmt`) a `[dependencies]` del crate `agentboard`; verificar con `cargo build`
+- [x] 2.2 Tests en rojo en `src/telemetry.rs` (escritor en búfer + `tracing::subscriber::with_default`): sin variable un span `debug` y un `info!` no escriben nada y un `warn!` sí; con `debug` el cierre de un span escribe su nombre y `time.busy`; un valor inválido se comporta como `warn`; el escritor por defecto es stderr (nunca stdout); verificar que `cargo test telemetry` falla
+- [x] 2.3 Implementar `filter_from`, `subscriber_with_writer` e `init()` idempotente leyendo `AGENTBOARD_LOG` (D1, D2); verificar `cargo test telemetry` en verde
+- [x] 2.4 Llamar a `telemetry::init()` al principio de `lib.rs::run` y de `mcp/src/main.rs`; verificar que `cargo test -p agentboard-mcp` sigue en verde y que con `AGENTBOARD_LOG=debug` stdout del MCP solo contiene JSON-RPC (prueba manual con una petición `initialize` por stdin)
+- [x] 2.5 Documentar `AGENTBOARD_LOG` (valores de ejemplo y nivel por defecto) en `CONTRIBUTING.md` y `docs/wiki/Arquitectura.md`; verificar que el ejemplo documentado funciona con `cargo run --example scan`
 
 ## 3. Sustituir `eprintln!` por avisos/errores de trazas
 

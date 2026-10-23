@@ -21,6 +21,13 @@ binario nativo para Linux, Windows y macOS.
   coste y ahorro por caché. Los modelos sin precio conocido cuentan como 0.
 - **Vigilante en vivo.** `watcher.rs` usa el crate `notify` para observar las carpetas de logs y
   releer al vuelo cuando algo cambia, agrupando ráfagas de escrituras (debounce).
+- **Trazas.** `telemetry.rs` configura `tracing`. Por defecto el nivel es `warn`: solo salen
+  avisos y errores por stderr. Con la variable `AGENTBOARD_LOG` (sintaxis de `EnvFilter`, p. ej.
+  `AGENTBOARD_LOG=debug` o `AGENTBOARD_LOG=agentboard_lib::ingest=debug`) se activan los spans
+  del escaneo, la ingesta por archivo, la transacción de inserción, los comandos, las consultas
+  y la emisión de `ingest://done`, cada uno con su duración (`time.busy`). Un valor no válido
+  se ignora (queda `warn`). Las trazas van siempre a stderr, nunca a stdout (el servidor MCP
+  usa stdout para JSON-RPC).
 
 ## Frontend (React + TypeScript, `src/`)
 

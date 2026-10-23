@@ -11,6 +11,7 @@ pub mod providers;
 pub mod queries;
 pub mod sessions;
 pub mod settings;
+pub mod telemetry;
 pub mod tray;
 pub mod tz;
 pub mod watcher;
@@ -23,6 +24,7 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager};
 
 pub fn run() {
+    telemetry::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {

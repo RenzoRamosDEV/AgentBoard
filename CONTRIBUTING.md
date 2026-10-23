@@ -44,6 +44,20 @@ cargo build --manifest-path src-tauri/Cargo.toml -p agentboard-mcp
 cargo test  --manifest-path src-tauri/Cargo.toml -p agentboard-mcp
 ```
 
+### Trazas (`AGENTBOARD_LOG`)
+
+Sin configurar nada el backend solo escribe avisos y errores (nivel `warn`) en stderr. Para
+ver los spans con duración del escaneo, la ingesta, los comandos y las consultas:
+
+```bash
+AGENTBOARD_LOG=debug npm run tauri dev
+AGENTBOARD_LOG=debug cargo run --manifest-path src-tauri/Cargo.toml --example scan
+AGENTBOARD_LOG=agentboard_lib::ingest=debug cargo run --manifest-path src-tauri/Cargo.toml --example scan
+```
+
+El valor sigue la sintaxis de directivas de `tracing_subscriber::EnvFilter` (`info`, `debug`,
+`modulo=nivel`, separadas por comas). Un valor no válido se ignora y se usa `warn`.
+
 ## Estructura
 
 ```

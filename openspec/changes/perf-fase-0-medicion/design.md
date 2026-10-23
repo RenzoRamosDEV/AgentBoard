@@ -126,3 +126,26 @@ strip = false
 ## Open Questions
 
 - Ninguna que cambie specs, enfoque o tareas. Decisiones tomadas de forma autónoma: nivel por defecto `warn` (D2), salida de fixtures bajo `src-tauri/target/` (D4), las 5 consultas elegidas (D5), y la estrategia de `--repeat` para el flamegraph en vivo (D8).
+
+## Dependencias añadidas (justificación)
+
+- `tracing` 0.1 (crate `agentboard` y `agentboard-mcp`): spans con duración y macros de nivel; estándar de facto del ecosistema (tokio-rs), ligero (sin dependencias pesadas) y mantenido activamente. En el MCP solo se usa para `error!`.
+- `tracing-subscriber` 0.3 con `default-features = false` y features `env-filter`, `fmt`, `std`: filtro por directivas (`AGENTBOARD_LOG`) y salida de texto a stderr; sin `ansi`, `tracing-log` ni `smallvec`, para no arrastrar más de lo necesario (añade `regex`/`matchers` por `env-filter`); mismo mantenedor que `tracing`.
+- `criterion` 0.8 (solo dev-dependency) con `default-features = false` + `cargo_bench_support`: benchmarks estadísticos estables sin `plotters` ni `rayon`; mantenido por la organización bheisler/criterion-rs. No afecta al binario distribuido.
+
+## Desviaciones durante la implementación
+
+- **Sin colores ANSI nunca** (D1 decía "sin ANSI cuando no es TTY"): se desactiva la feature `ansi` de `tracing-subscriber` para aligerar la dependencia; la salida es la misma en terminal y fuera de ella.
+- **"El escritor por defecto es stderr"** (tarea 2.2) se prueba de forma más fuerte en `src-tauri/mcp/tests/salida_stdio.rs`: se lanza el binario MCP real con un `HOME` vacío y `AGENTBOARD_LOG` inválido o `debug`, y se comprueba que stdout solo tiene JSON-RPC y que avisos y spans salen por stderr. Sustituye también la prueba manual de la tarea 2.4.
+- **Helper de test `several_dispatchers`** (`telemetry::tests`): `tracing-core` calcula el interés de un callsite nuevo con el dispatcher del hilo que lo registra cuando solo hay un dispatcher vivo (`has_just_one`); con tests en paralelo, otro hilo sin subscriber lo marcaba como «nunca» y el subscriber del test perdía spans (fallo intermitente ~50 %). Mantener un segundo dispatcher permanente en los tests obliga a consultar a todos los vivos. Solo afecta a tests.
+- **Test del vigilante** `relee_al_cambiar_un_log_sin_duplicar`: tenía una carrera previa (las filas se ven al hacer commit, el aviso a la UI llega justo después de soltar el `Mutex`). Se corrige solo el test (espera ambas condiciones); sin cambio de producto.
+- **Nombres de campos** de los spans: `ruta` y `raiz` (en español, como el resto de mensajes), `files`, `lines`, `records`, `bytes`, `errors`, `by`, `bucket`, `format`, `origen`. `sessions::list_projects` se instrumenta como `list_project_summaries` para no confundirse con `queries::list_projects`. Además de las consultas de D3 se instrumentan `pricing::apply_overrides` y `pricing::list_prices` (los invocan comandos). `findings::compute` no se instrumenta: ningún comando de la app lo invoca (solo el MCP).
+- **Generador**: tamaños en múltiplos de 1024 (`50m` = 50 MiB); escribe un archivo vacío `.gen-fixtures` como marca y solo borra una carpeta de salida existente si tiene esa marca. Codex sin subagentes; Cursor con marcas `<timestamp>` en UTC-7 como el fixture versionado. Las piezas puras se prueban importando el script con `importlib` (sin generar 50 MiB en el test).
+- **Módulo común**: `benches/common/mod.rs` se comparte con `examples/perf_scan.rs` vía `#[path]` y sus tests viven en `src-tauri/tests/perf_common.rs` (los benches con `harness = false` no ejecutan `#[test]`).
+- **Bench `summary_queries`** mide además la llamada completa del Resumen (18 consultas, como `useDashboardData` sin periodo anterior). Zona horaria fija `Europe/Madrid` y «mes en curso» = agosto de 2026 para no depender de la máquina ni de la fecha.
+- **`perf_scan`** imprime para cada consulta la primera ejecución ("fría", tras el escaneo) y la mediana de 5 ejecuciones.
+- **`panic = "abort"` y el guard de `perf_scan`**: con abort un pánico no ejecuta `Drop`; `perf_scan` propaga los errores con `Result` para que el guard borre el archivo de refresco en los fallos esperables.
+- **Aviso de cargo `output filename collision`** al compilar benches: viene de `crate-type = ["staticlib", "cdylib", "rlib"]` (el perfil `bench` compila la lib para el harness y como dependencia). Es solo un aviso; no se toca el `crate-type` en esta fase (cambiarlo afecta al empaquetado de Tauri).
+- **Flamegraphs con punteros de marco** (D8 proponía `cargo flamegraph`): `perf` funciona en distrobox (`perf_event_paranoid = 2`), pero el desenrollado DWARF de `cargo flamegraph` dejó el 70 % de las muestras en `malloc` sin llamadores y perdió datos. Se compila el perfil `profiling` con `-C force-frame-pointers=yes` en `target/fp` y se graba con `perf record --call-graph fp`; el SVG se genera con `flamegraph --perfdata`. Comandos exactos en `docs/perf/BASELINE.md`.
+- **`live-refresh.svg` sobre 200 MB** (no 1 GB): con `--repeat 200` el refresco ocupa ~86 % de las muestras frente al escaneo frío previo; con 1 GB el escaneo frío (~90–110 s) habría dominado.
+- **Tabla de consultas con `--phase queries`**: en `--phase all` las consultas se ejecutan tras el refresco en vivo, que mete 20 000 llamadas dentro del filtro; las cifras de referencia se toman sin esa contaminación (las dos se documentan).

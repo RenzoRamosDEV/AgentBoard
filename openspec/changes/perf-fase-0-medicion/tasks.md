@@ -53,10 +53,10 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 8. Perfilado y línea base
 
-- [ ] 8.1 Instalar herramientas en distrobox (`sudo dnf install perf`, `cargo install flamegraph`) y comprobar `perf stat true`; si falla, anotar motivo y `perf_event_paranoid` para el fallback (D8)
-- [ ] 8.2 Generar `docs/perf/cold-scan.svg` (fixture `1g`, `--phase cold`) y `docs/perf/live-refresh.svg` (`--phase live --repeat 200`) con el perfil `profiling`; verificar que los SVG abren y contienen símbolos de `agentboard_lib` (o, en fallback, documentar el comando exacto)
-- [ ] 8.3 Medir con `perf_scan` en release (sin `AGENTBOARD_LOG`) escaneo frío 50 MB/200 MB/1 GB, refresco en vivo, las 5 consultas y la llamada completa del Resumen, y memoria pico; ejecutar `cargo bench` completo; verificar que cada cifra tiene comando reproducible
-- [ ] 8.4 Redactar `docs/perf/BASELINE.md` (D9) con entorno, comandos, tablas de tiempos y memoria, resultados de criterion, enlaces a los SVG, riesgos de `panic = "abort"` de 1.3 y el ranking top-5 de cuellos de botella, cada uno con evidencia (% del flamegraph, span o bench); verificar que los comandos documentados se ejecutan tal cual
+- [x] 8.1 Instalar herramientas en distrobox (`sudo dnf install perf`, `cargo install flamegraph`) y comprobar `perf stat true`; si falla, anotar motivo y `perf_event_paranoid` para el fallback (D8)
+- [x] 8.2 Generar `docs/perf/cold-scan.svg` (fixture `1g`, `--phase cold`) y `docs/perf/live-refresh.svg` (`--phase live --repeat 200`) con el perfil `profiling`; verificar que los SVG abren y contienen símbolos de `agentboard_lib` (o, en fallback, documentar el comando exacto)
+- [x] 8.3 Medir con `perf_scan` en release (sin `AGENTBOARD_LOG`) escaneo frío 50 MB/200 MB/1 GB, refresco en vivo, las 5 consultas y la llamada completa del Resumen, y memoria pico; ejecutar `cargo bench` completo; verificar que cada cifra tiene comando reproducible
+- [x] 8.4 Redactar `docs/perf/BASELINE.md` (D9) con entorno, comandos, tablas de tiempos y memoria, resultados de criterion, enlaces a los SVG, riesgos de `panic = "abort"` de 1.3 y el ranking top-5 de cuellos de botella, cada uno con evidencia (% del flamegraph, span o bench); verificar que los comandos documentados se ejecutan tal cual
 
 ## 9. Comprobaciones finales
 

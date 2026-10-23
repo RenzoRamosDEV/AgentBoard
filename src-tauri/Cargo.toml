@@ -33,6 +33,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 [dev-dependencies]
 tempfile = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
 [profile.release]
 lto = "fat"
@@ -45,3 +46,15 @@ strip = true
 inherits = "release"
 debug = true
 strip = false
+
+[[bench]]
+name = "parse_line"
+harness = false
+
+[[bench]]
+name = "ingest_file"
+harness = false
+
+[[bench]]
+name = "summary_queries"
+harness = false

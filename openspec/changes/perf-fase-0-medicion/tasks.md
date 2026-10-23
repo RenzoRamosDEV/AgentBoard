@@ -36,15 +36,15 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 - [x] 5.1 Escribir `scripts/test_gen_fixtures.py` (`unittest`) en rojo: con tamaño `2m` y la misma semilla dos ejecuciones dan árboles idénticos byte a byte; tamaño total dentro de ±5 %; otra semilla da contenido distinto; existen las carpetas de los cinco agentes con la estructura de `tests/fixtures`; todas las líneas son JSON válido; existe la sesión grande de Claude Code (~5 MB) en tamaños ≥ `50m`; verificar `python3 -m unittest scripts/test_gen_fixtures.py` falla
 - [x] 5.2 Implementar `scripts/gen-fixtures.py` según D4 (stdlib, semilla, `50m|200m|1g|<n>{k,m,g}`, salida por defecto `src-tauri/target/perf-fixtures/<tamaño>/`, sin texto real); verificar los tests de 5.1 en verde
 - [x] 5.3 Test de integración Rust en `src-tauri/tests/` que, si `python3` está disponible, genera `2m` en un directorio temporal y lo escanea con los cinco proveedores vía `with_roots`: `errors == 0` y llamadas > 0 por agente; si no hay `python3`, se salta con mensaje; verificar en verde
-- [ ] 5.4 Generar `50m`, `200m` y `1g`; verificar tamaños (±5 %) con `du -sb` y anotar los tiempos de generación
+- [x] 5.4 Generar `50m`, `200m` y `1g`; verificar tamaños (±5 %) con `du -sb` y anotar los tiempos de generación
 
 ## 6. Benchmarks criterion
 
-- [ ] 6.1 Añadir `criterion` como dev-dependency y las entradas `[[bench]]` (`harness = false`) para `parse_line`, `ingest_file` y `summary_queries`; verificar `cargo bench --no-run`
-- [ ] 6.2 Implementar `benches/common` (localizar/generar el fixture `50m`, proveedores con `with_roots`, mensaje claro y salida sin error si no hay fixture) (D5); verificar ejecutando un bench con el fixture borrado y comprobando el mensaje
-- [ ] 6.3 Implementar `benches/parse_line.rs` (una línea representativa por proveedor JSONL); verificar `cargo bench --bench parse_line`
-- [ ] 6.4 Implementar `benches/ingest_file.rs` (sesión de ~5 MB, base nueva por iteración, `Throughput::Bytes`); verificar `cargo bench --bench ingest_file`
-- [ ] 6.5 Implementar `benches/summary_queries.rs` (5 consultas de D5 con filtro `from/to` fijo de 30 días); verificar `cargo bench --bench summary_queries`
+- [x] 6.1 Añadir `criterion` como dev-dependency y las entradas `[[bench]]` (`harness = false`) para `parse_line`, `ingest_file` y `summary_queries`; verificar `cargo bench --no-run`
+- [x] 6.2 Implementar `benches/common` (localizar/generar el fixture `50m`, proveedores con `with_roots`, mensaje claro y salida sin error si no hay fixture) (D5); verificar ejecutando un bench con el fixture borrado y comprobando el mensaje
+- [x] 6.3 Implementar `benches/parse_line.rs` (una línea representativa por proveedor JSONL); verificar `cargo bench --bench parse_line`
+- [x] 6.4 Implementar `benches/ingest_file.rs` (sesión de ~5 MB, base nueva por iteración, `Throughput::Bytes`); verificar `cargo bench --bench ingest_file`
+- [x] 6.5 Implementar `benches/summary_queries.rs` (5 consultas de D5 con filtro `from/to` fijo de 30 días); verificar `cargo bench --bench summary_queries`
 
 ## 7. Binario de medición
 

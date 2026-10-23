@@ -33,9 +33,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 5. Generador de fixtures sintéticos
 
-- [ ] 5.1 Escribir `scripts/test_gen_fixtures.py` (`unittest`) en rojo: con tamaño `2m` y la misma semilla dos ejecuciones dan árboles idénticos byte a byte; tamaño total dentro de ±5 %; otra semilla da contenido distinto; existen las carpetas de los cinco agentes con la estructura de `tests/fixtures`; todas las líneas son JSON válido; existe la sesión grande de Claude Code (~5 MB) en tamaños ≥ `50m`; verificar `python3 -m unittest scripts/test_gen_fixtures.py` falla
-- [ ] 5.2 Implementar `scripts/gen-fixtures.py` según D4 (stdlib, semilla, `50m|200m|1g|<n>{k,m,g}`, salida por defecto `src-tauri/target/perf-fixtures/<tamaño>/`, sin texto real); verificar los tests de 5.1 en verde
-- [ ] 5.3 Test de integración Rust en `src-tauri/tests/` que, si `python3` está disponible, genera `2m` en un directorio temporal y lo escanea con los cinco proveedores vía `with_roots`: `errors == 0` y llamadas > 0 por agente; si no hay `python3`, se salta con mensaje; verificar en verde
+- [x] 5.1 Escribir `scripts/test_gen_fixtures.py` (`unittest`) en rojo: con tamaño `2m` y la misma semilla dos ejecuciones dan árboles idénticos byte a byte; tamaño total dentro de ±5 %; otra semilla da contenido distinto; existen las carpetas de los cinco agentes con la estructura de `tests/fixtures`; todas las líneas son JSON válido; existe la sesión grande de Claude Code (~5 MB) en tamaños ≥ `50m`; verificar `python3 -m unittest scripts/test_gen_fixtures.py` falla
+- [x] 5.2 Implementar `scripts/gen-fixtures.py` según D4 (stdlib, semilla, `50m|200m|1g|<n>{k,m,g}`, salida por defecto `src-tauri/target/perf-fixtures/<tamaño>/`, sin texto real); verificar los tests de 5.1 en verde
+- [x] 5.3 Test de integración Rust en `src-tauri/tests/` que, si `python3` está disponible, genera `2m` en un directorio temporal y lo escanea con los cinco proveedores vía `with_roots`: `errors == 0` y llamadas > 0 por agente; si no hay `python3`, se salta con mensaje; verificar en verde
 - [ ] 5.4 Generar `50m`, `200m` y `1g`; verificar tamaños (±5 %) con `du -sb` y anotar los tiempos de generación
 
 ## 6. Benchmarks criterion

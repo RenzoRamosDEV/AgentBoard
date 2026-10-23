@@ -60,9 +60,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 9. Comprobaciones finales
 
-- [ ] 9.1 `cargo fmt --check`, `cargo clippy -- -D warnings` (y `cargo clippy --benches --examples --tests -- -D warnings` para el código nuevo) y `cargo test` (incluido `-p agentboard-mcp`) en verde
-- [ ] 9.2 `python3 -m unittest scripts/test_gen_fixtures.py`, `npm test` y `npm run build` en verde
-- [ ] 9.3 Verificar que no hay cambios de comportamiento: la app arranca sin `AGENTBOARD_LOG` sin trazas en stderr, el Resumen muestra las mismas cifras que antes del cambio y el servidor MCP responde a sus herramientas
+- [x] 9.1 `cargo fmt --check`, `cargo clippy -- -D warnings` (y `cargo clippy --benches --examples --tests -- -D warnings` para el código nuevo) y `cargo test` (incluido `-p agentboard-mcp`) en verde
+- [x] 9.2 `python3 -m unittest scripts/test_gen_fixtures.py`, `npm test` y `npm run build` en verde
+- [x] 9.3 Verificar que no hay cambios de comportamiento: la app arranca sin `AGENTBOARD_LOG` sin trazas en stderr, el Resumen muestra las mismas cifras que antes del cambio y el servidor MCP responde a sus herramientas
 
 ## Workflow follow-up
 

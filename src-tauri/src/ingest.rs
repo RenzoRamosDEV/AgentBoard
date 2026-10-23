@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use tracing::field::Empty;
 
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +68,7 @@ fn ensure_agent(conn: &Connection, p: &dyn Provider) -> Result<()> {
 }
 
 /// Escaneo completo: importa todo lo que haya en disco (solo lo nuevo si ya se importó).
+#[tracing::instrument(level = "info", skip_all, fields(files = Empty, lines = Empty, records = Empty, errors = Empty))]
 pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Result<ScanStats> {
     register_agents(conn, providers)?;
     let mut stats = ScanStats::default();
@@ -92,10 +94,16 @@ pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Resul
             }
         }
     }
+    let span = tracing::Span::current();
+    span.record("files", stats.files);
+    span.record("lines", stats.lines);
+    span.record("records", stats.records);
+    span.record("errors", stats.errors);
     Ok(stats)
 }
 
 /// Archivos bajo `root`, recursivo, sin seguir enlaces.
+#[tracing::instrument(level = "debug", skip_all, fields(raiz = %root.display(), files = Empty))]
 pub fn walk(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -112,6 +120,7 @@ pub fn walk(root: &Path) -> Vec<PathBuf> {
         }
     }
     out.sort();
+    tracing::Span::current().record("files", out.len());
     out
 }
 
@@ -136,6 +145,7 @@ fn mtime_ms(meta: &fs::Metadata) -> i64 {
 }
 
 /// Lee lo nuevo de un archivo y lo guarda en una transacción.
+#[tracing::instrument(level = "debug", skip_all, fields(ruta = %path.display(), bytes = Empty, lines = Empty, records = Empty))]
 pub fn ingest_file(
     conn: &mut Connection,
     provider: &dyn Provider,
@@ -192,6 +202,7 @@ pub fn ingest_file(
             .unwrap_or(0)
     };
     let mut result = FileResult::default();
+    let tx_span = tracing::debug_span!("ingest.tx", records = Empty).entered();
     let tx = conn.transaction()?;
     ensure_agent(&tx, provider)?;
     {
@@ -251,6 +262,12 @@ pub fn ingest_file(
         ],
     )?;
     tx.commit()?;
+    tx_span.record("records", result.records);
+    drop(tx_span);
+    let span = tracing::Span::current();
+    span.record("bytes", buf.len());
+    span.record("lines", result.lines);
+    span.record("records", result.records);
     Ok(result)
 }
 
@@ -268,6 +285,7 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
         .unwrap_or(0);
     let (records, cursor) = provider.read_db(path, since)?;
     let mut result = FileResult::default();
+    let tx_span = tracing::debug_span!("ingest.tx", records = Empty).entered();
     let tx = conn.transaction()?;
     ensure_agent(&tx, provider)?;
     {
@@ -296,6 +314,11 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
         ],
     )?;
     tx.commit()?;
+    tx_span.record("records", result.records);
+    drop(tx_span);
+    let span = tracing::Span::current();
+    span.record("lines", result.lines);
+    span.record("records", result.records);
     Ok(result)
 }
 
@@ -696,5 +719,33 @@ mod tests {
         assert!(out.contains("WARN"), "{out}");
         assert!(out.contains(&file.display().to_string()), "{out}");
         assert!(out.contains("error leyendo"), "{out}");
+    }
+
+    #[test]
+    fn la_ingesta_emite_spans_de_escaneo_recorrido_archivo_e_insercion() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/claude_code");
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![root]))];
+        let mut conn = db::open_in_memory().unwrap();
+        let spans = crate::telemetry::tests::closed_spans(|| {
+            scan_all(&mut conn, &providers).unwrap();
+        });
+        let named = |n: &str| spans.iter().filter(|s| s.name == n).collect::<Vec<_>>();
+        let scan = named("scan_all");
+        assert_eq!(scan.len(), 1, "{spans:?}");
+        assert_eq!(scan[0].num("files"), 2);
+        assert!(scan[0].num("records") > 0);
+        assert_eq!(scan[0].num("errors"), 0);
+        assert_eq!(named("walk").len(), 1, "{spans:?}");
+        assert_eq!(named("walk")[0].num("files"), 2);
+        let files = named("ingest_file");
+        assert_eq!(files.len(), 2, "{spans:?}");
+        for f in &files {
+            assert!(f.fields.contains_key("ruta"), "{f:?}");
+            assert!(
+                f.num("bytes") > 0 && f.num("lines") > 0 && f.num("records") > 0,
+                "{f:?}"
+            );
+        }
+        assert_eq!(named("ingest.tx").len(), 2, "{spans:?}");
     }
 }

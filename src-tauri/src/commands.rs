@@ -27,6 +27,7 @@ fn with_db<T>(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_summary", level = "info", skip_all)]
 pub fn get_summary(state: tauri::State<AppState>, filter: Option<Filter>) -> CmdResult<Summary> {
     with_db(&state, |c| {
         queries::summary(c, &filter.unwrap_or_default(), now_ms())
@@ -34,6 +35,7 @@ pub fn get_summary(state: tauri::State<AppState>, filter: Option<Filter>) -> Cmd
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_timeseries", level = "info", skip_all)]
 pub fn get_timeseries(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -46,6 +48,7 @@ pub fn get_timeseries(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_timeseries_by", level = "info", skip_all)]
 pub fn get_timeseries_by(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -58,6 +61,7 @@ pub fn get_timeseries_by(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_breakdown", level = "info", skip_all)]
 pub fn get_breakdown(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -69,6 +73,7 @@ pub fn get_breakdown(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_activity", level = "info", skip_all)]
 pub fn get_activity(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -79,6 +84,7 @@ pub fn get_activity(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_activity_daily", level = "info", skip_all)]
 pub fn get_activity_daily(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -90,6 +96,7 @@ pub fn get_activity_daily(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.list_agents", level = "info", skip_all)]
 pub fn list_agents(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -100,6 +107,7 @@ pub fn list_agents(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.list_projects", level = "info", skip_all)]
 pub fn list_projects(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -110,11 +118,13 @@ pub fn list_projects(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_data_info", level = "info", skip_all)]
 pub fn get_data_info(state: tauri::State<AppState>) -> CmdResult<DataInfo> {
     with_db(&state, queries::data_info)
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.export_data", level = "info", skip_all)]
 pub fn export_data(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -126,6 +136,7 @@ pub fn export_data(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.list_sessions", level = "info", skip_all)]
 pub fn list_sessions(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -137,6 +148,7 @@ pub fn list_sessions(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.list_project_summaries", level = "info", skip_all)]
 pub fn list_project_summaries(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -147,6 +159,7 @@ pub fn list_project_summaries(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_project_detail", level = "info", skip_all)]
 pub fn get_project_detail(
     state: tauri::State<AppState>,
     key: String,
@@ -159,11 +172,13 @@ pub fn get_project_detail(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_session_detail", level = "info", skip_all)]
 pub fn get_session_detail(state: tauri::State<AppState>, id: String) -> CmdResult<SessionDetail> {
     with_db(&state, |c| sessions::session_detail(c, &id))
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.list_prices", level = "info", skip_all)]
 pub fn list_prices(
     state: tauri::State<AppState>,
     filter: Option<Filter>,
@@ -175,11 +190,13 @@ pub fn list_prices(
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.get_settings", level = "info", skip_all)]
 pub fn get_settings() -> CmdResult<Settings> {
     Ok(settings::load())
 }
 
 #[tauri::command]
+#[tracing::instrument(name = "cmd.set_settings", level = "info", skip_all)]
 pub fn set_settings(state: tauri::State<AppState>, settings: Settings) -> CmdResult<Settings> {
     settings::save(&settings).map_err(|e| format!("{e:#}"))?;
     state.alerts.reset(); // al cambiar el presupuesto se vuelven a permitir los avisos

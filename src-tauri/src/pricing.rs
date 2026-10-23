@@ -120,6 +120,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<()> {
 /// Vuelve a los precios por defecto y aplica encima los del usuario: cada precio del usuario
 /// sustituye a todos los del modelo (para todas las fechas). Los costes se recalculan solos
 /// porque `call_costs` es una vista.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn apply_overrides(conn: &Connection, overrides: &[PriceOverride]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM prices", [])?;
@@ -161,6 +162,7 @@ pub struct PriceRow {
 }
 
 /// Modelos usados en el filtro (sin precio primero, luego por llamadas) y después el resto con precio.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_prices(
     conn: &Connection,
     f: &Filter,

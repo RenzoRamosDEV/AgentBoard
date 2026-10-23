@@ -452,6 +452,7 @@ pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnS
     Ok(turns)
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
     let turns = turn_stats(conn, f)?;
     #[derive(Default)]
@@ -531,6 +532,7 @@ pub struct ActivityDay {
 /// Coste y turnos por día local y actividad (para el gráfico apilado). El gasto se fecha
 /// por el día de cada llamada, así la serie suma lo mismo que la tabla aunque un turno
 /// cruce el límite del filtro o una llamada no tenga turno.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<ActivityDay>> {
     let zone = crate::tz::parse(tz);
     let day_of = |ts: i64| crate::tz::day_start(ts, &zone);

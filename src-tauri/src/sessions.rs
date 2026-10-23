@@ -159,6 +159,7 @@ fn query_sessions(
 }
 
 /// Sesiones con al menos una llamada en el filtro; métricas calculadas con esas llamadas.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_sessions(conn: &Connection, f: &Filter, limit: Option<usize>) -> Result<SessionList> {
     let (w, args) = f.sql("c.ts");
     let limit = limit.unwrap_or(MAX_SESSIONS).min(MAX_SESSIONS);
@@ -240,6 +241,7 @@ pub fn percentile(sorted: &[i64], p: f64) -> Option<i64> {
     Some(sorted[rank.clamp(1, sorted.len()) - 1])
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     // El detalle de una sesión muestra su historia completa: sin acotar por periodo.
     let session = query_sessions(
@@ -614,6 +616,7 @@ fn top_models(conn: &Connection, f: &Filter) -> Result<HashMap<String, String>> 
 }
 
 /// Proyectos con al menos una llamada en el filtro, con métricas de esas llamadas.
+#[tracing::instrument(name = "list_project_summaries", level = "debug", skip_all)]
 pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectSummary>> {
     let (w, args) = f.sql("c.ts");
     let rows = query_sessions(conn, f, &w, &args, MAX_AGGREGATED)?;
@@ -633,6 +636,7 @@ pub struct ProjectDetail {
 }
 
 /// Detalle de un proyecto (por su clave de `list_projects`) dentro del filtro.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn project_detail(conn: &Connection, key: &str, f: &Filter, tz: &str) -> Result<ProjectDetail> {
     let (w, args) = f.sql("c.ts");
     let (w, mut args) = if key.is_empty() {

@@ -94,6 +94,7 @@ fn ratio(num: i64, den: i64) -> f64 {
     }
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn summary(conn: &Connection, f: &Filter, now: i64) -> Result<Summary> {
     let (w, args) = f.sql("c.ts");
     let sql = format!(
@@ -162,6 +163,7 @@ pub struct Point {
 
 /// Coste por día u hora local. `tz` es la zona IANA: cada fecha se agrupa con las reglas
 /// de horario de SU momento (verano/invierno), no con el desfase de hoy.
+#[tracing::instrument(level = "debug", skip_all, fields(bucket = %bucket))]
 pub fn timeseries(conn: &Connection, f: &Filter, bucket: &str, tz: &str) -> Result<Vec<Point>> {
     let zone = crate::tz::parse(tz);
     let hour = bucket == "hour";
@@ -231,6 +233,7 @@ pub struct SeriesPoint {
 
 /// Serie por día local y `agent | model | project | branch | tool` (esta última cuenta usos
 /// de herramienta, sin coste). Misma agrupación con zona histórica que `timeseries`.
+#[tracing::instrument(level = "debug", skip_all, fields(by = %by))]
 pub fn timeseries_by(
     conn: &Connection,
     f: &Filter,
@@ -347,6 +350,7 @@ impl BreakdownRow {
 }
 
 /// Coste y uso agrupado por `agent | project | branch | model | activity | tool | command | skill | mcp | agent_type`.
+#[tracing::instrument(level = "debug", skip_all, fields(by = %by))]
 pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<BreakdownRow>> {
     match by {
         "command" => return crate::insights::shell_commands(conn, f),
@@ -438,6 +442,7 @@ pub struct AgentRow {
 }
 
 /// Agentes detectados con su coste en el periodo (sin filtrar por agente ni proyecto).
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_agents(conn: &Connection, f: &Filter) -> Result<Vec<AgentRow>> {
     let period = Filter {
         from: f.from,
@@ -479,6 +484,7 @@ pub struct ProjectRow {
 }
 
 /// Proyectos con su coste en el periodo y agentes filtrados (sin filtrar por proyecto).
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectRow>> {
     let scope = Filter {
         projects: None,
@@ -519,6 +525,7 @@ pub struct DataInfo {
     pub last_scan: Option<i64>,
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn data_info(conn: &Connection) -> Result<DataInfo> {
     conn.query_row(
         "SELECT MIN(ts), COUNT(*), (SELECT COUNT(*) FROM file_state), (SELECT MAX(last_scan) FROM file_state) FROM calls",
@@ -851,6 +858,7 @@ mod tests {
 }
 
 /// Una fila por llamada, con proyecto/agente resueltos, para exportar.
+#[tracing::instrument(level = "debug", skip_all, fields(format = %format))]
 pub fn export(conn: &Connection, f: &Filter, format: &str) -> Result<String> {
     let (w, args) = f.sql("c.ts");
     let sql = format!(
@@ -986,4 +994,46 @@ pub fn month_progress(conn: &Connection, f: &Filter) -> Result<(f64, f64)> {
         |r| r.get(0),
     )?;
     Ok((spent, spent * factor))
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    use crate::providers::{claude_code::ClaudeCode, Provider};
+    use crate::{db, ingest, insights, sessions};
+
+    #[test]
+    fn cada_consulta_de_los_comandos_abre_su_span() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/claude_code");
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![root]))];
+        let mut conn = db::open_in_memory().unwrap();
+        ingest::scan_all(&mut conn, &providers).unwrap();
+        let f = Filter::default();
+        let spans = crate::telemetry::tests::closed_spans(|| {
+            summary(&conn, &f, 0).unwrap();
+            breakdown(&conn, &f, "model").unwrap();
+            timeseries(&conn, &f, "day", "UTC").unwrap();
+            timeseries_by(&conn, &f, "agent", "UTC").unwrap();
+            insights::activity(&conn, &f).unwrap();
+            insights::activity_daily(&conn, &f, "UTC").unwrap();
+            sessions::list_sessions(&conn, &f, None).unwrap();
+        });
+        let names: Vec<&str> = spans.iter().map(|s| s.name).collect();
+        for expected in [
+            "summary",
+            "breakdown",
+            "timeseries",
+            "timeseries_by",
+            "activity",
+            "activity_daily",
+            "list_sessions",
+        ] {
+            assert!(names.contains(&expected), "falta {expected}: {names:?}");
+        }
+        let by = spans.iter().find(|s| s.name == "breakdown").unwrap();
+        assert_eq!(by.fields.get("by").map(String::as_str), Some("model"));
+        let ts = spans.iter().find(|s| s.name == "timeseries").unwrap();
+        assert_eq!(ts.fields.get("bucket").map(String::as_str), Some("day"));
+    }
 }

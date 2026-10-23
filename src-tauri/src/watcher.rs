@@ -220,15 +220,18 @@ mod tests {
         write!(f, "{}", line("m2", "2026-09-25T10:01:00Z")).unwrap();
         f.flush().unwrap();
 
-        let mut ok = false;
         for _ in 0..50 {
             std::thread::sleep(Duration::from_millis(100));
-            if count("SELECT COUNT(*) FROM calls") == 2 {
-                ok = true;
+            // El aviso a la UI llega justo después de soltar la base: se esperan ambas cosas.
+            if count("SELECT COUNT(*) FROM calls") == 2 && calls.load(Ordering::SeqCst) >= 1 {
                 break;
             }
         }
-        assert!(ok, "el vigilante no releyó la llamada nueva");
+        assert_eq!(
+            count("SELECT COUNT(*) FROM calls"),
+            2,
+            "el vigilante no releyó la llamada nueva"
+        );
         assert!(calls.load(Ordering::SeqCst) >= 1, "no avisó a la UI");
 
         // Un cambio que no añade llamadas (tocar mtime reescribiendo lo mismo) no duplica.

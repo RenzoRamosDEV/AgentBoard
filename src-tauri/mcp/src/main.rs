@@ -24,7 +24,7 @@ fn main() {
     let conn = match scan() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("agentboard-mcp: no se pudo leer el historial: {e:#}");
+            tracing::error!("agentboard-mcp: no se pudo leer el historial: {e:#}");
             std::process::exit(1);
         }
     };

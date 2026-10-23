@@ -32,7 +32,7 @@ pub fn run() {
             let conn = db::open_in_memory()?;
             // Precios fijados por el usuario en Ajustes, encima de los de por defecto.
             if let Err(e) = pricing::apply_overrides(&conn, &settings::load().price_overrides) {
-                eprintln!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
+                tracing::warn!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
             }
             let db = Arc::new(Mutex::new(conn));
             let alerts = Alerts::new();
@@ -86,7 +86,7 @@ pub fn run() {
                         let _ = handle.emit("ingest://done", stats);
                         after_scan();
                     }
-                    Err(e) => eprintln!("agentboard: falló el escaneo inicial: {e:#}"),
+                    Err(e) => tracing::error!("agentboard: falló el escaneo inicial: {e:#}"),
                 }
             });
 

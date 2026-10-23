@@ -86,7 +86,7 @@ pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Resul
                     }
                     Err(e) => {
                         stats.errors += 1;
-                        eprintln!("agentboard: error leyendo {}: {e:#}", path.display());
+                        tracing::warn!(ruta = %path.display(), "agentboard: error leyendo {}: {e:#}", path.display());
                     }
                 }
             }
@@ -675,5 +675,26 @@ mod tests {
             .unwrap();
         assert!(!dump.contains("SECRETO"));
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM events"), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archivo_ilegible_avisa_con_la_ruta_sin_configurar_nada() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, file, p, mut conn) = setup();
+        fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&file).is_ok() {
+            return; // root ignora los permisos: no hay forma de provocar el error
+        }
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(p)];
+        let mut stats = ScanStats::default();
+        let out = crate::telemetry::tests::captured(None, || {
+            stats = scan_all(&mut conn, &providers).unwrap();
+        });
+        assert_eq!(stats.errors, 1);
+        assert!(out.contains("WARN"), "{out}");
+        assert!(out.contains(&file.display().to_string()), "{out}");
+        assert!(out.contains("error leyendo"), "{out}");
     }
 }

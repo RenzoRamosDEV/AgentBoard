@@ -28,7 +28,7 @@ pub fn spawn(
 ) {
     std::thread::spawn(move || {
         if let Err(e) = run(db, providers, on_change, RECHECK) {
-            eprintln!("agentboard: el vigilante se detuvo: {e:#}");
+            tracing::error!("agentboard: el vigilante se detuvo: {e:#}");
         }
     });
 }
@@ -63,7 +63,7 @@ fn run(
                 match watcher.watch(&root, RecursiveMode::Recursive) {
                     Ok(()) => added = true,
                     Err(e) => {
-                        eprintln!("agentboard: no se pudo vigilar {}: {e}", root.display());
+                        tracing::warn!(ruta = %root.display(), "agentboard: no se pudo vigilar {}: {e}", root.display());
                         watched.remove(&root);
                     }
                 }

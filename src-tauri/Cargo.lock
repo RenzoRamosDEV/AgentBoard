@@ -38,6 +38,7 @@ dependencies = [
  "chrono",
  "rusqlite",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

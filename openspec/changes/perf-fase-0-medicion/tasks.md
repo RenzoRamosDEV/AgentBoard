@@ -19,8 +19,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 3. Sustituir `eprintln!` por avisos/errores de trazas
 
-- [ ] 3.1 Test en rojo: `scan_all` sobre un directorio temporal con un archivo ilegible (p. ej. permisos `000` en unix) bajo un subscriber de test en nivel `warn` captura un aviso con la ruta; verificar que falla mientras exista el `eprintln!`
-- [ ] 3.2 Sustituir los `eprintln!` de `ingest.rs`, `lib.rs` (2), `watcher.rs` (2), `tray.rs` y `mcp/src/main.rs` por `warn!`/`error!` según D2, conservando el texto y la ruta como campo; verificar el test 3.1 en verde y que `grep -rn 'eprintln!' src-tauri/src src-tauri/mcp/src` no devuelve nada
+- [x] 3.1 Test en rojo: `scan_all` sobre un directorio temporal con un archivo ilegible (p. ej. permisos `000` en unix) bajo un subscriber de test en nivel `warn` captura un aviso con la ruta; verificar que falla mientras exista el `eprintln!`
+- [x] 3.2 Sustituir los `eprintln!` de `ingest.rs`, `lib.rs` (2), `watcher.rs` (2), `tray.rs` y `mcp/src/main.rs` por `warn!`/`error!` según D2, conservando el texto y la ruta como campo; verificar el test 3.1 en verde y que `grep -rn 'eprintln!' src-tauri/src src-tauri/mcp/src` no devuelve nada
 
 ## 4. Spans de instrumentación
 

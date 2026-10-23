@@ -28,7 +28,7 @@ pub fn refresh(app: &tauri::AppHandle, db: &Arc<Mutex<Connection>>, tray: &TrayI
         Ok(menu) => {
             let _ = tray.set_menu(Some(menu));
         }
-        Err(e) => eprintln!("agentboard: no se pudo reconstruir el menú de la bandeja: {e}"),
+        Err(e) => tracing::warn!("agentboard: no se pudo reconstruir el menú de la bandeja: {e}"),
     }
 }
 

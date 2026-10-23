@@ -78,11 +78,10 @@ pub fn last_30_days() -> queries::Filter {
     }
 }
 
+pub type Query = fn(&Connection, &queries::Filter) -> Result<()>;
+
 /// Las 5 consultas más usadas del Resumen, con su nombre.
-pub fn top_queries() -> Vec<(
-    &'static str,
-    fn(&Connection, &queries::Filter) -> Result<()>,
-)> {
+pub fn top_queries() -> Vec<(&'static str, Query)> {
     vec![
         ("summary", |c, f| {
             queries::summary(c, f, WINDOW_END_MS).map(|_| ())

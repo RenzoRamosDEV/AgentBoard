@@ -5,9 +5,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo, luego el 
 
 ## 1. Perfiles de compilación
 
-- [ ] 1.1 Escribir `src-tauri/tests/build_profiles.rs` (lee `Cargo.toml` como texto) que exige en `[profile.release]` `lto = "fat"`, `codegen-units = 1`, `opt-level = 3`, `panic = "abort"`, `strip = true` y en `[profile.profiling]` `inherits = "release"`, `debug = true`, `strip = false`; verificar que `cargo test --test build_profiles` falla (rojo)
-- [ ] 1.2 Añadir ambas secciones a `src-tauri/Cargo.toml` (D7); verificar `cargo test --test build_profiles` en verde y que `cargo build --release -p agentboard-mcp` compila
-- [ ] 1.3 Revisar `unwrap`/`expect` en los hilos de escaneo y vigilante (riesgo de `panic = "abort"`, design.md); verificar que no hay ninguno nuevo en rutas de ingesta (`git diff` sin `unwrap()` añadidos) y anotar los existentes para `BASELINE.md`
+- [x] 1.1 Escribir `src-tauri/tests/build_profiles.rs` (lee `Cargo.toml` como texto) que exige en `[profile.release]` `lto = "fat"`, `codegen-units = 1`, `opt-level = 3`, `panic = "abort"`, `strip = true` y en `[profile.profiling]` `inherits = "release"`, `debug = true`, `strip = false`; verificar que `cargo test --test build_profiles` falla (rojo)
+- [x] 1.2 Añadir ambas secciones a `src-tauri/Cargo.toml` (D7); verificar `cargo test --test build_profiles` en verde y que `cargo build --release -p agentboard-mcp` compila
+- [x] 1.3 Revisar `unwrap`/`expect` en los hilos de escaneo y vigilante (riesgo de `panic = "abort"`, design.md); verificar que no hay ninguno nuevo en rutas de ingesta (`git diff` sin `unwrap()` añadidos) y anotar los existentes para `BASELINE.md`
 
 ## 2. Inicialización de trazas
 

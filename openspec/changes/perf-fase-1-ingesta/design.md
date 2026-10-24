@@ -153,3 +153,6 @@ lista ordenada de trabajos  (i, Result<ParsedFile>) por          Writer + backfi
     tabla projects: 40 filas, fnv 6e7d6f2e8f56231b
     tabla events: 0 filas, fnv cbf29ce484222325
     ```
+- **Paso 2 — sentencias en caché (D2)**: conservado. Escaneo frío 200 MB: 5,9 / 4,5 / 4,8 s (mediana **4,8 s**, −73 % frente a 17,6 s; carga 22–25; una primera tanda con load average 33–49 dio 25,2 / 6,4 / 4,5 s). `ingest_file/claude_code_5mib`: **71,6 ms** (66,6 MiB/s; Fase 0 A: 232,9 ms). Huella de `200m` idéntica a la de partida. RSS pico solo frío: 56 MiB.
+  - El contador de compilaciones del test usa `sqlite3_trace_v2(SQLITE_TRACE_STMT)` + `sqlite3_stmt_status(RUN)` vía `rusqlite::ffi` (módulo `db::trace`, solo en tests): `Connection::trace`/`profile` exigen la feature `trace` y no distinguen compilar de reutilizar.
+  - Capacidad de la caché: 64 (constante `db::STATEMENT_CACHE`), por encima del mínimo de 32 para que las consultas de la interfaz no expulsen las de la ingesta.

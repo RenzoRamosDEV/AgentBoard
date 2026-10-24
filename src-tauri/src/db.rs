@@ -16,6 +16,9 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, include_str!("../migrations/0004_coste_reportado.sql")),
 ];
 
+/// Sentencias preparadas que la conexión conserva compiladas.
+pub const STATEMENT_CACHE: usize = 64;
+
 /// Versiones anteriores guardaban una base en la carpeta de datos; se elimina si sigue ahí.
 pub fn remove_legacy_db() {
     let Some(dir) = dirs::data_dir().map(|d| d.join("agentboard")) else {
@@ -54,6 +57,8 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(Duration::from_secs(5))?;
+    // La ingesta reutiliza ~16 sentencias y las consultas otras tantas (rusqlite trae 16).
+    conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
     Ok(())
 }
 
@@ -73,9 +78,91 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Registro de las sentencias que ejecuta una conexión (solo tests): SQL y si el objeto de
+/// sentencia se ejecutaba por primera vez, es decir, si acababa de compilarse.
+#[cfg(test)]
+pub mod trace {
+    use rusqlite::{ffi, Connection};
+    use std::ffi::{c_int, c_uint, c_void, CStr};
+    use std::sync::Mutex;
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Executed {
+        pub sql: String,
+        pub compiled: bool,
+    }
+
+    pub type Log = Mutex<Vec<Executed>>;
+
+    unsafe extern "C" fn on_statement(
+        _mask: c_uint,
+        ctx: *mut c_void,
+        stmt: *mut c_void,
+        _sql: *mut c_void,
+    ) -> c_int {
+        let log = &*(ctx as *const Log);
+        let stmt = stmt as *mut ffi::sqlite3_stmt;
+        let sql = CStr::from_ptr(ffi::sqlite3_sql(stmt))
+            .to_string_lossy()
+            .into_owned();
+        let runs = ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_RUN, 0);
+        if let Ok(mut v) = log.lock() {
+            v.push(Executed {
+                sql,
+                compiled: runs == 0,
+            });
+        }
+        0
+    }
+
+    /// Empieza a registrar; el registro vive lo que el proceso de test (se filtra a propósito
+    /// para que la conexión nunca apunte a memoria liberada).
+    pub fn start(conn: &Connection) -> &'static Log {
+        let log: &'static Log = Box::leak(Box::default());
+        unsafe {
+            ffi::sqlite3_trace_v2(
+                conn.handle(),
+                ffi::SQLITE_TRACE_STMT as c_uint,
+                Some(on_statement),
+                log as *const Log as *mut c_void,
+            );
+        }
+        log
+    }
+
+    pub fn take(log: &Log) -> Vec<Executed> {
+        std::mem::take(&mut *log.lock().unwrap())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn la_traza_distingue_compilar_de_reutilizar() {
+        let conn = open_in_memory().unwrap();
+        let log = trace::start(&conn);
+        for _ in 0..3 {
+            conn.execute("UPDATE settings SET value = 'x' WHERE key = 'k'", [])
+                .unwrap();
+        }
+        assert_eq!(
+            trace::take(log).iter().filter(|e| e.compiled).count(),
+            3,
+            "execute compila cada vez"
+        );
+        for _ in 0..3 {
+            conn.prepare_cached("UPDATE settings SET value = 'y' WHERE key = 'k'")
+                .unwrap()
+                .execute([])
+                .unwrap();
+        }
+        let runs = trace::take(log);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs.iter().filter(|e| e.compiled).count(), 1);
+        assert!(runs[0].sql.starts_with("UPDATE settings"));
+    }
 
     #[test]
     fn migrar_dos_veces_no_falla() {

@@ -15,9 +15,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 2. Escritor con sentencias en caché (cuello #1)
 
-- [ ] 2.1 Test en rojo en `ingest.rs`: tras ingerir un archivo de 200 llamadas con tool uses, el número de compilaciones de sentencias (contador vía `Connection::trace`/`profile` o `sqlite3_stmt_status` en un test) no supera el número de sentencias distintas; verificar que falla
-- [ ] 2.2 Pasar todas las sentencias de `Writer` y de `file_state` a `prepare_cached` con SQL constantes y subir la capacidad de la caché a ≥ 32 en `db::open_in_memory` (D2); verificar 2.1 y 1.3 en verde y `cargo test --workspace`
-- [ ] 2.3 Medir (M, frío) y `cargo bench --bench ingest_file`; aplicar la regla D9 y anotar las cifras
+- [x] 2.1 Test en rojo en `ingest.rs`: tras ingerir un archivo de 200 llamadas con tool uses, el número de compilaciones de sentencias (contador vía `Connection::trace`/`profile` o `sqlite3_stmt_status` en un test) no supera el número de sentencias distintas; verificar que falla
+- [x] 2.2 Pasar todas las sentencias de `Writer` y de `file_state` a `prepare_cached` con SQL constantes y subir la capacidad de la caché a ≥ 32 en `db::open_in_memory` (D2); verificar 2.1 y 1.3 en verde y `cargo test --workspace`
+- [x] 2.3 Medir (M, frío) y `cargo bench --bench ingest_file`; aplicar la regla D9 y anotar las cifras
 - [ ] 2.4 (Opcional, D2b) Test en rojo: un archivo de Claude Code con 1 000 líneas de una misma sesión hace como mucho un `INSERT` y un `UPSERT` final sobre `sessions` y deja `started_at`, `ended_at`, `git_branch`, `project_id`, `is_subagent` y `model` iguales que antes; implementar el coalescido; verificar 2.4 y 1.3 en verde, medir (M, frío) y aplicar la regla D9
 
 ## 3. Relleno de turnos acotado (cuello #3)

@@ -60,10 +60,10 @@ fn ensure_agent(conn: &Connection, p: &dyn Provider) -> Result<()> {
         .first()
         .map(|r| r.to_string_lossy().to_string())
         .unwrap_or_default();
-    conn.execute(
+    conn.prepare_cached(
         "INSERT OR IGNORE INTO agents (id, name, log_root, first_seen) VALUES (?1, ?2, ?3, ?4)",
-        params![p.id(), p.name(), root, now_ms()],
-    )?;
+    )?
+    .execute(params![p.id(), p.name(), root, now_ms()])?;
     Ok(())
 }
 
@@ -160,11 +160,8 @@ pub fn ingest_file(
     let key = path.to_string_lossy().to_string();
 
     let prev: Option<(String, i64)> = conn
-        .query_row(
-            "SELECT file_id, offset FROM file_state WHERE path = ?1",
-            [&key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        .prepare_cached("SELECT file_id, offset FROM file_state WHERE path = ?1")?
+        .query_row([&key], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
     let same_file = |fid: &String, off: i64| *fid == file_id && size >= off;
     // Sin nada nuevo desde la última lectura: no hay que hacer nada.
@@ -241,26 +238,20 @@ pub fn ingest_file(
         }
         w.backfill_turns()?;
     }
-    tx.execute(
-        "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(path) DO UPDATE SET file_id = excluded.file_id, size = excluded.size,
-           offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan",
-        params![
-            key,
-            provider.id(),
-            file_id,
-            size,
-            // Un documento que aún no parsea (escritura a medias) se reintenta desde 0.
-            if whole && result.bad_lines > 0 {
-                0
-            } else {
-                start + consumed as i64
-            },
-            mtime_ms(&meta),
-            now_ms()
-        ],
-    )?;
+    tx.prepare_cached(UPSERT_FILE_STATE)?.execute(params![
+        key,
+        provider.id(),
+        file_id,
+        size,
+        // Un documento que aún no parsea (escritura a medias) se reintenta desde 0.
+        if whole && result.bad_lines > 0 {
+            0
+        } else {
+            start + consumed as i64
+        },
+        mtime_ms(&meta),
+        now_ms()
+    ])?;
     tx.commit()?;
     tx_span.record("records", result.records);
     drop(tx_span);
@@ -276,11 +267,8 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
     let meta = fs::metadata(path)?;
     let key = path.to_string_lossy().to_string();
     let since: i64 = conn
-        .query_row(
-            "SELECT offset FROM file_state WHERE path = ?1",
-            [&key],
-            |r| r.get(0),
-        )
+        .prepare_cached("SELECT offset FROM file_state WHERE path = ?1")?
+        .query_row([&key], |r| r.get(0))
         .optional()?
         .unwrap_or(0);
     let (records, cursor) = provider.read_db(path, since)?;
@@ -299,20 +287,14 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
         w.backfill_turns()?;
     }
     result.lines = records.len();
-    tx.execute(
-        "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
-         VALUES (?1, ?2, 'sqlite', ?3, ?4, ?5, ?6)
-         ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset,
-           mtime = excluded.mtime, last_scan = excluded.last_scan",
-        params![
-            key,
-            provider.id(),
-            meta.len() as i64,
-            cursor,
-            mtime_ms(&meta),
-            now_ms()
-        ],
-    )?;
+    tx.prepare_cached(UPSERT_DB_STATE)?.execute(params![
+        key,
+        provider.id(),
+        meta.len() as i64,
+        cursor,
+        mtime_ms(&meta),
+        now_ms()
+    ])?;
     tx.commit()?;
     tx_span.record("records", result.records);
     drop(tx_span);
@@ -321,6 +303,77 @@ fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Res
     span.record("records", result.records);
     Ok(result)
 }
+
+const UPSERT_FILE_STATE: &str =
+    "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(path) DO UPDATE SET file_id = excluded.file_id, size = excluded.size,
+       offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan";
+
+const UPSERT_DB_STATE: &str =
+    "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
+     VALUES (?1, ?2, 'sqlite', ?3, ?4, ?5, ?6)
+     ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset,
+       mtime = excluded.mtime, last_scan = excluded.last_scan";
+
+const INSERT_PROJECT: &str =
+    "INSERT INTO projects (name, cwd, repo_root) VALUES (?1, ?2, ?3) ON CONFLICT(cwd) DO NOTHING";
+
+const SELECT_PROJECT: &str = "SELECT id FROM projects WHERE cwd = ?1";
+
+const BACKFILL_CALLS: &str =
+    "UPDATE calls SET turn_id = (SELECT id FROM turns t WHERE t.session_id = calls.session_id
+       AND t.ts <= calls.ts ORDER BY t.ts DESC LIMIT 1)
+     WHERE session_id = ?1 AND turn_id IS NULL";
+
+const BACKFILL_TOOL_CALLS: &str = "UPDATE tool_calls SET turn_id = (SELECT id FROM turns t WHERE t.session_id = tool_calls.session_id
+       AND t.ts <= tool_calls.ts ORDER BY t.ts DESC LIMIT 1)
+     WHERE session_id = ?1 AND turn_id IS NULL";
+
+const UPSERT_SESSION: &str =
+    "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, is_subagent)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)
+     ON CONFLICT(id) DO UPDATE SET
+       started_at = MIN(started_at, excluded.started_at),
+       ended_at   = MAX(ended_at, excluded.ended_at),
+       git_branch = COALESCE(excluded.git_branch, git_branch),
+       project_id = COALESCE(project_id, excluded.project_id),
+       is_subagent = MAX(is_subagent, excluded.is_subagent)";
+
+const UPSERT_CALL: &str = "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
+        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
+       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
+     ON CONFLICT(message_id) DO UPDATE SET
+       ts = MIN(ts, excluded.ts), model = excluded.model,
+       input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
+       cache_read = excluded.cache_read, cache_write = excluded.cache_write,
+       cache_write_1h = excluded.cache_write_1h, reasoning_tokens = excluded.reasoning_tokens,
+       activity = COALESCE(excluded.activity, activity),
+       is_sidechain = excluded.is_sidechain, agent_id = COALESCE(excluded.agent_id, agent_id),
+       cost_reported = COALESCE(excluded.cost_reported, cost_reported),
+       turn_id = COALESCE(turn_id, excluded.turn_id)";
+
+const UPDATE_SESSION_MODEL: &str = "UPDATE sessions SET model = ?1 WHERE id = ?2";
+
+const INSERT_TOOL_USE: &str =
+    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, detail, turn_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT id FROM turns
+       WHERE session_id = ?3 AND ts <= ?4 ORDER BY ts DESC LIMIT 1))
+     ON CONFLICT(call_id) DO NOTHING";
+
+const REFRESH_TOOL_USE: &str = "UPDATE tool_calls SET detail = COALESCE(detail, ?1),
+       turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
+     WHERE call_id = ?4";
+
+const UPDATE_TOOL_RESULT: &str = "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
+     WHERE call_id = ?4";
+
+const UPSERT_TURN: &str = "INSERT INTO turns (id, session_id, ts, intent) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(id) DO UPDATE SET ts = MIN(ts, excluded.ts), intent = COALESCE(intent, excluded.intent)";
+
+const INSERT_EVENT: &str =
+    "INSERT OR IGNORE INTO events (session_id, ts, kind, payload_json) VALUES (?1, ?2, ?3, ?4)";
 
 /// Aplica registros a la base dentro de una transacción.
 struct Writer<'a> {
@@ -340,20 +393,20 @@ impl<'a> Writer<'a> {
         }
     }
 
+    fn run(&self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
+        Ok(self.tx.prepare_cached(sql)?.execute(params)?)
+    }
+
     fn project_id(&mut self, cwd: &str) -> Result<i64> {
         if let Some(id) = self.projects.get(cwd) {
             return Ok(*id);
         }
         let (name, repo_root) = project_of(cwd);
-        self.tx.execute(
-            "INSERT INTO projects (name, cwd, repo_root) VALUES (?1, ?2, ?3) ON CONFLICT(cwd) DO NOTHING",
-            params![name, cwd, repo_root],
-        )?;
+        self.run(INSERT_PROJECT, params![name, cwd, repo_root])?;
         let id: i64 = self
             .tx
-            .query_row("SELECT id FROM projects WHERE cwd = ?1", [cwd], |r| {
-                r.get(0)
-            })?;
+            .prepare_cached(SELECT_PROJECT)?
+            .query_row([cwd], |r| r.get(0))?;
         self.projects.insert(cwd.to_string(), id);
         Ok(id)
     }
@@ -362,15 +415,8 @@ impl<'a> Writer<'a> {
     /// de un subagente leído antes que el de su sesión).
     fn backfill_turns(&self) -> Result<()> {
         for sid in &self.sessions {
-            for table in ["calls", "tool_calls"] {
-                self.tx.execute(
-                    &format!(
-                        "UPDATE {table} SET turn_id = (SELECT id FROM turns t WHERE t.session_id = {table}.session_id
-                           AND t.ts <= {table}.ts ORDER BY t.ts DESC LIMIT 1)
-                         WHERE session_id = ?1 AND turn_id IS NULL"
-                    ),
-                    [sid],
-                )?;
+            for sql in [BACKFILL_CALLS, BACKFILL_TOOL_CALLS] {
+                self.run(sql, [sid])?;
             }
         }
         Ok(())
@@ -387,62 +433,61 @@ impl<'a> Writer<'a> {
                     Some(cwd) => Some(self.project_id(cwd)?),
                     None => None,
                 };
-                self.tx.execute(
-                    "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, is_subagent)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)
-                     ON CONFLICT(id) DO UPDATE SET
-                       started_at = MIN(started_at, excluded.started_at),
-                       ended_at   = MAX(ended_at, excluded.ended_at),
-                       git_branch = COALESCE(excluded.git_branch, git_branch),
-                       project_id = COALESCE(project_id, excluded.project_id),
-                       is_subagent = MAX(is_subagent, excluded.is_subagent)",
-                    params![s.id, self.agent_id, project, s.git_branch, s.ts, s.is_subagent],
+                self.run(
+                    UPSERT_SESSION,
+                    params![
+                        s.id,
+                        self.agent_id,
+                        project,
+                        s.git_branch,
+                        s.ts,
+                        s.is_subagent
+                    ],
                 )?;
             }
             Record::Call(c) => {
-                self.tx.execute(
-                    "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
-                        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
-                       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
-                     ON CONFLICT(message_id) DO UPDATE SET
-                       ts = MIN(ts, excluded.ts), model = excluded.model,
-                       input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
-                       cache_read = excluded.cache_read, cache_write = excluded.cache_write,
-                       cache_write_1h = excluded.cache_write_1h, reasoning_tokens = excluded.reasoning_tokens,
-                       activity = COALESCE(excluded.activity, activity),
-                       is_sidechain = excluded.is_sidechain, agent_id = COALESCE(excluded.agent_id, agent_id),
-                       cost_reported = COALESCE(excluded.cost_reported, cost_reported),
-                       turn_id = COALESCE(turn_id, excluded.turn_id)",
+                self.run(
+                    UPSERT_CALL,
                     params![
-                        c.message_id, c.session_id, c.ts, c.model, c.input_tokens, c.output_tokens,
-                        c.cache_read, c.cache_write, c.cache_write_1h, c.reasoning_tokens, c.activity,
-                        c.is_sidechain, c.agent_id, c.cost_reported
+                        c.message_id,
+                        c.session_id,
+                        c.ts,
+                        c.model,
+                        c.input_tokens,
+                        c.output_tokens,
+                        c.cache_read,
+                        c.cache_write,
+                        c.cache_write_1h,
+                        c.reasoning_tokens,
+                        c.activity,
+                        c.is_sidechain,
+                        c.agent_id,
+                        c.cost_reported
                     ],
                 )?;
                 if !c.is_sidechain {
-                    self.tx.execute(
-                        "UPDATE sessions SET model = ?1 WHERE id = ?2",
-                        params![c.model, c.session_id],
-                    )?;
+                    self.run(UPDATE_SESSION_MODEL, params![c.model, c.session_id])?;
                 }
             }
             Record::ToolUse(t) => {
-                let n = self.tx.execute(
-                    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, detail, turn_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT id FROM turns
-                       WHERE session_id = ?3 AND ts <= ?4 ORDER BY ts DESC LIMIT 1))
-                     ON CONFLICT(call_id) DO NOTHING",
-                    params![t.call_id, t.message_id, t.session_id, t.ts, t.tool, t.target, t.detail],
+                let n = self.run(
+                    INSERT_TOOL_USE,
+                    params![
+                        t.call_id,
+                        t.message_id,
+                        t.session_id,
+                        t.ts,
+                        t.tool,
+                        t.target,
+                        t.detail
+                    ],
                 )?;
                 if n > 0 {
                     return Ok(Some(t.call_id.clone()));
                 }
                 // Ya existía (relectura): completa las columnas añadidas después.
-                self.tx.execute(
-                    "UPDATE tool_calls SET detail = COALESCE(detail, ?1),
-                       turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
-                     WHERE call_id = ?4",
+                self.run(
+                    REFRESH_TOOL_USE,
                     params![t.detail, t.session_id, t.ts, t.call_id],
                 )?;
             }
@@ -452,22 +497,14 @@ impl<'a> Writer<'a> {
                 is_error,
                 agent_id,
             } => {
-                self.tx.execute(
-                    "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
-                     WHERE call_id = ?4",
-                    params![is_error, ts, agent_id, call_id],
-                )?;
+                self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])?;
             }
             Record::Turn(t) => {
-                self.tx.execute(
-                    "INSERT INTO turns (id, session_id, ts, intent) VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT(id) DO UPDATE SET ts = MIN(ts, excluded.ts), intent = COALESCE(intent, excluded.intent)",
-                    params![t.id, t.session_id, t.ts, t.intent],
-                )?;
+                self.run(UPSERT_TURN, params![t.id, t.session_id, t.ts, t.intent])?;
             }
             Record::Event(e) => {
-                self.tx.execute(
-                    "INSERT OR IGNORE INTO events (session_id, ts, kind, payload_json) VALUES (?1, ?2, ?3, ?4)",
+                self.run(
+                    INSERT_EVENT,
                     params![e.session_id, e.ts, e.kind, e.payload_json],
                 )?;
             }
@@ -517,6 +554,35 @@ mod tests {
         let file = root.join("p").join("s1.jsonl");
         let provider = ClaudeCode::with_roots(vec![root]);
         (dir, file, provider, db::open_in_memory().unwrap())
+    }
+
+    fn tool_line(i: usize) -> String {
+        format!(
+            r#"{{"type":"assistant","sessionId":"s1","timestamp":"2026-09-25T10:{:02}:{:02}Z","cwd":"/h/Proyectos/AgentBoard","message":{{"model":"claude-sonnet-4-5","id":"m{i}","content":[{{"type":"tool_use","id":"tu{i}","name":"Bash","input":{{"command":"ls"}}}}],"usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#,
+            (i / 60) % 60,
+            i % 60
+        )
+    }
+
+    fn compiled(log: &[db::trace::Executed]) -> (usize, usize) {
+        let distinct: std::collections::HashSet<&str> =
+            log.iter().map(|e| e.sql.as_str()).collect();
+        (log.iter().filter(|e| e.compiled).count(), distinct.len())
+    }
+
+    #[test]
+    fn cada_sentencia_se_compila_como_mucho_una_vez_por_archivo() {
+        let (_d, file, p, mut conn) = setup();
+        let body: String = (0..200).map(|i| tool_line(i) + "\n").collect();
+        fs::write(&file, body).unwrap();
+        let log = db::trace::start(&conn);
+        let r = ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(r.new_tool_calls.len(), 200);
+        let (compiles, distinct) = compiled(&db::trace::take(log));
+        assert!(
+            compiles <= distinct,
+            "{compiles} compilaciones para {distinct} sentencias distintas"
+        );
     }
 
     #[test]

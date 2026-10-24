@@ -2,11 +2,11 @@
 
 use crate::providers::{Provider, Record, Source};
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tracing::field::Empty;
 
@@ -74,13 +74,15 @@ pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Resul
     let mut stats = ScanStats::default();
     // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
     conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
+    let states = load_file_states(conn)?;
     for p in providers {
         for root in p.log_roots().into_iter().filter(|r| r.is_dir()) {
             for path in walk(&root) {
                 if !p.matches(&path) {
                     continue;
                 }
-                match ingest_file(conn, p.as_ref(), &path) {
+                let prev = states.get(path.to_string_lossy().as_ref());
+                match ingest_file_from(conn, p.as_ref(), &path, prev) {
                     Ok(r) => {
                         stats.files += 1;
                         stats.lines += r.lines;
@@ -144,165 +146,244 @@ fn mtime_ms(meta: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-/// Lee lo nuevo de un archivo y lo guarda en una transacción.
-#[tracing::instrument(level = "debug", skip_all, fields(ruta = %path.display(), bytes = Empty, lines = Empty, records = Empty))]
-pub fn ingest_file(
-    conn: &mut Connection,
+/// Lo guardado de un archivo en la pasada anterior.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileState {
+    pub file_id: String,
+    pub offset: i64,
+}
+
+const SELECT_FILE_STATES: &str = "SELECT path, file_id, offset FROM file_state";
+const SELECT_FILE_STATE: &str = "SELECT file_id, offset FROM file_state WHERE path = ?1";
+
+/// Estado de todos los archivos leídos, en una sola consulta.
+pub fn load_file_states(conn: &Connection) -> Result<HashMap<String, FileState>> {
+    let mut stmt = conn.prepare_cached(SELECT_FILE_STATES)?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            FileState {
+                file_id: r.get(1)?,
+                offset: r.get(2)?,
+            },
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Lo nuevo de un archivo, ya parseado y listo para escribir.
+#[derive(Debug, Default)]
+pub struct ParsedFile {
+    key: String,
+    /// `None` en las bases SQLite (su identidad no se guarda).
+    file_id: Option<String>,
+    size: i64,
+    offset: i64,
+    mtime: i64,
+    records: Vec<Record>,
+    lines: usize,
+    bad_lines: usize,
+}
+
+/// Lee y parsea lo nuevo de `path` desde su estado anterior. `None` si no cambió (sin abrirlo).
+#[tracing::instrument(name = "ingest_file", level = "debug", skip_all, fields(ruta = %path.display(), bytes = Empty, lines = Empty, records = Empty))]
+pub fn read_file(
     provider: &dyn Provider,
     path: &Path,
-) -> Result<FileResult> {
-    if provider.source() == Source::Sqlite {
-        return ingest_db(conn, provider, path);
-    }
+    prev: Option<&FileState>,
+) -> Result<Option<ParsedFile>> {
+    let parsed = if provider.source() == Source::Sqlite {
+        read_db(provider, path, prev)?
+    } else {
+        match read_jsonl(provider, path, prev)? {
+            Some(p) => p,
+            None => return Ok(None),
+        }
+    };
+    let span = tracing::Span::current();
+    span.record("lines", parsed.lines);
+    span.record("records", parsed.records.len());
+    Ok(Some(parsed))
+}
+
+fn read_jsonl(
+    provider: &dyn Provider,
+    path: &Path,
+    prev: Option<&FileState>,
+) -> Result<Option<ParsedFile>> {
     let meta = fs::metadata(path)?;
     let size = meta.len() as i64;
     let file_id = file_identity(&meta);
-    let key = path.to_string_lossy().to_string();
-
-    let prev: Option<(String, i64)> = conn
-        .prepare_cached("SELECT file_id, offset FROM file_state WHERE path = ?1")?
-        .query_row([&key], |r| Ok((r.get(0)?, r.get(1)?)))
-        .optional()?;
-    let same_file = |fid: &String, off: i64| *fid == file_id && size >= off;
-    // Sin nada nuevo desde la última lectura: no hay que hacer nada.
-    if prev
-        .as_ref()
-        .is_some_and(|(fid, off)| same_file(fid, *off) && *off == size)
-    {
-        return Ok(FileResult::default());
+    let same_file = |s: &FileState| s.file_id == file_id && size >= s.offset;
+    if prev.is_some_and(|s| same_file(s) && s.offset == size) {
+        return Ok(None);
     }
     // Un documento completo (no JSONL) se relee entero cada vez que cambia.
     let whole = provider.whole_file(path);
-    let start = match &prev {
+    let start = match prev {
         // A mitad de archivo solo si el proveedor conserva su estado; si no, se relee entero
         // (idempotente: llamadas, herramientas, turnos y eventos tienen id propio).
-        Some((fid, off)) if !whole && same_file(fid, *off) && provider.knows(path) => *off,
+        Some(s) if !whole && same_file(s) && provider.knows(path) => s.offset,
         _ => 0,
     };
     if start == 0 {
         provider.reset(path);
     }
 
-    let mut buf = Vec::with_capacity((size - start).max(0) as usize);
-    let mut f = File::open(path)?;
-    f.seek(SeekFrom::Start(start as u64))?;
-    f.read_to_end(&mut buf)?;
-
-    // Solo líneas completas; lo que quede tras el último \n espera a la siguiente pasada.
-    // (Un documento completo no tiene por qué acabar en salto de línea: se consume entero.)
-    let consumed = if whole {
-        buf.len()
-    } else {
-        buf.iter()
-            .rposition(|b| *b == b'\n')
-            .map(|i| i + 1)
-            .unwrap_or(0)
-    };
-    let mut result = FileResult::default();
-    let tx_span = tracing::debug_span!("ingest.tx", records = Empty).entered();
-    let tx = conn.transaction()?;
-    ensure_agent(&tx, provider)?;
-    {
-        let mut w = Writer::new(&tx, provider.id());
-        let mut feed = |line: &str, result: &mut FileResult| -> Result<()> {
-            result.lines += 1;
-            match provider.parse_line(path, line) {
-                Ok(records) => {
-                    for rec in records {
-                        if let Some(id) = w.apply(&rec)? {
-                            result.new_tool_calls.push(id);
-                        }
-                        result.records += 1;
-                    }
-                }
-                Err(_) => result.bad_lines += 1,
-            }
-            Ok(())
-        };
-        if whole {
-            // Documento completo: todo el archivo es un único registro (aunque tenga saltos).
-            let text = String::from_utf8_lossy(&buf);
-            let text = text.trim();
-            if !text.is_empty() {
-                feed(text, &mut result)?;
-            }
-        } else {
-            for raw in buf[..consumed].split(|b| *b == b'\n') {
-                let line = String::from_utf8_lossy(raw);
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                feed(line, &mut result)?;
-            }
-        }
-        w.backfill_turns()?;
-    }
-    tx.prepare_cached(UPSERT_FILE_STATE)?.execute(params![
-        key,
-        provider.id(),
-        file_id,
+    let mut parsed = ParsedFile {
+        key: path.to_string_lossy().to_string(),
+        file_id: Some(file_id),
         size,
+        mtime: mtime_ms(&meta),
+        ..Default::default()
+    };
+    let feed = |line: &str, parsed: &mut ParsedFile| {
+        parsed.lines += 1;
+        match provider.parse_line(path, line) {
+            Ok(records) => parsed.records.extend(records),
+            Err(_) => parsed.bad_lines += 1,
+        }
+    };
+    let mut reader = BufReader::with_capacity(READ_BUFFER, File::open(path)?);
+    reader.seek(SeekFrom::Start(start as u64))?;
+    let bytes;
+    if whole {
+        // Documento completo: todo el archivo es un único registro (aunque tenga saltos y no
+        // acabe en salto de línea).
+        let mut buf = Vec::new();
+        bytes = reader.read_to_end(&mut buf)?;
+        let text = String::from_utf8_lossy(&buf);
+        let text = text.trim();
+        if !text.is_empty() {
+            feed(text, &mut parsed);
+        }
         // Un documento que aún no parsea (escritura a medias) se reintenta desde 0.
-        if whole && result.bad_lines > 0 {
+        parsed.offset = if parsed.bad_lines > 0 {
             0
         } else {
-            start + consumed as i64
-        },
-        mtime_ms(&meta),
-        now_ms()
-    ])?;
-    tx.commit()?;
-    tx_span.record("records", result.records);
-    drop(tx_span);
-    let span = tracing::Span::current();
-    span.record("bytes", buf.len());
-    span.record("lines", result.lines);
-    span.record("records", result.records);
-    Ok(result)
+            bytes as i64
+        };
+    } else {
+        // Solo líneas completas; lo que quede tras el último \n espera a la siguiente pasada.
+        let mut line = Vec::new();
+        let mut consumed = 0;
+        let mut read = 0;
+        loop {
+            line.clear();
+            let n = reader.read_until(b'\n', &mut line)?;
+            read += n;
+            if n == 0 || line.last() != Some(&b'\n') {
+                break;
+            }
+            consumed += n;
+            let text = String::from_utf8_lossy(&line[..n - 1]);
+            let text = text.trim();
+            if !text.is_empty() {
+                feed(text, &mut parsed);
+            }
+        }
+        bytes = read;
+        parsed.offset = start + consumed as i64;
+    }
+    tracing::Span::current().record("bytes", bytes);
+    Ok(Some(parsed))
 }
 
 /// Base SQLite de un agente: el "offset" de `file_state` es el cursor de `time_updated`.
-fn ingest_db(conn: &mut Connection, provider: &dyn Provider, path: &Path) -> Result<FileResult> {
+fn read_db(provider: &dyn Provider, path: &Path, prev: Option<&FileState>) -> Result<ParsedFile> {
     let meta = fs::metadata(path)?;
-    let key = path.to_string_lossy().to_string();
-    let since: i64 = conn
-        .prepare_cached("SELECT offset FROM file_state WHERE path = ?1")?
-        .query_row([&key], |r| r.get(0))
-        .optional()?
-        .unwrap_or(0);
-    let (records, cursor) = provider.read_db(path, since)?;
-    let mut result = FileResult::default();
-    let tx_span = tracing::debug_span!("ingest.tx", records = Empty).entered();
-    let tx = conn.transaction()?;
-    ensure_agent(&tx, provider)?;
-    {
-        let mut w = Writer::new(&tx, provider.id());
-        for rec in &records {
-            if let Some(id) = w.apply(rec)? {
-                result.new_tool_calls.push(id);
-            }
-            result.records += 1;
+    let (records, cursor) = provider.read_db(path, prev.map_or(0, |s| s.offset))?;
+    Ok(ParsedFile {
+        key: path.to_string_lossy().to_string(),
+        file_id: None,
+        size: meta.len() as i64,
+        offset: cursor,
+        mtime: mtime_ms(&meta),
+        lines: records.len(),
+        records,
+        bad_lines: 0,
+    })
+}
+
+/// Escribe un archivo parseado y su nuevo estado (dentro de la transacción del llamador).
+#[tracing::instrument(name = "ingest.tx", level = "debug", skip_all, fields(records = Empty))]
+pub fn write_file(
+    conn: &Connection,
+    provider: &dyn Provider,
+    parsed: &ParsedFile,
+) -> Result<FileResult> {
+    ensure_agent(conn, provider)?;
+    let mut result = FileResult {
+        lines: parsed.lines,
+        bad_lines: parsed.bad_lines,
+        ..Default::default()
+    };
+    let mut w = Writer::new(conn, provider.id());
+    for rec in &parsed.records {
+        if let Some(id) = w.apply(rec)? {
+            result.new_tool_calls.push(id);
         }
-        w.backfill_turns()?;
+        result.records += 1;
     }
-    result.lines = records.len();
-    tx.prepare_cached(UPSERT_DB_STATE)?.execute(params![
-        key,
-        provider.id(),
-        meta.len() as i64,
-        cursor,
-        mtime_ms(&meta),
-        now_ms()
-    ])?;
-    tx.commit()?;
-    tx_span.record("records", result.records);
-    drop(tx_span);
-    let span = tracing::Span::current();
-    span.record("lines", result.lines);
-    span.record("records", result.records);
+    w.backfill_turns()?;
+    let now = now_ms();
+    match &parsed.file_id {
+        Some(file_id) => conn.prepare_cached(UPSERT_FILE_STATE)?.execute(params![
+            parsed.key,
+            provider.id(),
+            file_id,
+            parsed.size,
+            parsed.offset,
+            parsed.mtime,
+            now
+        ])?,
+        None => conn.prepare_cached(UPSERT_DB_STATE)?.execute(params![
+            parsed.key,
+            provider.id(),
+            parsed.size,
+            parsed.offset,
+            parsed.mtime,
+            now
+        ])?,
+    };
+    tracing::Span::current().record("records", result.records);
     Ok(result)
 }
+
+/// Lee lo nuevo de un archivo y lo guarda en una transacción.
+pub fn ingest_file(
+    conn: &mut Connection,
+    provider: &dyn Provider,
+    path: &Path,
+) -> Result<FileResult> {
+    let prev = conn
+        .prepare_cached(SELECT_FILE_STATE)?
+        .query_row([path.to_string_lossy()], |r| {
+            Ok(FileState {
+                file_id: r.get(0)?,
+                offset: r.get(1)?,
+            })
+        })
+        .optional()?;
+    ingest_file_from(conn, provider, path, prev.as_ref())
+}
+
+fn ingest_file_from(
+    conn: &mut Connection,
+    provider: &dyn Provider,
+    path: &Path,
+    prev: Option<&FileState>,
+) -> Result<FileResult> {
+    let Some(parsed) = read_file(provider, path, prev)? else {
+        return Ok(FileResult::default());
+    };
+    let tx = conn.transaction()?;
+    let result = write_file(&tx, provider, &parsed)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+const READ_BUFFER: usize = 64 * 1024;
 
 const UPSERT_FILE_STATE: &str =
     "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
@@ -378,7 +459,7 @@ const INSERT_EVENT: &str =
 
 /// Aplica registros a la base dentro de una transacción.
 struct Writer<'a> {
-    tx: &'a Transaction<'a>,
+    tx: &'a Connection,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
     /// Por sesión, el `ts` mínimo de los turnos aplicados: solo las filas sin turno desde ahí
@@ -387,7 +468,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(tx: &'a Transaction<'a>, agent_id: &'static str) -> Self {
+    fn new(tx: &'a Connection, agent_id: &'static str) -> Self {
         Self {
             tx,
             agent_id,
@@ -664,6 +745,64 @@ mod tests {
         ingest_file(&mut conn, &p, &file).unwrap();
         assert_eq!(turn_of(&conn, "despues").as_deref(), Some("p1"));
         assert_eq!(turn_of(&conn, "antes"), None);
+    }
+
+    #[test]
+    fn archivo_rotado_se_relee_desde_cero_sin_duplicar() {
+        let (_d, file, p, mut conn) = setup();
+        let lines = |ids: &[&str]| -> String {
+            ids.iter()
+                .map(|id| line(id, 1, "2026-09-25T10:00:00Z") + "\n")
+                .collect()
+        };
+        fs::write(&file, lines(&["m1", "m2"])).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let rotated = file.with_extension("tmp");
+        fs::write(&rotated, lines(&["m1", "m2", "m3"])).unwrap();
+        fs::rename(&rotated, &file).unwrap();
+        let r = ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(r.lines, 3, "otra identidad: se relee desde el byte 0");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archivo_sin_cambios_no_se_abre() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_d, file, p, mut conn) = setup();
+        fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n").unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&file).is_ok() {
+            return; // root ignora los permisos
+        }
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(p)];
+        let stats = scan_all(&mut conn, &providers).unwrap();
+        assert_eq!((stats.files, stats.errors, stats.lines), (1, 0, 0));
+    }
+
+    #[test]
+    fn el_estado_de_los_archivos_se_carga_una_vez_por_escaneo() {
+        let (_d, file, p, mut conn) = setup();
+        let dir = file.parent().unwrap();
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            let id = format!("m{i}");
+            fs::write(
+                dir.join(format!("{name}.jsonl")),
+                line(&id, 1, "2026-09-25T10:00:00Z") + "\n",
+            )
+            .unwrap();
+        }
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(p)];
+        let log = db::trace::start(&conn);
+        assert_eq!(scan_all(&mut conn, &providers).unwrap().files, 3);
+        let selects = db::trace::take(log)
+            .into_iter()
+            .filter(|e| {
+                e.sql.trim_start().starts_with("SELECT") && e.sql.contains("FROM file_state")
+            })
+            .count();
+        assert_eq!(selects, 1);
     }
 
     #[test]

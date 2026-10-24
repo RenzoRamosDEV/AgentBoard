@@ -28,9 +28,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 4. Lectura incremental robusta
 
-- [ ] 4.1 Tests en rojo en `ingest.rs`: (a) archivo rotado (misma ruta, otra identidad, igual o mayor tamaño) se relee desde 0 sin duplicar; (b) un archivo sin cambios no se abre (archivo con permisos `000` tras la primera lectura y mismo tamaño: sin error en el segundo escaneo); (c) un `file_state` precargado una vez por escaneo (un único `SELECT` de `file_state`, contado con `Connection::trace`); verificar que fallan los que correspondan
-- [ ] 4.2 Cargar `file_state` en un `HashMap` al inicio del escaneo, saltar sin abrir los archivos sin cambios y leer con `BufReader` + `read_until(b'\n')` desde el offset, sin consumir la última línea sin `\n` (D5); verificar 4.1, los tests existentes de lectura incremental (`linea_incompleta_espera_a_la_siguiente_pasada`, `archivo_truncado_se_relee_sin_duplicar`, documentos completos) y 1.3 en verde
-- [ ] 4.3 Medir (M, frío y `live --repeat 200`); aplicar la regla D9 y anotar las cifras
+- [x] 4.1 Tests en rojo en `ingest.rs`: (a) archivo rotado (misma ruta, otra identidad, igual o mayor tamaño) se relee desde 0 sin duplicar; (b) un archivo sin cambios no se abre (archivo con permisos `000` tras la primera lectura y mismo tamaño: sin error en el segundo escaneo); (c) un `file_state` precargado una vez por escaneo (un único `SELECT` de `file_state`, contado con `Connection::trace`); verificar que fallan los que correspondan
+- [x] 4.2 Cargar `file_state` en un `HashMap` al inicio del escaneo, saltar sin abrir los archivos sin cambios y leer con `BufReader` + `read_until(b'\n')` desde el offset, sin consumir la última línea sin `\n` (D5); verificar 4.1, los tests existentes de lectura incremental (`linea_incompleta_espera_a_la_siguiente_pasada`, `archivo_truncado_se_relee_sin_duplicar`, documentos completos) y 1.3 en verde
+- [x] 4.3 Medir (M, frío y `live --repeat 200`); aplicar la regla D9 y anotar las cifras
 
 ## 5. Escaneo paralelo determinista
 

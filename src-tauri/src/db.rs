@@ -841,6 +841,19 @@ mod tests {
     }
 
     #[test]
+    fn la_cache_va_en_la_carpeta_de_datos_de_agentboard() {
+        // Solo la ruta: el test no toca la carpeta de datos real.
+        let path = default_cache_path().unwrap();
+        assert!(
+            path.ends_with("agentboard/cache.sqlite"),
+            "{}",
+            path.display()
+        );
+        assert_eq!(path.parent(), data_dir().as_deref());
+        assert!(path.is_absolute());
+    }
+
+    #[test]
     fn una_cache_que_valida_pero_no_abre_se_recrea_en_disco() {
         let dir = tempfile::tempdir().unwrap();
         let path = cache_in(dir.path());

@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Migraciones en orden; la versión aplicada se guarda en `PRAGMA user_version`.
@@ -37,13 +39,88 @@ pub fn remove_legacy_db() {
     let _ = std::fs::remove_dir(&dir);
 }
 
-/// Abre una base en un archivo (solo tests) y aplica las migraciones pendientes.
-pub fn open(path: &Path) -> Result<Connection> {
-    let conn =
-        Connection::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
-    configure(&conn)?;
+/// Dónde vive la base: un archivo (en WAL) o una base en memoria con caché compartida, a la que
+/// se conectan por nombre el escritor y los lectores; existe mientras viva la del escritor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    File(PathBuf),
+    SharedMemory(String),
+}
+
+impl Target {
+    /// Base en memoria compartida con un nombre que no repite ninguna otra de este proceso.
+    pub fn shared_memory() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        Self::SharedMemory(format!(
+            "file:agentboard-{}-{n}?mode=memory&cache=shared",
+            std::process::id()
+        ))
+    }
+
+    fn connect(&self) -> Result<Connection> {
+        match self {
+            Self::File(path) => Connection::open(path)
+                .with_context(|| format!("no se pudo abrir {}", path.display())),
+            Self::SharedMemory(uri) => {
+                Connection::open(uri).with_context(|| format!("no se pudo abrir {uri}"))
+            }
+        }
+    }
+}
+
+/// Abre la conexión de escritura y deja la base lista (migraciones, precios, zona, derivados).
+pub fn open_writer(target: &Target) -> Result<Connection> {
+    let conn = target.connect()?;
+    configure_writer(&conn, matches!(target, Target::File(_)))?;
     prepare(&conn)?;
     Ok(conn)
+}
+
+/// Abre una base en un archivo y aplica las migraciones pendientes.
+pub fn open(path: &Path) -> Result<Connection> {
+    open_writer(&Target::File(path.to_path_buf()))
+}
+
+/// Conexiones de solo lectura para la interfaz, la bandeja y los avisos: no esperan al escritor
+/// (archivo en WAL: ven el último lote confirmado) o esperan como mucho a un lote (memoria
+/// compartida: `unlock_notify`), y nunca ven un lote a medias.
+pub struct ReadPool {
+    conns: Vec<Mutex<Connection>>,
+}
+
+impl ReadPool {
+    /// Lectores por defecto: los comandos ya van a hebras aparte y casi todos responden en ms.
+    pub const SIZE: usize = 2;
+
+    /// Abre `size` lectores sobre una base que el escritor ya dejó preparada.
+    pub fn open(target: &Target, size: usize) -> Result<Self> {
+        let conns = (0..size.max(1))
+            .map(|_| {
+                let conn = target.connect()?;
+                configure_reader(&conn)?;
+                Ok(Mutex::new(conn))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self { conns })
+    }
+
+    /// Ejecuta `f` con el primer lector libre o, si están todos ocupados, esperando al primero.
+    pub fn with<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        for conn in &self.conns {
+            if let Ok(guard) = conn.try_lock() {
+                return f(&guard);
+            }
+        }
+        let first = self
+            .conns
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("sin lectores"))?;
+        let guard = first
+            .lock()
+            .map_err(|e| anyhow::anyhow!("lector envenenado: {e}"))?;
+        f(&guard)
+    }
 }
 
 /// Migraciones, precios por defecto, zona de la caché (la del sistema) y derivados pendientes.
@@ -55,23 +132,40 @@ fn prepare(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Base en memoria: la que usa la app. Se rellena al arrancar leyendo los logs del ordenador.
+/// Base privada en memoria, sin lectores aparte (servidor MCP, tests, `perf_scan`).
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
-    configure(&conn)?;
+    configure_writer(&conn, false)?;
     prepare(&conn)?;
     Ok(conn)
 }
 
-fn configure(conn: &Connection) -> Result<()> {
-    // journal_mode devuelve una fila, así que se lee con query_row.
-    let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+/// PRAGMAs del escritor (D3). En archivo, WAL con `synchronous=NORMAL`: un corte pierde como mucho
+/// los últimos lotes, y `file_state` va en la misma transacción que sus filas, así que se releen.
+fn configure_writer(conn: &Connection, file: bool) -> Result<()> {
+    if file {
+        // journal_mode devuelve una fila, así que se lee con query_row.
+        let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "cache_size", -65_536)?;
+    } else {
+        conn.pragma_update(None, "synchronous", "OFF")?;
+    }
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
     // Sin claves foráneas (~14 % del escaneo frío): el escritor inserta la sesión antes que sus
     // filas y rechaza él los registros de una sesión inexistente (`ingest::Writer`).
     conn.pragma_update(None, "foreign_keys", "OFF")?;
     conn.busy_timeout(Duration::from_secs(5))?;
     // La ingesta reutiliza ~16 sentencias y las consultas otras tantas (rusqlite trae 16).
+    conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
+    Ok(())
+}
+
+fn configure_reader(conn: &Connection) -> Result<()> {
+    conn.pragma_update(None, "query_only", 1)?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    conn.pragma_update(None, "cache_size", -16_384)?;
+    conn.busy_timeout(Duration::from_secs(5))?;
     conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
     Ok(())
 }
@@ -327,6 +421,103 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    fn calls(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM calls", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn insert_batch(conn: &Connection, from: usize, n: usize) {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO agents VALUES ('a','A','/',0);
+             INSERT OR IGNORE INTO sessions (id, agent_id, started_at, ended_at) VALUES ('s','a',0,0);",
+        )
+        .unwrap();
+        for i in from..from + n {
+            conn.execute(
+                "INSERT INTO calls (message_id, session_id, ts, model) VALUES (?1, 's', 1, 'm')",
+                [format!("m{i}")],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn en_archivo_una_lectura_larga_no_frena_al_escritor_y_ve_su_foto() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Target::File(dir.path().join("cache.sqlite"));
+        let writer = open_writer(&target).unwrap();
+        insert_batch(&writer, 0, 10);
+        let pool = std::sync::Arc::new(ReadPool::open(&target, 2).unwrap());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let reader = {
+            let pool = pool.clone();
+            std::thread::spawn(move || {
+                pool.with(|c| {
+                    c.execute_batch("BEGIN")?;
+                    let before = calls(c);
+                    started_tx.send(()).unwrap();
+                    go_rx.recv().unwrap();
+                    let during = calls(c);
+                    c.execute_batch("COMMIT")?;
+                    Ok((before, during, calls(c)))
+                })
+                .unwrap()
+            })
+        };
+        started_rx.recv().unwrap();
+        // Lote del escritor con la lectura abierta: confirma sin esperar.
+        let t = std::time::Instant::now();
+        let tx = writer.unchecked_transaction().unwrap();
+        insert_batch(&tx, 10, 5);
+        tx.commit().unwrap();
+        assert!(
+            t.elapsed() < Duration::from_secs(1),
+            "el escritor esperó a la lectura"
+        );
+        go_tx.send(()).unwrap();
+        assert_eq!(reader.join().unwrap(), (10, 10, 15));
+    }
+
+    #[test]
+    fn en_memoria_compartida_el_lector_espera_al_lote_y_lo_ve_entero() {
+        let target = Target::shared_memory();
+        let writer = open_writer(&target).unwrap();
+        insert_batch(&writer, 0, 10);
+        let pool = std::sync::Arc::new(ReadPool::open(&target, 1).unwrap());
+        assert_eq!(pool.with(|c| Ok(calls(c))).unwrap(), 10);
+        let tx = writer.unchecked_transaction().unwrap();
+        insert_batch(&tx, 10, 5);
+        let reader = {
+            let pool = pool.clone();
+            std::thread::spawn(move || {
+                let t = std::time::Instant::now();
+                let n = pool.with(|c| Ok(calls(c)));
+                (n.map_err(|e| e.to_string()), t.elapsed())
+            })
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        tx.commit().unwrap();
+        let (n, waited) = reader.join().unwrap();
+        assert_eq!(n, Ok(15), "sin SQLITE_LOCKED y con el lote entero");
+        assert!(waited >= Duration::from_millis(250), "{waited:?}");
+    }
+
+    #[test]
+    fn los_lectores_no_pueden_escribir() {
+        for target in [
+            Target::shared_memory(),
+            Target::File(tempfile::tempdir().unwrap().keep().join("c.sqlite")),
+        ] {
+            let _writer = open_writer(&target).unwrap();
+            let pool = ReadPool::open(&target, 2).unwrap();
+            let err = pool
+                .with(|c| Ok(c.execute("INSERT INTO agents VALUES ('x','X','/',0)", [])?))
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("readonly"), "{err:#}");
+        }
     }
 
     #[test]

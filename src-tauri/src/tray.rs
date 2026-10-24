@@ -4,8 +4,6 @@
 //! menú y se esconde al perder el foco (ver `on_window_event` en `lib.rs`). El menú
 //! se reconstruye tras cada escaneo, que es cuando cambian los datos.
 
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIcon;
 use tauri::{Emitter, Manager, Wry};
@@ -19,10 +17,9 @@ pub fn today_line(today_usd: f64) -> String {
 }
 
 /// Reconstruye el menú de la bandeja con el gasto de hoy al día.
-pub fn refresh(app: &tauri::AppHandle, db: &Arc<Mutex<Connection>>, tray: &TrayIcon) {
-    let today = match db.lock() {
-        Ok(conn) => crate::alerts::today_spent(&conn).unwrap_or(0.0),
-        Err(_) => return,
+pub fn refresh(app: &tauri::AppHandle, readers: &crate::db::ReadPool, tray: &TrayIcon) {
+    let Ok(today) = readers.with(|conn| Ok(crate::alerts::today_spent(conn).unwrap_or(0.0))) else {
+        return;
     };
     match build_menu(app, &today_line(today)) {
         Ok(menu) => {

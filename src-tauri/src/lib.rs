@@ -20,8 +20,8 @@ pub mod watcher;
 
 use alerts::Alerts;
 use commands::AppState;
-use ingest_thread::{IngestThread, Origen};
-use std::sync::{Arc, Mutex};
+use ingest_thread::{DataGeneration, IngestThread, Origen};
+use std::sync::{Arc, RwLock};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager};
@@ -32,17 +32,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             db::remove_legacy_db();
-            let conn = db::open_in_memory()?;
+            let target = db::Target::shared_memory();
+            let writer = db::open_writer(&target)?;
             // Precios fijados por el usuario en Ajustes, encima de los de por defecto.
-            if let Err(e) = pricing::apply_overrides(&conn, &settings::load().price_overrides) {
+            if let Err(e) = pricing::apply_overrides(&writer, &settings::load().price_overrides) {
                 tracing::warn!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
             }
-            let db = Arc::new(Mutex::new(conn));
+            let readers: commands::Readers = Arc::new(RwLock::new(Arc::new(db::ReadPool::open(
+                &target,
+                db::ReadPool::SIZE,
+            )?)));
+            let generation = Arc::new(DataGeneration::default());
             let alerts = Alerts::new();
-            app.manage(AppState {
-                db: db.clone(),
-                alerts: alerts.clone(),
-            });
 
             // Bandeja del sistema: tooltip con el gasto del mes y menú con el de hoy.
             let tray = build_tray(app.handle())?;
@@ -66,38 +67,45 @@ pub fn run() {
             // Refresca la bandeja (tooltip y menú) y los avisos de presupuesto tras cada escaneo.
             let refresh_alerts = {
                 let app = app.handle().clone();
-                let db = db.clone();
+                let readers = readers.clone();
                 let alerts = alerts.clone();
                 let tray = tray.clone();
                 move || {
-                    alerts.refresh(&app, &db, &tray);
-                    tray::refresh(&app, &db, &tray);
+                    if let Ok(pool) = commands::current(&readers) {
+                        alerts.refresh(&app, &pool, &tray);
+                        tray::refresh(&app, &pool, &tray);
+                    }
                 }
             };
 
             // Hilo de ingesta: escaneo inicial y relecturas del vigilante, fuera de la interfaz.
             let handle = app.handle().clone();
-            let ingest =
-                IngestThread::spawn(
-                    db.clone(),
-                    providers::all(),
-                    move |origen, stats| match origen {
-                        Origen::EscaneoInicial => {
-                            tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
-                                .in_scope(|| handle.emit("ingest://done", stats))
-                                .ok();
-                            refresh_alerts();
-                        }
-                        Origen::Vigilante if stats.records > 0 => {
-                            tracing::debug_span!("emit.ingest_done", origen = "vigilante")
-                                .in_scope(|| handle.emit("ingest://done", ()))
-                                .ok();
-                            refresh_alerts();
-                        }
-                        Origen::Vigilante => {}
-                    },
-                );
+            let ingest = IngestThread::spawn(
+                writer,
+                providers::all(),
+                generation.clone(),
+                move |origen, stats| match origen {
+                    Origen::EscaneoInicial => {
+                        tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
+                            .in_scope(|| handle.emit("ingest://done", stats))
+                            .ok();
+                        refresh_alerts();
+                    }
+                    Origen::Vigilante if stats.records > 0 => {
+                        tracing::debug_span!("emit.ingest_done", origen = "vigilante")
+                            .in_scope(|| handle.emit("ingest://done", ()))
+                            .ok();
+                        refresh_alerts();
+                    }
+                    Origen::Vigilante => {}
+                },
+            );
             ingest.request(Origen::EscaneoInicial);
+            app.manage(AppState {
+                readers,
+                ingest: ingest.clone(),
+                alerts,
+            });
 
             // Vigilante en vivo: pide relecturas cuando los agentes escriben en sus logs.
             watcher::spawn(Arc::new(providers::all), ingest);

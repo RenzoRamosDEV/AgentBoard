@@ -178,17 +178,17 @@ impl Alerts {
     }
 
     /// Recalcula tras un escaneo: refresca la bandeja y lanza los avisos de presupuesto pendientes.
-    pub fn refresh(&self, app: &tauri::AppHandle, db: &Arc<Mutex<Connection>>, tray: &TrayIcon) {
+    pub fn refresh(&self, app: &tauri::AppHandle, readers: &crate::db::ReadPool, tray: &TrayIcon) {
         let s = settings::load();
-        let (month, today, checks) = match db.lock() {
-            Ok(conn) => (
-                queries::month_progress(&conn, &queries::Filter::default()).unwrap_or((0.0, 0.0)),
-                s.tray_shows_today
-                    .then(|| today_spent(&conn).ok())
-                    .flatten(),
-                checks(&conn, &s).unwrap_or_default(),
-            ),
-            Err(_) => return,
+        let read = readers.with(|conn| {
+            Ok((
+                queries::month_progress(conn, &queries::Filter::default()).unwrap_or((0.0, 0.0)),
+                s.tray_shows_today.then(|| today_spent(conn).ok()).flatten(),
+                checks(conn, &s).unwrap_or_default(),
+            ))
+        });
+        let Ok((month, today, checks)) = read else {
+            return;
         };
         let (spent, projection) = month;
         let today = today

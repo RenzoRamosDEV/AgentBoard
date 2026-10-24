@@ -1,6 +1,8 @@
 //! Comandos Tauri: envoltorios finos sobre `queries` y `settings`.
 
+use crate::db::ReadPool;
 use crate::ingest::now_ms;
+use crate::ingest_thread::IngestHandle;
 use crate::insights::{self, ActivityDay, ActivityReport};
 use crate::queries::{
     self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, SeriesPoint, Summary,
@@ -8,12 +10,25 @@ use crate::queries::{
 use crate::sessions::{self, SessionDetail, SessionList};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
-/// Base en memoria compartida entre la UI y la ingesta.
+/// Lectores que usa la interfaz; una reconstrucción de la caché sustituye el conjunto y las
+/// consultas en curso terminan con el anterior.
+pub type Readers = Arc<RwLock<Arc<ReadPool>>>;
+
+/// Estado de la app: lectores de la base, el hilo de ingesta (único escritor) y los avisos.
 pub struct AppState {
-    pub db: Arc<Mutex<Connection>>,
+    pub readers: Readers,
+    pub ingest: IngestHandle,
     pub alerts: std::sync::Arc<crate::alerts::Alerts>,
+}
+
+/// El conjunto de lectores vigente.
+pub fn current(readers: &Readers) -> anyhow::Result<Arc<ReadPool>> {
+    Ok(readers
+        .read()
+        .map_err(|e| anyhow::anyhow!("lectores envenenados: {e}"))?
+        .clone())
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -29,15 +44,12 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|e| format!("{e:#}"))
 }
 
-async fn with_db<T: Send + 'static>(
-    db: Arc<Mutex<Connection>>,
+/// Ejecuta `f` con un lector, fuera del hilo llamador.
+async fn with_reader<T: Send + 'static>(
+    readers: Readers,
     f: impl FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
 ) -> CmdResult<T> {
-    run_blocking(move || {
-        let conn = db.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
-        f(&conn)
-    })
-    .await
+    run_blocking(move || current(&readers)?.with(f)).await
 }
 
 #[tauri::command]
@@ -46,7 +58,7 @@ pub async fn get_summary(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Summary> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::summary(c, &filter.unwrap_or_default(), now_ms())
     })
     .await
@@ -60,7 +72,7 @@ pub async fn get_timeseries(
     bucket: String,
     tz: String,
 ) -> CmdResult<Vec<Point>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::timeseries(c, &filter.unwrap_or_default(), &bucket, &tz)
     })
     .await
@@ -74,7 +86,7 @@ pub async fn get_timeseries_by(
     by: String,
     tz: String,
 ) -> CmdResult<Vec<SeriesPoint>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::timeseries_by(c, &filter.unwrap_or_default(), &by, &tz)
     })
     .await
@@ -87,7 +99,7 @@ pub async fn get_breakdown(
     filter: Option<Filter>,
     by: String,
 ) -> CmdResult<Vec<BreakdownRow>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::breakdown(c, &filter.unwrap_or_default(), &by)
     })
     .await
@@ -99,7 +111,7 @@ pub async fn get_activity(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<ActivityReport> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         insights::activity(c, &filter.unwrap_or_default())
     })
     .await
@@ -112,7 +124,7 @@ pub async fn get_activity_daily(
     filter: Option<Filter>,
     tz: String,
 ) -> CmdResult<Vec<ActivityDay>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         insights::activity_daily(c, &filter.unwrap_or_default(), &tz)
     })
     .await
@@ -124,7 +136,7 @@ pub async fn list_agents(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<AgentRow>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::list_agents(c, &filter.unwrap_or_default())
     })
     .await
@@ -136,7 +148,7 @@ pub async fn list_projects(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<ProjectRow>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::list_projects(c, &filter.unwrap_or_default())
     })
     .await
@@ -145,7 +157,7 @@ pub async fn list_projects(
 #[tauri::command]
 #[tracing::instrument(name = "cmd.get_data_info", level = "info", skip_all)]
 pub async fn get_data_info(state: tauri::State<'_, AppState>) -> CmdResult<DataInfo> {
-    with_db(state.db.clone(), queries::data_info).await
+    with_reader(state.readers.clone(), queries::data_info).await
 }
 
 #[tauri::command]
@@ -155,7 +167,7 @@ pub async fn export_data(
     filter: Option<Filter>,
     format: String,
 ) -> CmdResult<String> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         queries::export(c, &filter.unwrap_or_default(), &format)
     })
     .await
@@ -168,7 +180,7 @@ pub async fn list_sessions(
     filter: Option<Filter>,
     limit: Option<usize>,
 ) -> CmdResult<SessionList> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         sessions::list_sessions(c, &filter.unwrap_or_default(), limit)
     })
     .await
@@ -180,7 +192,7 @@ pub async fn list_project_summaries(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<sessions::ProjectSummary>> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         sessions::list_projects(c, &filter.unwrap_or_default())
     })
     .await
@@ -194,7 +206,7 @@ pub async fn get_project_detail(
     filter: Option<Filter>,
     tz: String,
 ) -> CmdResult<sessions::ProjectDetail> {
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         sessions::project_detail(c, &key, &filter.unwrap_or_default(), &tz)
     })
     .await
@@ -206,7 +218,10 @@ pub async fn get_session_detail(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> CmdResult<SessionDetail> {
-    with_db(state.db.clone(), move |c| sessions::session_detail(c, &id)).await
+    with_reader(state.readers.clone(), move |c| {
+        sessions::session_detail(c, &id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -216,7 +231,7 @@ pub async fn list_prices(
     filter: Option<Filter>,
 ) -> CmdResult<Vec<crate::pricing::PriceRow>> {
     let overrides = run_blocking(|| Ok(settings::load().price_overrides)).await?;
-    with_db(state.db.clone(), move |c| {
+    with_reader(state.readers.clone(), move |c| {
         crate::pricing::list_prices(c, &filter.unwrap_or_default(), &overrides)
     })
     .await
@@ -241,12 +256,10 @@ pub async fn set_settings(
     .await?;
     // Al cambiar el presupuesto se vuelven a permitir los avisos.
     state.alerts.reset();
-    // Los precios del usuario recalculan los costes al momento (sin releer logs).
+    // Los precios del usuario recalculan los costes al momento (sin releer logs), en el escritor.
     let overrides = saved.price_overrides.clone();
-    with_db(state.db.clone(), move |c| {
-        crate::pricing::apply_overrides(c, &overrides)
-    })
-    .await?;
+    let ingest = state.ingest.clone();
+    run_blocking(move || ingest.apply_prices(overrides).map_err(anyhow::Error::msg)).await?;
     Ok(saved)
 }
 
@@ -277,12 +290,25 @@ mod tests {
     }
 
     #[test]
-    fn with_db_consulta_la_base_compartida() {
-        let db = Arc::new(Mutex::new(crate::db::open_in_memory().unwrap()));
-        let n = block(with_db(db, |c| {
-            Ok(c.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get::<_, i64>(0))?)
-        }))
-        .unwrap();
-        assert_eq!(n, 0);
+    fn with_reader_consulta_con_el_conjunto_vigente() {
+        let target = crate::db::Target::shared_memory();
+        let writer = crate::db::open_writer(&target).unwrap();
+        let readers: Readers = Arc::new(RwLock::new(Arc::new(ReadPool::open(&target, 2).unwrap())));
+        let count = |readers: &Readers| {
+            block(with_reader(readers.clone(), |c| {
+                Ok(c.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get::<_, i64>(0))?)
+            }))
+            .unwrap()
+        };
+        assert_eq!(count(&readers), 0);
+        // Otro conjunto (como tras reconstruir): las consultas siguientes lo usan.
+        let other = crate::db::Target::shared_memory();
+        let other_writer = crate::db::open_writer(&other).unwrap();
+        other_writer
+            .execute("INSERT INTO agents VALUES ('a','A','/',0)", [])
+            .unwrap();
+        *readers.write().unwrap() = Arc::new(ReadPool::open(&other, 1).unwrap());
+        assert_eq!(count(&readers), 1);
+        drop(writer);
     }
 }

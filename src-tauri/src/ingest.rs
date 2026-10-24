@@ -83,46 +83,72 @@ pub fn scan_all_with_threads(
     providers: &[Box<dyn Provider>],
     threads: usize,
 ) -> Result<ScanStats> {
-    scan(&mut ExclusiveDb(conn), providers, threads)
+    scan(&mut Sink { conn, hooks: None }, providers, threads)
 }
 
-/// `scan_all` sobre una base compartida: el `Mutex` solo se toma para escribir cada lote, así
-/// que otras hebras pueden consultar mientras se leen y parsean los archivos.
-pub fn scan_shared(db: &Mutex<Connection>, providers: &[Box<dyn Provider>]) -> Result<ScanStats> {
-    scan(&mut SharedDb(db), providers, default_threads())
+/// `scan_all` avisando a `hooks` entre lotes: tras confirmar cada uno y mientras se espera a los
+/// lectores de archivos (el hilo de ingesta atiende ahí otros trabajos, como un cambio de precios).
+pub fn scan_with_hooks(
+    conn: &mut Connection,
+    providers: &[Box<dyn Provider>],
+    hooks: &mut dyn BatchHooks,
+) -> Result<ScanStats> {
+    scan(
+        &mut Sink {
+            conn,
+            hooks: Some(hooks),
+        },
+        providers,
+        default_threads(),
+    )
 }
 
 pub fn default_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
-/// Registros por transacción del escritor: suelta la base cada pocos milisegundos.
+/// Un lote se confirma al llegar a estas filas o a `BATCH_TIME`, lo que llegue antes (y siempre que
+/// no haya ningún archivo leído esperando), para que las lecturas vean crecer los datos.
 const BATCH_RECORDS: usize = 5_000;
+const BATCH_TIME: std::time::Duration = std::time::Duration::from_millis(200);
+/// Cada cuánto se avisa a `BatchHooks::waiting` mientras el escritor espera a los lectores.
+const WAIT_SLICE: std::time::Duration = std::time::Duration::from_millis(50);
 /// Archivos leídos por delante del escritor, por hilo de lectura (acota la memoria en vuelo).
 const WINDOW_PER_THREAD: usize = 4;
 
-/// Acceso del escritor a la base: una conexión propia o una compartida tras un `Mutex`.
-trait DbSink {
-    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>;
+/// ¿Se confirma ya el lote? Al llegar a `BATCH_RECORDS` filas o a `BATCH_TIME` desde su primer
+/// archivo (los archivos van enteros, así que un lote puede pasarse en lo que traiga el último).
+fn batch_full(records: usize, elapsed: std::time::Duration) -> bool {
+    records >= BATCH_RECORDS || elapsed >= BATCH_TIME
 }
 
-struct ExclusiveDb<'a>(&'a mut Connection);
+/// Avisos al dueño de la conexión entre lotes, sin transacción abierta.
+pub trait BatchHooks {
+    /// Tras confirmar un lote.
+    fn committed(&mut self, conn: &mut Connection) -> Result<()>;
+    /// Mientras el escritor espera a que los lectores terminen un archivo.
+    fn waiting(&mut self, conn: &mut Connection) -> Result<()>;
+}
 
-impl DbSink for ExclusiveDb<'_> {
-    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
-        f(self.0)
+/// La conexión del escritor y, si los hay, sus avisos entre lotes.
+struct Sink<'a> {
+    conn: &'a mut Connection,
+    hooks: Option<&'a mut dyn BatchHooks>,
+}
+
+impl Sink<'_> {
+    fn committed(&mut self) -> Result<()> {
+        match self.hooks.as_deref_mut() {
+            Some(h) => h.committed(self.conn),
+            None => Ok(()),
+        }
     }
-}
 
-struct SharedDb<'a>(&'a Mutex<Connection>);
-
-impl DbSink for SharedDb<'_> {
-    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
-        let mut conn = self
-            .0
-            .lock()
-            .map_err(|e| anyhow!("base de datos envenenada: {e}"))?;
-        f(&mut conn)
+    fn waiting(&mut self) -> Result<()> {
+        match self.hooks.as_deref_mut() {
+            Some(h) => h.waiting(self.conn),
+            None => Ok(()),
+        }
     }
 }
 
@@ -135,17 +161,14 @@ struct Job {
 type ReadResult = Result<Option<ParsedFile>>;
 
 #[tracing::instrument(name = "scan_all", level = "info", skip_all, fields(files = Empty, lines = Empty, records = Empty, errors = Empty))]
-fn scan<D: DbSink>(
-    db: &mut D,
-    providers: &[Box<dyn Provider>],
-    threads: usize,
-) -> Result<ScanStats> {
-    let states = db.with(|conn| {
+fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Result<ScanStats> {
+    let states = {
+        let conn = &mut *db.conn;
         register_agents(conn, providers)?;
         // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
         conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
-        load_file_states(conn)
-    })?;
+        load_file_states(conn)?
+    };
     let mut stats = ScanStats::default();
     let mut jobs = Vec::new();
     for (i, p) in providers.iter().enumerate() {
@@ -256,8 +279,8 @@ fn read_jobs(
 }
 
 /// Recibe los archivos leídos en cualquier orden y los escribe en el orden de `jobs`, por lotes.
-fn write_in_order<D: DbSink>(
-    db: &mut D,
+fn write_in_order(
+    db: &mut Sink,
     providers: &[Box<dyn Provider>],
     jobs: &[Job],
     rx: mpsc::Receiver<(usize, ReadResult)>,
@@ -267,6 +290,7 @@ fn write_in_order<D: DbSink>(
     let mut pending: BTreeMap<usize, ReadResult> = BTreeMap::new();
     let mut batch: Vec<(usize, ParsedFile)> = Vec::new();
     let mut batch_records = 0;
+    let mut batch_started = std::time::Instant::now();
     let mut taken = 0;
     while taken < jobs.len() {
         let Some(read) = pending.remove(&taken) else {
@@ -276,8 +300,15 @@ fn write_in_order<D: DbSink>(
                     // Nada listo: se escribe lo acumulado antes de esperar al siguiente archivo.
                     write_batch(db, providers, jobs, &mut batch, stats)?;
                     batch_records = 0;
-                    rx.recv()
-                        .map_err(|_| anyhow!("los lectores terminaron antes de tiempo"))?
+                    loop {
+                        match rx.recv_timeout(WAIT_SLICE) {
+                            Ok(r) => break r,
+                            Err(mpsc::RecvTimeoutError::Timeout) => db.waiting()?,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                return Err(anyhow!("los lectores terminaron antes de tiempo"))
+                            }
+                        }
+                    }
                 }
             };
             pending.insert(received.0, received.1);
@@ -289,9 +320,12 @@ fn write_in_order<D: DbSink>(
         match read {
             Ok(None) => stats.files += 1,
             Ok(Some(parsed)) => {
+                if batch.is_empty() {
+                    batch_started = std::time::Instant::now();
+                }
                 batch_records += parsed.records.len();
                 batch.push((i, parsed));
-                if batch_records >= BATCH_RECORDS {
+                if batch_full(batch_records, batch_started.elapsed()) {
                     write_batch(db, providers, jobs, &mut batch, stats)?;
                     batch_records = 0;
                 }
@@ -308,8 +342,8 @@ fn read_error(path: &Path, e: &anyhow::Error, stats: &mut ScanStats) {
 }
 
 /// Una transacción por lote y un `SAVEPOINT` por archivo: un fallo deshace solo ese archivo.
-fn write_batch<D: DbSink>(
-    db: &mut D,
+fn write_batch(
+    db: &mut Sink,
     providers: &[Box<dyn Provider>],
     jobs: &[Job],
     batch: &mut Vec<(usize, ParsedFile)>,
@@ -318,8 +352,8 @@ fn write_batch<D: DbSink>(
     if batch.is_empty() {
         return Ok(());
     }
-    db.with(|conn| {
-        let mut tx = conn.transaction()?;
+    {
+        let mut tx = db.conn.transaction()?;
         let ctx = WriteContext::load(&tx)?;
         for (i, parsed) in batch.drain(..) {
             let job = &jobs[i];
@@ -339,8 +373,8 @@ fn write_batch<D: DbSink>(
         }
         crate::derived::refresh(&tx)?;
         tx.commit()?;
-        Ok(())
-    })
+    }
+    db.committed()
 }
 
 /// Archivos bajo `root`, recursivo, sin seguir enlaces.
@@ -1298,6 +1332,17 @@ mod tests {
                 "{sql}"
             );
         }
+    }
+
+    #[test]
+    fn un_lote_se_confirma_a_las_5000_filas_o_a_los_200_ms() {
+        use std::time::Duration;
+        let ms = Duration::from_millis;
+        assert!(!batch_full(4_999, ms(199)));
+        assert!(batch_full(5_000, ms(0)));
+        assert!(batch_full(5_001, ms(0)));
+        assert!(batch_full(1, ms(200)));
+        assert!(batch_full(0, ms(201)));
     }
 
     #[test]

@@ -103,18 +103,19 @@ mod tests {
     use crate::ingest_thread::{IngestThread, Origen};
     use crate::providers::claude_code::ClaudeCode;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     #[test]
     fn escanea_carpetas_que_aparecen_despues_de_arrancar() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("projects");
-        let db = Arc::new(Mutex::new(db::open_in_memory().unwrap()));
+        let target = db::Target::File(dir.path().join("cache.sqlite"));
+        let writer = db::open_writer(&target).unwrap();
+        let readers = db::ReadPool::open(&target, 1).unwrap();
         let root2 = root.clone();
         let providers: Providers = Arc::new(move || {
             vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
         });
-        let ingest = IngestThread::spawn(db.clone(), providers(), |_, _| {});
+        let ingest = IngestThread::spawn(writer, providers(), Default::default(), |_, _| {});
         let providers2 = providers.clone();
         std::thread::spawn(move || {
             let _ = run(providers2, ingest, Duration::from_millis(100));
@@ -133,9 +134,10 @@ mod tests {
         .unwrap();
 
         let count = || {
-            db.lock()
-                .unwrap()
-                .query_row("SELECT COUNT(*) FROM calls", [], |r| r.get::<_, i64>(0))
+            readers
+                .with(
+                    |c| Ok(c.query_row("SELECT COUNT(*) FROM calls", [], |r| r.get::<_, i64>(0))?),
+                )
                 .unwrap()
         };
         let mut ok = false;
@@ -162,7 +164,9 @@ mod tests {
         };
         std::fs::write(&file, line("m1", "2026-09-25T10:00:00Z")).unwrap();
 
-        let db = Arc::new(Mutex::new(db::open_in_memory().unwrap()));
+        let target = db::Target::File(dir.path().join("cache.sqlite"));
+        let writer = db::open_writer(&target).unwrap();
+        let readers = db::ReadPool::open(&target, 1).unwrap();
         let root2 = root.clone();
         let providers: Providers = Arc::new(move || {
             vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
@@ -170,20 +174,24 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let calls2 = calls.clone();
-        let ingest = IngestThread::spawn(db.clone(), providers(), move |origen, stats| {
-            if origen == Origen::Vigilante && stats.records > 0 {
-                calls2.fetch_add(1, Ordering::SeqCst);
-            }
-        });
+        let ingest = IngestThread::spawn(
+            writer,
+            providers(),
+            Default::default(),
+            move |origen, stats| {
+                if origen == Origen::Vigilante && stats.records > 0 {
+                    calls2.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+        );
         let providers2 = providers.clone();
         std::thread::spawn(move || {
             let _ = run(providers2, ingest, Duration::from_millis(200));
         });
 
         let count = |sql: &str| {
-            db.lock()
-                .unwrap()
-                .query_row(sql, [], |r| r.get::<_, i64>(0))
+            readers
+                .with(|c| Ok(c.query_row(sql, [], |r| r.get::<_, i64>(0))?))
                 .unwrap()
         };
         // Espera al escaneo inicial (que hace el propio vigilante al arrancar no; lo hace al primer evento).

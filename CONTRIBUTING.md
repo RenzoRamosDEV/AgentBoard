@@ -6,9 +6,14 @@ está montado el proyecto y qué se espera de una contribución.
 
 ## Filosofía del proyecto
 
-- **Solo lectura y sin persistencia.** AgentBoard lee los logs que los agentes ya dejan en el
-  ordenador y los agrega en una base SQLite **en memoria**. No escribe datos de uso en disco
-  (la única excepción es el archivo de ajustes). Cualquier cambio debe respetar esa premisa.
+- **Solo lectura de los logs; caché local reconstruible.** AgentBoard lee los logs que los
+  agentes ya dejan en el ordenador (nunca los modifica) y guarda lo leído en una caché SQLite
+  reconstruible en la carpeta de datos del usuario (`~/.local/share/agentboard/cache.sqlite` en
+  Linux, permisos solo para el usuario), o solo en memoria con el ajuste «Solo memoria». La caché
+  solo contiene lo que ya está en los logs —nunca el texto de prompts ni respuestas—, debe dar lo
+  mismo que leer los logs desde cero y puede borrarse sin perder nada: si está dañada o es de
+  otra versión de esquema, se borra y se reconstruye. Para borrarla a mano, con la app cerrada,
+  basta con eliminar `cache.sqlite`, `-wal` y `-shm`. Cualquier cambio debe respetar esa premisa.
 - **Local y privado.** Nada sale de la máquina: sin proxy, sin claves de API, sin telemetría.
 - **Especificación primero.** Los cambios se describen con [OpenSpec](https://github.com/Fission-AI/OpenSpec)
   antes de implementarse (ver `openspec/`).

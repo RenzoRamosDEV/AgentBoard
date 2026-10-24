@@ -6,15 +6,33 @@ binario nativo para Linux, Windows y macOS.
 
 ## Backend (Rust, `src-tauri/`)
 
-- **Base en memoria.** Al arrancar se abre una base **SQLite en memoria** y se leen los logs de
-  todos los agentes detectados. No se escribe nada en disco (salvo los ajustes). El esquema se
-  versiona con migraciones (`PRAGMA user_version`).
+- **Almacenamiento (`db.rs`).** Los datos van a una **caché SQLite reconstruible** en la carpeta
+  de datos del usuario (`cache.sqlite`, en WAL, carpeta `0700` y archivos `0600` en Unix) o, con
+  «Solo memoria», a una base en memoria con caché compartida. Al abrir la caché se comprueban su
+  versión de esquema (`PRAGMA user_version`) y su marca; si no es válida, no abre o está dañada,
+  se borra y se reconstruye leyendo los logs (no se migra). Si no se puede crear en disco, la
+  sesión sigue en memoria. Un error de corrupción en ejecución pide una reconstrucción.
+- **Escritor único y lectores aparte.** El hilo de ingesta (`ingest_thread.rs`) es el único que
+  escribe: escaneos, cambios de precios y reconstrucciones, en transacciones por lote (5 000
+  filas o 200 ms). Los comandos, la bandeja y los avisos leen por un conjunto de 2 conexiones de
+  solo lectura (`ReadPool`): en disco no esperan al escritor ni al revés; en memoria, como mucho
+  un lote o una consulta. Cada `COMMIT` sube un contador de generación de datos.
+- **Columnas precalculadas y agregados (`derived.rs`).** Cada llamada guarda su coste, ahorro por
+  caché y día local; cada sesión, su primera llamada. Los agregados `daily_stats` (día, sesión,
+  modelo) y `tool_stats` (día, sesión, herramienta) se rehacen al final de cada lote solo para las
+  claves que tocó. El Resumen y los apartados leen de ellos cuando el periodo son días locales
+  completos de la zona de la caché; si no, de las llamadas, con el mismo resultado.
+- **Caché de resultados (`result_cache.rs`).** Las consultas del Resumen y los apartados se
+  guardan en memoria por consulta y filtro mientras no cambie la generación de datos.
+- **Caché fiel a los logs.** Cada archivo leído recuerda a qué sesiones aportó; si desaparece, se
+  sustituye o encoge, sus datos se retiran y esas sesiones se rehacen con sus otros archivos.
 - **Providers.** Cada agente es un módulo en `providers/` que implementa el trait `Provider`:
   detecta si el agente está instalado, dice dónde están sus logs y parsea sus registros a unos
   tipos comunes (sesiones, llamadas, turnos, usos de herramienta). Las fuentes pueden ser JSONL
   (Claude Code, Codex, Copilot, Cursor, Gemini) o SQLite (OpenCode).
-- **Ingesta incremental.** `ingest.rs` recuerda por qué offset va cada archivo, así que releer
-  solo procesa lo nuevo; cada llamada se identifica por su `message_id` para no duplicar.
+- **Ingesta incremental.** `ingest.rs` recuerda por qué offset va cada archivo (también entre
+  arranques, en la caché), así que releer solo procesa lo nuevo; cada llamada se identifica por su
+  `message_id` para no duplicar.
 - **Consultas.** `queries.rs` resuelve las cifras del panel con agregaciones SQL (por agente,
   modelo, proyecto, actividad, herramienta…), siempre respetando el filtro común.
 - **Precios.** `pricing.rs` guarda el precio por modelo (USD por millón de tokens) y calcula

@@ -81,10 +81,16 @@ La herramienta MCP `get_insights` calcula avisos sobre el filtro, del más grave
 - **Preferencias de avisos.** Activar o desactivar los avisos del 80 % y del 100 %, y mostrar el
   gasto de hoy en la bandeja.
 - **Panel colapsable.** El panel lateral se pliega a solo iconos para ganar espacio.
+- **Datos (Ajustes → Datos).** **«Solo memoria»** (desactivado por defecto) deja de guardar la
+  caché en disco y la borra: al abrir la app se vuelven a leer todos los logs. **«Reconstruir
+  caché»** borra los datos guardados y relee todos los logs; el botón queda deshabilitado hasta
+  que termina y el panel se actualiza solo. Ambas cosas se aplican sin reiniciar la app.
 
 ## De dónde salen los datos
 
 Un agente aparece si está instalado (ejecutable en el PATH o su carpeta de configuración),
-aunque todavía no tenga sesiones. Al arrancar se leen todos los logs a una base en memoria;
-cada llamada se identifica por su `message_id`, de modo que releer nunca duplica. El texto de
+aunque todavía no tenga sesiones. La primera vez se leen todos los logs; después, la caché local
+recuerda qué se leyó de cada archivo y al arrancar solo se lee lo nuevo. Cada llamada se
+identifica por su `message_id`, de modo que releer nunca duplica, y si un log desaparece sus datos
+dejan de contar. El texto de
 los prompts y las respuestas no se guarda en ningún sitio.

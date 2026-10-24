@@ -14,7 +14,7 @@ Reúne en una sola vista qué hacen Claude Code, Codex, Copilot, Cursor, Gemini 
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-en%20memoria-003B57?logo=sqlite&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-cach%C3%A9%20local-003B57?logo=sqlite&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-20%20herramientas-000000)
 ![CI](https://github.com/RenzoRamosDEV/AgentBoard/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
@@ -38,8 +38,11 @@ ocurre en la máquina:
 
 - **Local y privado** — sin proxy, sin claves de API, sin telemetría. Ningún dato sale del equipo.
 - **Solo lectura** — lee los logs que ya existen; no toca ni interfiere con el trabajo de los agentes.
-- **Sin persistencia** — los datos de uso viven en una base **SQLite en memoria** mientras la app
-  está abierta; lo único que se guarda en disco es el archivo de ajustes. Al cerrar, no queda rastro.
+- **Caché local reconstruible** — lo leído de los logs se guarda en una caché **SQLite** en la
+  carpeta de datos del usuario, solo legible por él, para que el arranque lea solo lo nuevo. Solo
+  contiene lo que ya está en los logs (nunca el texto de prompts ni respuestas) y puede borrarse
+  en cualquier momento: se reconstruye leyendo los logs. Con **«Solo memoria»** (Ajustes → Datos)
+  no se guarda nada en disco salvo los ajustes.
 
 ## Para qué sirve
 
@@ -99,7 +102,7 @@ claro/oscuro/sistema e **idiomas** (es, en, pt, fr).
 | --- | --- | --- |
 | Escritorio | **Tauri 2** | Un solo binario nativo para Linux, Windows y macOS, ligero (usa el WebView del sistema) |
 | Núcleo | **Rust** | Lee y agrega los logs rápido y con seguridad de memoria |
-| Base de datos | **SQLite (rusqlite), en memoria** | Consultas SQL sobre los datos sin escribir nada en disco |
+| Base de datos | **SQLite (rusqlite)** | Caché local reconstruible (o solo en memoria), agregados diarios y consultas SQL |
 | Interfaz | **React + TypeScript + Vite** | Panel, tablas y gráficos hechos a medida |
 | En vivo | **notify** | Vigila las carpetas de logs y relee al vuelo |
 | Integración | **Model Context Protocol** | Expone los datos a cualquier agente compatible |
@@ -122,13 +125,16 @@ claro/oscuro/sistema e **idiomas** (es, en, pt, fr).
         └────────────────────────┬────────────────────────┘
                                  │ escanea (solo lectura)
                                  ▼
-              SQLite en memoria  ◀── logs de los agentes en disco
+   caché SQLite (disco o memoria)  ◀── logs de los agentes en disco
 ```
 
 - **Un módulo por agente** (`providers/`): detecta el agente, sabe dónde están sus logs y parsea
   sus registros a unos tipos comunes (sesiones, llamadas, turnos, usos de herramienta).
 - **Ingesta incremental** por offsets: releer solo procesa lo nuevo y cada llamada se identifica
-  por su `message_id`, así que nunca duplica.
+  por su `message_id`, así que nunca duplica. Un único escritor confirma por lotes; la interfaz
+  lee por conexiones aparte, de agregados diarios cuando el periodo son días completos.
+- **Caché fiel a los logs**: si un log desaparece, se sustituye o encoge, sus datos se retiran y
+  la caché dice lo mismo que leer los logs presentes desde cero.
 - **Consultas** agregadas (SQL) que alimentan cada apartado, respetando el filtro común.
 - **Precios** por modelo para calcular coste y ahorro por caché.
 - **Servidor MCP** aparte que reutiliza todo lo anterior.
@@ -150,6 +156,20 @@ Detalle completo en la [wiki](docs/wiki/Home.md) y en [`CONTRIBUTING.md`](CONTRI
 
 Un agente aparece en la lista si está instalado, aunque aún no tenga sesiones; sus datos salen
 en cuanto existan. El texto de los prompts y las respuestas no se guarda en ningún sitio.
+
+### La caché
+
+| Sistema | Ruta |
+| --- | --- |
+| Linux | `~/.local/share/agentboard/cache.sqlite` (o `$XDG_DATA_HOME/agentboard/`) |
+| macOS | `~/Library/Application Support/agentboard/cache.sqlite` |
+| Windows | `%APPDATA%\agentboard\cache.sqlite` |
+
+Junto a ella pueden aparecer `cache.sqlite-wal` y `cache.sqlite-shm`. En Unix la carpeta es `0700`
+y los archivos `0600`. Para borrarla: **Ajustes → Datos → Reconstruir caché**, activar **«Solo
+memoria»** (la borra y deja de guardarla) o, con la app cerrada, borrar esos tres archivos. Si la
+caché está dañada o es de otra versión, la app la borra y la reconstruye sola. Una versión anterior
+de AgentBoard (sin caché) la ignora; ese archivo puede borrarse a mano.
 
 ---
 

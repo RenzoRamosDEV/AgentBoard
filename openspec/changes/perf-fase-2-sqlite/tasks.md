@@ -87,7 +87,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 13. Documentación
 
-- [ ] 13.1 Actualizar `README.md`, `CONTRIBUTING.md` y `docs/wiki/{Home,Arquitectura,Funcionalidad,Servidor-MCP}.md` según D14 (filosofía «solo lectura de los logs; caché local reconstruible», ruta y permisos de la caché, cómo borrarla, «Solo memoria», «Reconstruir caché», escritor/lectores/agregados en la arquitectura, MCP sigue en memoria); verificar con `grep -rn -i "sin persistencia\|en memoria" README.md CONTRIBUTING.md docs/wiki` que no queda ninguna afirmación contradictoria
+- [x] 13.1 Actualizar `README.md`, `CONTRIBUTING.md` y `docs/wiki/{Home,Arquitectura,Funcionalidad,Servidor-MCP}.md` según D14 (filosofía «solo lectura de los logs; caché local reconstruible», ruta y permisos de la caché, cómo borrarla, «Solo memoria», «Reconstruir caché», escritor/lectores/agregados en la arquitectura, MCP sigue en memoria); verificar con `grep -rn -i "sin persistencia\|en memoria" README.md CONTRIBUTING.md docs/wiki` que no queda ninguna afirmación contradictoria
 
 ## 14. Resultados y cierre
 

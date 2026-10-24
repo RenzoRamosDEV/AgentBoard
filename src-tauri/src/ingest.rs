@@ -1362,6 +1362,44 @@ mod tests {
     }
 
     #[test]
+    fn el_escaneo_lee_lo_anadido_y_los_archivos_rotados() {
+        let (_d, file, p, mut conn) = setup();
+        let providers: Vec<Box<dyn Provider>> =
+            vec![Box::new(ClaudeCode::with_roots(p.log_roots()))];
+        let one = line("m1", 1, "2026-09-25T10:00:00Z") + "\n";
+        fs::write(&file, &one).unwrap();
+        assert_eq!(scan_all(&mut conn, &providers).unwrap().lines, 1);
+        assert_eq!(
+            scan_all(&mut conn, &providers).unwrap().lines,
+            0,
+            "sin cambios"
+        );
+
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", line("m2", 1, "2026-09-25T10:01:00Z")).unwrap();
+        drop(f);
+        assert_eq!(
+            scan_all(&mut conn, &providers).unwrap().lines,
+            1,
+            "solo lo añadido"
+        );
+
+        // Otro archivo con la misma ruta y el mismo tamaño: se relee entero.
+        let rotated = file.with_extension("tmp");
+        let same_size = [
+            line("m3", 1, "2026-09-25T10:00:00Z"),
+            line("m4", 1, "2026-09-25T10:01:00Z"),
+        ]
+        .join("\n")
+            + "\n";
+        assert_eq!(same_size.len() as u64, fs::metadata(&file).unwrap().len());
+        fs::write(&rotated, same_size).unwrap();
+        fs::rename(&rotated, &file).unwrap();
+        assert_eq!(scan_all(&mut conn, &providers).unwrap().lines, 2);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 4);
+    }
+
+    #[test]
     fn streaming_deja_una_llamada_con_los_ultimos_tokens() {
         let (_d, file, p, mut conn) = setup();
         let body = [

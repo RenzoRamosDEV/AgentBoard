@@ -1081,6 +1081,17 @@ mod tests {
     }
 
     #[test]
+    fn parche_de_custom_tool_call_da_su_archivo() {
+        let p = Codex::with_roots(vec![]);
+        let f = Path::new("rollout-x.jsonl");
+        p.parse_line(f, r#"{"timestamp":"2026-09-27T16:00:00.000Z","type":"session_meta","payload":{"id":"t1"}}"#)
+            .unwrap();
+        let l = r#"{"timestamp":"2026-09-27T16:00:01.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"c1","input":"*** Begin Patch\n*** Add File: docs/a.md\n+x\n*** End Patch"}}"#;
+        let recs = p.parse_line(f, l).unwrap();
+        assert!(recs.iter().any(|r| matches!(r, Record::ToolUse(t) if t.tool == "Edit" && t.target.as_deref() == Some("docs/a.md"))), "{recs:?}");
+    }
+
+    #[test]
     fn error_en_la_salida() {
         assert!(output_is_error(&output(
             r#"{ "content": "x", "success": false }"#

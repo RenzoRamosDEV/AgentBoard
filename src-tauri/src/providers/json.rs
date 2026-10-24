@@ -222,6 +222,22 @@ impl<'de> Deserialize<'de> for StrLen {
     }
 }
 
+/// Campo presente (aunque valga `null`) con su valor tolerante, o ausente.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Present<T>(pub Option<T>);
+
+impl<T> Default for Present<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Present<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        T::deserialize(d).map(|t| Present(Some(t)))
+    }
+}
+
 /// Booleano si el valor es un booleano.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Bool(pub Option<bool>);

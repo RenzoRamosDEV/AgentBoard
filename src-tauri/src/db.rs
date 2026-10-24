@@ -840,6 +840,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn una_cache_que_valida_pero_no_abre_se_recrea_en_disco() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_in(dir.path());
+        {
+            let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+            insert_batch(&storage.writer, 0, 3);
+            // Le falta una tabla que `validate` no mira pero el escritor usa al abrir.
+            storage
+                .writer
+                .execute_batch("DROP TABLE daily_stats")
+                .unwrap();
+        }
+        let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+        assert_eq!(storage.mode, CacheMode::Disco(path), "sigue en disco");
+        assert_eq!(calls(&storage.writer), 0, "recreada vacía");
+    }
+
     #[cfg(unix)]
     #[test]
     fn sin_permiso_de_escritura_la_cache_queda_en_memoria() {

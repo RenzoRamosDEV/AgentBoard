@@ -26,14 +26,21 @@ fn check(name: &str, actual: &str) {
     }
 }
 
-/// Salida de las consultas con las carpetas volátiles (temporales y del repo) sustituidas, porque
-/// `list_agents` devuelve la raíz de logs de cada agente.
-fn golden_of(providers: &[Box<dyn Provider>], volatile: &[&std::path::Path]) -> String {
-    let mut conn = db::open_in_memory().unwrap();
+/// Salida de las consultas, leída por un lector aparte como en la app, con las carpetas volátiles
+/// (temporales y del repo) sustituidas, porque `list_agents` devuelve la raíz de logs de cada
+/// agente.
+fn golden_of(
+    mode: db::CacheMode,
+    providers: &[Box<dyn Provider>],
+    volatile: &[&std::path::Path],
+) -> String {
+    let mut storage = db::Storage::open(mode.clone()).unwrap();
+    assert_eq!(storage.mode, mode);
+    let conn = &mut storage.writer;
     // La zona de las consultas: así los filtros de días completos leen de los agregados diarios
     // sea cual sea la zona del sistema donde corre el test.
-    db::set_cache_tz(&conn, common::TZ).unwrap();
-    let stats = ingest::scan_all(&mut conn, providers).unwrap();
+    db::set_cache_tz(conn, common::TZ).unwrap();
+    let stats = ingest::scan_all(conn, providers).unwrap();
     assert_eq!(stats.errors, 0, "{stats:?}");
     let orphans: i64 = conn
         .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
@@ -44,11 +51,23 @@ fn golden_of(providers: &[Box<dyn Provider>], volatile: &[&std::path::Path]) -> 
         orphans, 0,
         "filas que apuntan a sesiones o agentes inexistentes"
     );
-    let mut out = common::query_golden(&conn).unwrap();
+    let mut out = storage
+        .readers(1)
+        .unwrap()
+        .with(common::query_golden)
+        .unwrap();
     for (i, dir) in volatile.iter().enumerate() {
         out = out.replace(&dir.display().to_string(), &format!("<raiz{i}>"));
     }
     out
+}
+
+/// Los dos modos de la caché: en memoria compartida y en un archivo en disco.
+fn modes(dir: &std::path::Path) -> [db::CacheMode; 2] {
+    [
+        db::CacheMode::Memoria,
+        db::CacheMode::Disco(dir.join("cache").join("cache.sqlite")),
+    ]
 }
 
 #[test]
@@ -59,19 +78,25 @@ fn consultas_del_fixture_2m_iguales_que_el_golden() {
         eprintln!("python3 no disponible: se salta la equivalencia de consultas");
         return;
     }
-    check(
-        "consultas_2m.txt",
-        &golden_of(&common::providers(&root), &[dir.path()]),
-    );
+    for mode in modes(dir.path()) {
+        check(
+            "consultas_2m.txt",
+            &golden_of(mode, &common::providers(&root), &[dir.path()]),
+        );
+    }
 }
 
 #[test]
 fn consultas_de_los_fixtures_versionados_iguales_que_el_golden() {
-    let dir = tempfile::tempdir().unwrap();
-    let providers = common::versioned_fixture_providers(dir.path()).unwrap();
     let repo = common::manifest_dir().join("../tests/fixtures");
-    check(
-        "consultas_fixtures.txt",
-        &golden_of(&providers, &[dir.path(), &repo]),
-    );
+    for i in 0..2 {
+        // Carpeta nueva por modo: la base de OpenCode se crea en ella desde el SQL versionado.
+        let dir = tempfile::tempdir().unwrap();
+        let mode = modes(dir.path())[i].clone();
+        let providers = common::versioned_fixture_providers(dir.path()).unwrap();
+        check(
+            "consultas_fixtures.txt",
+            &golden_of(mode, &providers, &[dir.path(), &repo]),
+        );
+    }
 }

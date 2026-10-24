@@ -63,8 +63,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 9. Sin pánicos en hilos de fondo
 
-- [ ] 9.1 Tests en rojo en `tz.rs` y `alerts.rs`: `day_start` y `hour_start` con `i64::MIN`, `i64::MAX` y horas del salto de horario de `Europe/Madrid` no entran en pánico (valores límite: devuelven `ts` sin truncar si no hay representación local) y dan los mismos valores que hoy para entradas válidas (casos existentes + bordes de medianoche); verificar que fallan
-- [ ] 9.2 Sustituir los `expect`/`unwrap` de `alerts.rs:91` y `tz.rs:37,42,49,54` (D10); verificar 9.1 en verde
+- [x] 9.1 Tests en rojo en `tz.rs` y `alerts.rs`: `day_start` y `hour_start` con `i64::MIN`, `i64::MAX` y horas del salto de horario de `Europe/Madrid` no entran en pánico (valores límite: devuelven `ts` sin truncar si no hay representación local) y dan los mismos valores que hoy para entradas válidas (casos existentes + bordes de medianoche); verificar que fallan
+- [x] 9.2 Sustituir los `expect`/`unwrap` de `alerts.rs:91` y `tz.rs:37,42,49,54` (D10); verificar 9.1 en verde
 - [ ] 9.3 Añadir `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]` en `ingest.rs`, `ingest_thread.rs`, `watcher.rs`, `tz.rs`, `alerts.rs` y `providers/*`; verificar `cargo clippy --workspace --all-targets -- -D warnings` sin errores
 
 ## 10. Resultados y cierre

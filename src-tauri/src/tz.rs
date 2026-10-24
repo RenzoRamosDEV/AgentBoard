@@ -1,7 +1,7 @@
 //! Días y horas locales con las reglas históricas de la zona (verano/invierno incluidos):
 //! aplicar a todas las fechas el desfase de hoy desplaza las cercanas a un cambio de hora.
 
-use chrono::{Duration, LocalResult, NaiveDateTime, TimeZone, Timelike};
+use chrono::{Duration, LocalResult, NaiveDateTime, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
 
 /// Zona IANA pedida; si no existe, la del sistema; y si tampoco, UTC.
@@ -24,35 +24,36 @@ fn resolve(local: NaiveDateTime, tz: &Tz) -> i64 {
         LocalResult::Single(dt) => dt.timestamp_millis(),
         LocalResult::Ambiguous(first, _) => first.timestamp_millis(),
         // Hora saltada (p. ej. una medianoche inexistente): vale la siguiente.
-        LocalResult::None => tz
-            .from_local_datetime(&(local + Duration::hours(1)))
-            .earliest()
+        LocalResult::None => local
+            .checked_add_signed(Duration::hours(1))
+            .and_then(|next| tz.from_local_datetime(&next).earliest())
             .map(|dt| dt.timestamp_millis())
             .unwrap_or_default(),
     }
 }
 
-/// Inicio del día local de `ts`, en epoch ms UTC.
-pub fn day_start(ts: i64, tz: &Tz) -> i64 {
-    let local = tz.timestamp_millis_opt(ts).unwrap().naive_local();
-    resolve(
-        local
-            .date()
-            .and_hms_opt(0, 0, 0)
-            .expect("medianoche válida"),
-        tz,
-    )
+/// Fecha y hora local de `ts`; `None` si no se puede representar en la zona.
+fn local(ts: i64, tz: &Tz) -> Option<NaiveDateTime> {
+    let dt = tz.timestamp_millis_opt(ts).earliest()?;
+    dt.naive_utc().checked_add_offset(dt.offset().fix())
 }
 
-/// Inicio de la hora local de `ts`, en epoch ms UTC.
+/// Inicio del día local de `ts`, en epoch ms UTC (`ts` tal cual si no tiene hora local).
+pub fn day_start(ts: i64, tz: &Tz) -> i64 {
+    local(ts, tz)
+        .and_then(|l| l.date().and_hms_opt(0, 0, 0))
+        .map(|midnight| resolve(midnight, tz))
+        .unwrap_or(ts)
+}
+
+/// Inicio de la hora local de `ts`, en epoch ms UTC (`ts` tal cual si no tiene hora local).
 pub fn hour_start(ts: i64, tz: &Tz) -> i64 {
-    let local = tz.timestamp_millis_opt(ts).unwrap().naive_local();
-    let hora = local
-        .with_minute(0)
+    local(ts, tz)
+        .and_then(|l| l.with_minute(0))
         .and_then(|d| d.with_second(0))
         .and_then(|d| d.with_nanosecond(0))
-        .expect("hora en punto válida");
-    resolve(hora, tz)
+        .map(|hour| resolve(hour, tz))
+        .unwrap_or(ts)
 }
 
 #[cfg(test)]
@@ -82,6 +83,66 @@ mod tests {
         assert_eq!(
             hour_start(ms(2026, 7, 15, 22, 30), &tz),
             ms(2026, 7, 15, 22, 0)
+        );
+    }
+
+    #[test]
+    fn marcas_sin_representacion_local_se_devuelven_sin_truncar() {
+        let madrid = parse("Europe/Madrid");
+        let extremos = [
+            i64::MIN,
+            i64::MAX,
+            chrono::DateTime::<Utc>::MAX_UTC.timestamp_millis(),
+            chrono::DateTime::<Utc>::MIN_UTC.timestamp_millis(),
+        ];
+        for tz in [madrid, chrono_tz::UTC, parse("Pacific/Kiritimati")] {
+            for ts in extremos {
+                let d = day_start(ts, &tz);
+                let h = hour_start(ts, &tz);
+                assert!(d <= ts && h <= ts, "{tz} {ts}: {d} {h}");
+            }
+        }
+        assert_eq!(day_start(i64::MAX, &madrid), i64::MAX);
+        assert_eq!(hour_start(i64::MIN, &madrid), i64::MIN);
+    }
+
+    #[test]
+    fn bordes_de_medianoche_y_cambios_de_hora() {
+        let tz = parse("Europe/Madrid");
+        // Medianoche local exacta (enero, UTC+1) y un ms antes.
+        assert_eq!(
+            day_start(ms(2026, 1, 15, 23, 0), &tz),
+            ms(2026, 1, 15, 23, 0)
+        );
+        assert_eq!(
+            day_start(ms(2026, 1, 15, 23, 0) - 1, &tz),
+            ms(2026, 1, 14, 23, 0)
+        );
+        // 29 de marzo: a las 02:00 locales se pasa a las 03:00 (01:00Z).
+        assert_eq!(
+            day_start(ms(2026, 3, 29, 1, 30), &tz),
+            ms(2026, 3, 28, 23, 0)
+        );
+        assert_eq!(
+            hour_start(ms(2026, 3, 29, 1, 30), &tz),
+            ms(2026, 3, 29, 1, 0)
+        );
+        assert_eq!(
+            hour_start(ms(2026, 3, 29, 0, 59), &tz),
+            ms(2026, 3, 29, 0, 0)
+        );
+        // 25 de octubre: las 02:00–03:00 locales se repiten; vale la primera.
+        assert_eq!(
+            hour_start(ms(2026, 10, 25, 0, 30), &tz),
+            ms(2026, 10, 25, 0, 0)
+        );
+        assert_eq!(
+            hour_start(ms(2026, 10, 25, 1, 30), &tz),
+            ms(2026, 10, 25, 0, 0)
+        );
+        assert_eq!(
+            day_start(ms(2026, 10, 25, 12, 0), &tz),
+            ms(2026, 10, 24, 22, 0)
         );
     }
 

@@ -86,10 +86,10 @@ pub fn pending(
 /// Inicio del día local en curso (epoch ms).
 pub fn today_start() -> i64 {
     use chrono::{Local, TimeZone};
-    let now = Local::now().date_naive();
-    Local
-        .from_local_datetime(&now.and_hms_opt(0, 0, 0).expect("medianoche válida"))
-        .earliest()
+    Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|midnight| Local.from_local_datetime(&midnight).earliest())
         .map(|d| d.timestamp_millis())
         .unwrap_or(0)
 }
@@ -224,6 +224,16 @@ impl Alerts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn el_dia_en_curso_empieza_en_las_ultimas_26_horas() {
+        let now = crate::ingest::now_ms();
+        let start = today_start();
+        assert!(
+            start <= now && now - start < 26 * 3_600_000,
+            "{start} {now}"
+        );
+    }
     use crate::db;
     use crate::queries::testdata;
     use crate::settings::{ScopedBudget, Settings};

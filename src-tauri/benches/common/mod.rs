@@ -125,6 +125,110 @@ pub fn full_summary(conn: &Connection, f: &queries::Filter) -> Result<usize> {
     Ok(18)
 }
 
+// ------------------------------------------------------------------ huella
+
+/// Por tabla: columnas comparables (sin ids autoincrementales ni marcas de reloj) y clave natural.
+const FINGERPRINT_TABLES: &[(&str, &str)] = &[
+    (
+        "calls",
+        "SELECT message_id, session_id, ts, model, input_tokens, output_tokens, cache_read,
+           cache_write, cache_write_1h, reasoning_tokens, activity, turn_id, is_sidechain,
+           agent_id, cost_reported FROM calls ORDER BY message_id",
+    ),
+    (
+        "tool_calls",
+        "SELECT call_id, message_id, session_id, ts, tool, target, is_error, duration_ms, turn_id,
+           detail, agent_id FROM tool_calls ORDER BY call_id",
+    ),
+    (
+        "turns",
+        "SELECT id, session_id, ts, intent FROM turns ORDER BY id",
+    ),
+    (
+        "sessions",
+        "SELECT s.id, s.agent_id, p.cwd, s.git_branch, s.started_at, s.ended_at, s.model,
+           s.is_subagent FROM sessions s LEFT JOIN projects p ON p.id = s.project_id ORDER BY s.id",
+    ),
+    (
+        "projects",
+        "SELECT name, cwd, repo_root FROM projects ORDER BY cwd",
+    ),
+    (
+        "events",
+        "SELECT session_id, ts, kind, payload_json FROM events ORDER BY session_id, ts, kind",
+    ),
+];
+
+const PER_AGENT: &str = "SELECT a.id,
+    (SELECT COUNT(*) FROM sessions s WHERE s.agent_id = a.id),
+    (SELECT COUNT(*) FROM calls c JOIN sessions s ON s.id = c.session_id WHERE s.agent_id = a.id),
+    (SELECT COUNT(*) FROM tool_calls t JOIN sessions s ON s.id = t.session_id WHERE s.agent_id = a.id),
+    (SELECT COUNT(*) FROM turns t JOIN sessions s ON s.id = t.session_id WHERE s.agent_id = a.id),
+    (SELECT COUNT(*) FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.agent_id = a.id),
+    (SELECT printf('%d/%d/%d/%d/%d/%d', TOTAL(input_tokens), TOTAL(output_tokens), TOTAL(cache_read),
+       TOTAL(cache_write), TOTAL(cache_write_1h), TOTAL(reasoning_tokens))
+       FROM calls c JOIN sessions s ON s.id = c.session_id WHERE s.agent_id = a.id),
+    (SELECT printf('%.9f', TOTAL(cost_usd)) FROM call_costs c JOIN sessions s ON s.id = c.session_id
+       WHERE s.agent_id = a.id)
+  FROM agents a ORDER BY a.id";
+
+/// FNV-1a de 64 bits: estable entre versiones de Rust (a diferencia de `DefaultHasher`).
+fn fnv1a(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+fn render(v: rusqlite::types::ValueRef<'_>) -> String {
+    use rusqlite::types::ValueRef;
+    match v {
+        ValueRef::Null => "\u{2205}".to_string(),
+        ValueRef::Integer(i) => i.to_string(),
+        ValueRef::Real(f) => format!("{f:.9}"),
+        ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+        ValueRef::Blob(b) => format!("{b:02x?}"),
+    }
+}
+
+/// Huella canónica de los datos importados: conteos, tokens y coste por agente, y un hash por
+/// tabla de sus filas ordenadas por clave natural. Igual huella = mismos datos importados.
+pub fn fingerprint(conn: &Connection) -> Result<String> {
+    let mut out = String::new();
+    let mut stmt = conn.prepare(PER_AGENT)?;
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        out.push_str(&format!(
+            "agente {}: sesiones {}, llamadas {}, herramientas {}, turnos {}, eventos {}, tokens {}, coste {}\n",
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, i64>(5)?,
+            r.get::<_, String>(6)?,
+            r.get::<_, String>(7)?,
+        ));
+    }
+    for (table, sql) in FINGERPRINT_TABLES {
+        let mut stmt = conn.prepare(sql)?;
+        let columns = stmt.column_count();
+        let mut rows = stmt.query([])?;
+        let (mut hash, mut count) = (FNV_OFFSET, 0u64);
+        while let Some(r) = rows.next()? {
+            for i in 0..columns {
+                hash = fnv1a(hash, render(r.get_ref(i)?).as_bytes());
+                hash = fnv1a(hash, b"\x1f");
+            }
+            hash = fnv1a(hash, b"\n");
+            count += 1;
+        }
+        out.push_str(&format!("tabla {table}: {count} filas, fnv {hash:016x}\n"));
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------ perf_scan
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

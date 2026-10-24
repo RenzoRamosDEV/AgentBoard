@@ -123,3 +123,89 @@ fn lineas_en_vivo_json_con_ids_unicos() {
         .collect();
     assert_eq!(ids.len(), 5);
 }
+
+// ------------------------------------------------------------------ huella (D1)
+
+use common::fingerprint;
+use rusqlite::Connection;
+
+const AGENTES: &[&str] = &["INSERT INTO agents (id, name, log_root, first_seen) VALUES ('claude-code', 'Claude Code', '/r', 1)"];
+const PROYECTOS: &[&str] = &[
+    "INSERT INTO projects (name, cwd, repo_root) VALUES ('a', '/h/a', '/h/a')",
+    "INSERT INTO projects (name, cwd, repo_root) VALUES ('b', '/h/b', '/h/b')",
+];
+const SESIONES: &[&str] = &[
+    "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, model, is_subagent)
+     VALUES ('s1', 'claude-code', (SELECT id FROM projects WHERE cwd = '/h/a'), 'main', 10, 50, 'claude-sonnet-4-5', 0)",
+    "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, model, is_subagent)
+     VALUES ('s2', 'claude-code', (SELECT id FROM projects WHERE cwd = '/h/b'), NULL, 20, 60, NULL, 1)",
+];
+const RESTO: &[&str] = &[
+    "INSERT INTO turns (id, session_id, ts, intent) VALUES ('t1', 's1', 10, 'debug')",
+    "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens, cache_read, cache_write, turn_id)
+     VALUES ('m1', 's1', 11, 'claude-sonnet-4-5', 100, 20, 1000, 50, 't1')",
+    "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens, turn_id)
+     VALUES ('m2', 's2', 21, 'claude-sonnet-4-5', 7, 3, NULL)",
+    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, turn_id) VALUES ('c1', 'm1', 's1', 11, 'Bash', 'ls', 't1')",
+    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, turn_id) VALUES ('c2', 'm2', 's2', 21, 'Read', NULL, NULL)",
+    "INSERT INTO events (session_id, ts, kind, payload_json) VALUES ('s1', 12, 'compaction', NULL)",
+    "INSERT INTO events (session_id, ts, kind, payload_json) VALUES ('s2', 22, 'interruption', '{}')",
+    "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan) VALUES ('/f', 'claude-code', '1:2', 10, 10, 5, 99)",
+];
+
+fn base(reverse: bool, extra: &[&str]) -> Connection {
+    let conn = agentboard_lib::db::open_in_memory().unwrap();
+    for group in [AGENTES, PROYECTOS, SESIONES, RESTO] {
+        let mut sql: Vec<&str> = group.to_vec();
+        if reverse {
+            sql.reverse();
+        }
+        for s in sql {
+            conn.execute(s, []).unwrap();
+        }
+    }
+    for s in extra {
+        conn.execute(s, []).unwrap();
+    }
+    conn
+}
+
+fn huella(conn: &Connection) -> String {
+    fingerprint(conn).unwrap()
+}
+
+#[test]
+fn la_huella_no_depende_del_orden_de_insercion() {
+    let a = huella(&base(false, &[]));
+    assert_eq!(a, huella(&base(true, &[])));
+    assert!(a.contains("claude-code"), "{a}");
+}
+
+#[test]
+fn la_huella_cambia_con_tokens_turno_o_cwd() {
+    let original = huella(&base(false, &[]));
+    for cambio in [
+        "UPDATE calls SET output_tokens = 21 WHERE message_id = 'm1'",
+        "UPDATE calls SET turn_id = 't1' WHERE message_id = 'm2'",
+        "UPDATE tool_calls SET turn_id = NULL WHERE call_id = 'c1'",
+        "UPDATE projects SET cwd = '/h/z' WHERE cwd = '/h/b'",
+        "UPDATE events SET kind = 'rate_limit' WHERE session_id = 's2'",
+        "UPDATE sessions SET ended_at = 61 WHERE id = 's2'",
+        "UPDATE turns SET intent = NULL WHERE id = 't1'",
+    ] {
+        assert_ne!(huella(&base(false, &[cambio])), original, "{cambio}");
+    }
+}
+
+#[test]
+fn ids_autoincrementales_y_marcas_de_reloj_no_influyen() {
+    let original = huella(&base(false, &[]));
+    for cambio in [
+        "UPDATE agents SET first_seen = 12345",
+        "UPDATE file_state SET last_scan = 777",
+        "UPDATE tool_calls SET id = id + 100",
+        "UPDATE events SET id = id + 100",
+    ] {
+        assert_eq!(huella(&base(false, &[cambio])), original, "{cambio}");
+    }
+}

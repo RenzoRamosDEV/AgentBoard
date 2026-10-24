@@ -147,4 +147,34 @@
 
 ## Desviaciones durante la implementación
 
-<!-- Se completa durante la implementación: cifras por paso, pasos revertidos y cambios respecto a D1–D14. -->
+Mediciones con `perf_scan` en release (tres ejecuciones; se da la mediana y, entre paréntesis,
+el rango) en el mismo portátil que la Fase 1, dentro de distrobox, sin `AGENTBOARD_LOG`. MQ =
+`--phase queries`; MF = `--phase cold`. «Resumen» = las 18 llamadas de `full_summary`.
+
+### Partida (tarea 1.4, binario de `d7fa167`, sin optimizaciones)
+
+Load average 4,2–6,0 durante la tanda (3,6 antes de empezar: hay otro trabajo en la máquina).
+
+| Métrica | 200 MB | 1 GB |
+|---|---|---|
+| `summary` (mediana de 5) | 101,3 ms (86–135) | 357,1 ms (348–567) |
+| `breakdown(project)` | 262,5 ms (225–270) | 964,3 ms (831–1 382) |
+| `breakdown(model)` | 251,2 ms (204–253) | 850,8 ms (792–881) |
+| `timeseries(day)` | 67,0 ms (61–74) | 261,3 ms (246–333) |
+| `activity` | 110,8 ms (99–120) | 401,9 ms (388–498) |
+| Resumen en frío | 1 594 ms (1 443–1 676) | 6 062 ms (5 534–6 138) |
+| Resumen repetido (mediana de 5) | 1 678 ms (1 335–1 682) | 5 738 ms (5 544–6 420) |
+| Escaneo frío (MF) | 3 872 ms (3 808–3 914; una cuarta ejecución con `--fingerprint`: 2 501 ms) | — |
+| RSS pico MQ / MF | 87 / 83 MiB | 298 MiB |
+
+Frente a «Después de la Fase 1» de `docs/perf/BASELINE.md`: 1 GB dentro de su rango (Resumen
+6,2–7,8 s); 200 MB algo por encima de la tanda tranquila de la Fase 1 (Resumen 1,12–1,15 s, frío
+2,68–2,78 s con load 5–7) y dentro de lo que la Fase 1 midió con la máquina cargada (frío 2,8–9,7 s).
+Las comparaciones de cada paso se hacen contra esta partida, en el mismo momento cuando la carga
+varía (A/B alternando binarios).
+
+Huellas de `200m` de partida: la de ingesta (`--fingerprint`) es la de la Fase 1 (llamadas
+`e7439477c4491878`, herramientas `8162a27a8efce111`, turnos `c1c72b8c67a4373b`, sesiones
+`77129075c09dce09`, proyectos `6e7d6f2e8f56231b`); la de consultas (`--query-fingerprint`,
+200 líneas, una por consulta y filtro) está en `docs/perf/huella-consultas-200m.txt` (sha256
+`bd576fe1…54218ac`).

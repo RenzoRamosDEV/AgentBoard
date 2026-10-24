@@ -49,7 +49,7 @@ const INSERT_DAILY: &str = "INSERT INTO daily_stats
        SUM(CASE WHEN c.message_id IS s.first_call_id
                 THEN c.input_tokens + c.cache_read + c.cache_write ELSE 0 END),
        MIN(c.ts), MAX(c.ts)
-     FROM (SELECT DISTINCT session_id FROM dirty_keys) k
+     FROM (SELECT DISTINCT session_id FROM dirty_keys WHERE day <> 0) k
      CROSS JOIN calls c ON c.session_id = k.session_id
      JOIN sessions s ON s.id = c.session_id
      WHERE (c.session_id, c.day) IN (SELECT session_id, day FROM dirty_keys)
@@ -60,7 +60,7 @@ const DELETE_TOOLS: &str = "DELETE FROM tool_stats
 
 const INSERT_TOOLS: &str = "INSERT INTO tool_stats
      SELECT t.day, t.session_id, t.tool, COUNT(*), SUM(t.is_error), MIN(t.ts)
-     FROM (SELECT DISTINCT session_id FROM dirty_keys) k
+     FROM (SELECT DISTINCT session_id FROM dirty_keys WHERE day <> 0) k
      CROSS JOIN tool_calls t ON t.session_id = k.session_id
      WHERE (t.session_id, t.day) IN (SELECT session_id, day FROM dirty_keys)
      GROUP BY t.day, t.session_id, t.tool";

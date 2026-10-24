@@ -33,16 +33,19 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             db::remove_legacy_db();
-            let target = db::Target::shared_memory();
-            let writer = db::open_writer(&target)?;
-            // Precios fijados por el usuario en Ajustes, encima de los de por defecto.
-            if let Err(e) = pricing::apply_overrides(&writer, &settings::load().price_overrides) {
+            // Caché reconstruible en la carpeta de datos (en memoria si no se puede crear).
+            let mode =
+                db::default_cache_path().map_or(db::CacheMode::Memoria, db::CacheMode::Disco);
+            let storage = db::Storage::open(mode)?;
+            // Precios fijados por el usuario en Ajustes, encima de los de por defecto; con una
+            // caché existente solo se tocan los que cambiaron.
+            if let Err(e) =
+                pricing::apply_overrides(&storage.writer, &settings::load().price_overrides)
+            {
                 tracing::warn!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
             }
-            let readers: commands::Readers = Arc::new(RwLock::new(Arc::new(db::ReadPool::open(
-                &target,
-                db::ReadPool::SIZE,
-            )?)));
+            let readers: commands::Readers =
+                Arc::new(RwLock::new(Arc::new(storage.readers(db::ReadPool::SIZE)?)));
             let generation = Arc::new(DataGeneration::default());
             let alerts = Alerts::new();
 
@@ -82,7 +85,9 @@ pub fn run() {
             // Hilo de ingesta: escaneo inicial y relecturas del vigilante, fuera de la interfaz.
             let handle = app.handle().clone();
             let ingest = IngestThread::spawn(
-                writer,
+                storage,
+                readers.clone(),
+                || settings::load().price_overrides,
                 providers::all(),
                 generation.clone(),
                 move |origen, stats| match origen {

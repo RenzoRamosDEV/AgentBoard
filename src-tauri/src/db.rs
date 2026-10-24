@@ -1,4 +1,7 @@
-//! Base SQLite en memoria (nada se guarda en disco) y migraciones versionadas.
+//! Base SQLite: caché reconstruible en disco o solo en memoria, lectores aparte del escritor y
+//! migraciones versionadas.
+
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
@@ -23,20 +26,196 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, include_str!("../migrations/0009_indices.sql")),
 ];
 
+/// Versión de esquema que espera esta versión de la app (la de la última migración).
+pub const LATEST: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
+
 /// Sentencias preparadas que la conexión conserva compiladas.
 pub const STATEMENT_CACHE: usize = 64;
 
+/// Carpeta de datos de la app (`~/.local/share/agentboard` en Linux).
+pub fn data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|d| d.join("agentboard"))
+}
+
+/// Ruta de la caché en disco.
+pub fn default_cache_path() -> Option<PathBuf> {
+    data_dir().map(|d| d.join("cache.sqlite"))
+}
+
 /// Versiones anteriores guardaban una base en la carpeta de datos; se elimina si sigue ahí.
 pub fn remove_legacy_db() {
-    let Some(dir) = dirs::data_dir().map(|d| d.join("agentboard")) else {
-        return;
-    };
+    if let Some(dir) = data_dir() {
+        remove_legacy_db_in(&dir);
+    }
+}
+
+/// Borra las bases heredadas de `dir` y sus auxiliares; la caché y la carpeta se quedan.
+pub fn remove_legacy_db_in(dir: &Path) {
     for name in ["agentboard.db", "agentburn.db"] {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
         }
     }
-    let _ = std::fs::remove_dir(&dir);
+}
+
+/// Dónde guarda la app los datos leídos de los logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheMode {
+    /// Caché reconstruible en este archivo (en WAL).
+    Disco(PathBuf),
+    /// Solo en memoria: al abrir la app se vuelven a leer todos los logs.
+    Memoria,
+}
+
+/// Marca de la caché en `cache_meta`: una base sin ella no la creó esta app.
+const CACHE_FORMAT: &str = "agentboard-cache";
+
+/// La base abierta: la conexión del escritor y dónde vive, para abrir lectores sobre ella.
+pub struct Storage {
+    pub writer: Connection,
+    pub target: Target,
+    pub mode: CacheMode,
+}
+
+impl Storage {
+    /// Abre la caché pedida. En disco, una caché que no se puede abrir, no es una base SQLite,
+    /// está dañada o es de otra versión de esquema se borra y se crea vacía; si ni así se puede
+    /// (permisos, disco lleno), la sesión sigue en memoria. Avisa por stderr en ambos casos. Solo
+    /// falla si SQLite no puede abrir ni una base en memoria.
+    pub fn open(mode: CacheMode) -> Result<Storage> {
+        if let CacheMode::Disco(path) = &mode {
+            match open_disk(path) {
+                Ok(writer) => {
+                    return Ok(Storage {
+                        writer,
+                        target: Target::File(path.clone()),
+                        mode,
+                    })
+                }
+                Err(e) => tracing::warn!(
+                    "agentboard: no se pudo crear la caché en {}; los datos quedan en memoria: {e:#}",
+                    path.display()
+                ),
+            }
+        }
+        Self::memory()
+    }
+
+    fn memory() -> Result<Storage> {
+        let target = Target::shared_memory();
+        Ok(Storage {
+            writer: open_writer(&target)?,
+            target,
+            mode: CacheMode::Memoria,
+        })
+    }
+
+    /// Lectores sobre esta base.
+    pub fn readers(&self, size: usize) -> Result<ReadPool> {
+        ReadPool::open(&self.target, size)
+    }
+}
+
+/// Borra la caché y sus archivos auxiliares (si no existen, nada).
+pub fn delete_cache_files(path: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let file = PathBuf::from(format!("{}{suffix}", path.display()));
+        if let Err(e) = std::fs::remove_file(&file) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("agentboard: no se pudo borrar {}: {e}", file.display());
+            }
+        }
+    }
+}
+
+/// ¿Es una caché válida de esta versión? Lee lo justo para fallar si no es SQLite, si la versión
+/// de esquema o la marca no cuadran o si las primeras páginas están dañadas.
+fn validate(path: &Path) -> Result<()> {
+    let conn = Connection::open(path)?;
+    let version = schema_version(&conn)?;
+    anyhow::ensure!(
+        version == LATEST,
+        "versión de esquema {version}, se espera {LATEST}"
+    );
+    let format: String = conn.query_row(
+        "SELECT value FROM cache_meta WHERE key = 'format'",
+        [],
+        |r| r.get(0),
+    )?;
+    anyhow::ensure!(format == CACHE_FORMAT, "marca desconocida: {format}");
+    let _: i64 = conn.query_row("SELECT COUNT(*) FROM file_state", [], |r| r.get(0))?;
+    Ok(())
+}
+
+fn open_disk(path: &Path) -> Result<Connection> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("ruta sin carpeta: {}", path.display()))?;
+    create_private_dir(dir)?;
+    if path.exists() {
+        if let Err(e) = validate(path) {
+            tracing::warn!(
+                "agentboard: la caché {} no vale ({e:#}); se borra y se reconstruye desde los logs",
+                path.display()
+            );
+            delete_cache_files(path);
+        }
+    }
+    let fresh = !path.exists();
+    if fresh {
+        create_private_file(path)?;
+    }
+    let attempt = || -> Result<Connection> {
+        let conn = open_writer(&Target::File(path.to_path_buf()))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO cache_meta (key, value) VALUES ('format', ?1)",
+            [CACHE_FORMAT],
+        )?;
+        Ok(conn)
+    };
+    match attempt() {
+        Ok(conn) => Ok(conn),
+        // Dañada más allá de lo que mira `validate`: se borra y se crea de nuevo una vez.
+        Err(e) if !fresh => {
+            tracing::warn!("agentboard: la caché no se pudo abrir ({e:#}); se reconstruye");
+            delete_cache_files(path);
+            create_private_file(path)?;
+            attempt()
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Carpeta de datos solo para el usuario (`0700` en Unix).
+fn create_private_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Archivo vacío solo para el usuario (`0600` en Unix): SQLite crea `-wal` y `-shm` con los
+/// permisos del archivo principal.
+fn create_private_file(path: &Path) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .with_context(|| format!("no se pudo crear {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 /// Dónde vive la base: un archivo (en WAL) o una base en memoria con caché compartida, a la que
@@ -80,6 +259,21 @@ pub fn open_writer(target: &Target) -> Result<Connection> {
 /// Abre una base en un archivo y aplica las migraciones pendientes.
 pub fn open(path: &Path) -> Result<Connection> {
     open_writer(&Target::File(path.to_path_buf()))
+}
+
+/// Conjunto de lectores vigente, compartido por la interfaz, la bandeja, los avisos y el escritor
+/// (que lo sustituye al reconstruir la caché).
+pub type SharedReaders = std::sync::Arc<std::sync::RwLock<std::sync::Arc<ReadPool>>>;
+
+/// ¿El error viene de una base dañada o que no es SQLite? Entonces hay que reconstruir la caché.
+pub fn is_corruption(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(f, _))
+                if matches!(f.code, rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+        )
+    })
 }
 
 /// Conexiones de solo lectura para la interfaz, la bandeja y los avisos: no esperan al escritor
@@ -518,6 +712,156 @@ mod tests {
                 .unwrap_err();
             assert!(format!("{err:#}").contains("readonly"), "{err:#}");
         }
+    }
+
+    // ------------------------------------------------------------ caché en disco (D2)
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    fn cache_in(dir: &Path) -> PathBuf {
+        dir.join("datos").join("agentboard").join("cache.sqlite")
+    }
+
+    #[test]
+    fn la_cache_en_disco_se_crea_en_wal_y_solo_para_el_usuario() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_in(dir.path());
+        let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+        assert_eq!(storage.mode, CacheMode::Disco(path.clone()));
+        let journal: String = storage
+            .writer
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(journal, "wal");
+        insert_batch(&storage.writer, 0, 3);
+        let _readers = storage.readers(1).unwrap();
+        #[cfg(unix)]
+        {
+            assert_eq!(mode(&path), 0o600);
+            for aux in ["-wal", "-shm"] {
+                let aux = PathBuf::from(format!("{}{aux}", path.display()));
+                assert!(aux.exists(), "{}", aux.display());
+                assert_eq!(mode(&aux), 0o600, "{}", aux.display());
+            }
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+        }
+    }
+
+    #[test]
+    fn reabrir_la_cache_conserva_los_datos_y_el_estado_de_lectura() {
+        use crate::providers::{claude_code::ClaudeCode, Provider};
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_in(dir.path());
+        let fx = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/claude_code");
+        let providers: Vec<Box<dyn Provider>> =
+            vec![Box::new(ClaudeCode::with_roots(vec![fx.clone()]))];
+        let first = {
+            let mut storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+            let stats = crate::ingest::scan_all(&mut storage.writer, &providers).unwrap();
+            assert!(stats.records > 0);
+            (calls(&storage.writer), stats.files)
+        };
+        let mut storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+        assert_eq!(calls(&storage.writer), first.0, "los datos siguen ahí");
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![fx]))];
+        let again = crate::ingest::scan_all(&mut storage.writer, &providers).unwrap();
+        assert_eq!(
+            (again.files, again.lines, again.records),
+            (first.1, 0, 0),
+            "no lee nada"
+        );
+    }
+
+    #[test]
+    fn una_cache_danada_o_de_otra_version_se_borra_y_se_recrea_vacia() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_in(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let wal = PathBuf::from(format!("{}-wal", path.display()));
+        type Damage<'a> = (&'a str, &'a dyn Fn(&Path));
+        let damage: [Damage; 3] = [
+            ("bytes basura", &|p: &Path| {
+                std::fs::write(
+                    p,
+                    b"esto no es una base SQLite, son bytes de relleno ".repeat(200),
+                )
+                .unwrap()
+            }),
+            ("base truncada", &|p: &Path| {
+                let len = std::fs::metadata(p).unwrap().len();
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(p)
+                    .unwrap()
+                    .set_len(len / 3)
+                    .unwrap();
+            }),
+            ("otra versión", &|p: &Path| {
+                Connection::open(p)
+                    .unwrap()
+                    .pragma_update(None, "user_version", 99)
+                    .unwrap();
+            }),
+        ];
+        for (what, damage) in damage {
+            {
+                let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+                insert_batch(&storage.writer, 0, 2000);
+                storage
+                    .writer
+                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                    .unwrap();
+            }
+            let _ = std::fs::remove_file(&wal);
+            damage(&path);
+            let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+            assert_eq!(storage.mode, CacheMode::Disco(path.clone()), "{what}");
+            assert_eq!(calls(&storage.writer), 0, "{what}: recreada vacía");
+            assert_eq!(schema_version(&storage.writer).unwrap(), LATEST, "{what}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sin_permiso_de_escritura_la_cache_queda_en_memoria() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("bloqueada");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let path = locked.join("agentboard").join("cache.sqlite");
+        let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(storage.mode, CacheMode::Memoria);
+        insert_batch(&storage.writer, 0, 1);
+        assert_eq!(
+            storage.readers(1).unwrap().with(|c| Ok(calls(c))).unwrap(),
+            1
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn la_limpieza_de_bases_heredadas_conserva_la_cache_y_la_carpeta() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("agentboard");
+        std::fs::create_dir_all(&data).unwrap();
+        for name in ["agentboard.db", "agentburn.db"] {
+            for suffix in ["", "-wal", "-shm"] {
+                std::fs::write(data.join(format!("{name}{suffix}")), b"x").unwrap();
+            }
+        }
+        std::fs::write(data.join("cache.sqlite"), b"x").unwrap();
+        remove_legacy_db_in(&data);
+        let left: Vec<String> = std::fs::read_dir(&data)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["cache.sqlite".to_string()]);
     }
 
     #[test]

@@ -11,11 +11,11 @@ use crate::result_cache::{self, ResultCache};
 use crate::sessions::{self, SessionDetail, SessionList};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Lectores que usa la interfaz; una reconstrucción de la caché sustituye el conjunto y las
 /// consultas en curso terminan con el anterior.
-pub type Readers = Arc<RwLock<Arc<ReadPool>>>;
+pub type Readers = crate::db::SharedReaders;
 
 /// Estado de la app: lectores de la base, el hilo de ingesta (único escritor), la caché de
 /// resultados con la generación de datos que la invalida, y los avisos.
@@ -59,19 +59,24 @@ async fn cached<T: Clone + Send + Sync + 'static>(
         state.results.clone(),
         state.generation.clone(),
     );
+    let ingest = state.ingest.clone();
     run_blocking(move || {
-        let value = results.get_or_compute(&generation, key, || current(&readers)?.with(f))?;
+        let value = results
+            .get_or_compute(&generation, key, || current(&readers)?.with(f))
+            .inspect_err(|e| ingest.report(e))?;
         Ok(T::clone(&value))
     })
     .await
 }
 
-/// Ejecuta `f` con un lector, fuera del hilo llamador.
+/// Ejecuta `f` con un lector, fuera del hilo llamador. Un error de base dañada pide reconstruir
+/// la caché.
 async fn with_reader<T: Send + 'static>(
-    readers: Readers,
+    state: &AppState,
     f: impl FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
 ) -> CmdResult<T> {
-    run_blocking(move || current(&readers)?.with(f)).await
+    let (readers, ingest) = (state.readers.clone(), state.ingest.clone());
+    run_blocking(move || current(&readers)?.with(f).inspect_err(|e| ingest.report(e))).await
 }
 
 #[tauri::command]
@@ -180,7 +185,7 @@ pub async fn list_projects(
 #[tauri::command]
 #[tracing::instrument(name = "cmd.get_data_info", level = "info", skip_all)]
 pub async fn get_data_info(state: tauri::State<'_, AppState>) -> CmdResult<DataInfo> {
-    with_reader(state.readers.clone(), queries::data_info).await
+    with_reader(&state, queries::data_info).await
 }
 
 #[tauri::command]
@@ -190,7 +195,7 @@ pub async fn export_data(
     filter: Option<Filter>,
     format: String,
 ) -> CmdResult<String> {
-    with_reader(state.readers.clone(), move |c| {
+    with_reader(&state, move |c| {
         queries::export(c, &filter.unwrap_or_default(), &format)
     })
     .await
@@ -203,7 +208,7 @@ pub async fn list_sessions(
     filter: Option<Filter>,
     limit: Option<usize>,
 ) -> CmdResult<SessionList> {
-    with_reader(state.readers.clone(), move |c| {
+    with_reader(&state, move |c| {
         sessions::list_sessions(c, &filter.unwrap_or_default(), limit)
     })
     .await
@@ -215,7 +220,7 @@ pub async fn list_project_summaries(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<sessions::ProjectSummary>> {
-    with_reader(state.readers.clone(), move |c| {
+    with_reader(&state, move |c| {
         sessions::list_projects(c, &filter.unwrap_or_default())
     })
     .await
@@ -229,7 +234,7 @@ pub async fn get_project_detail(
     filter: Option<Filter>,
     tz: String,
 ) -> CmdResult<sessions::ProjectDetail> {
-    with_reader(state.readers.clone(), move |c| {
+    with_reader(&state, move |c| {
         sessions::project_detail(c, &key, &filter.unwrap_or_default(), &tz)
     })
     .await
@@ -241,10 +246,7 @@ pub async fn get_session_detail(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> CmdResult<SessionDetail> {
-    with_reader(state.readers.clone(), move |c| {
-        sessions::session_detail(c, &id)
-    })
-    .await
+    with_reader(&state, move |c| sessions::session_detail(c, &id)).await
 }
 
 #[tauri::command]
@@ -254,7 +256,7 @@ pub async fn list_prices(
     filter: Option<Filter>,
 ) -> CmdResult<Vec<crate::pricing::PriceRow>> {
     let overrides = run_blocking(|| Ok(settings::load().price_overrides)).await?;
-    with_reader(state.readers.clone(), move |c| {
+    with_reader(&state, move |c| {
         crate::pricing::list_prices(c, &filter.unwrap_or_default(), &overrides)
     })
     .await
@@ -313,15 +315,18 @@ mod tests {
     }
 
     #[test]
-    fn with_reader_consulta_con_el_conjunto_vigente() {
+    fn el_lector_vigente_es_el_del_ultimo_conjunto_publicado() {
+        use std::sync::RwLock;
         let target = crate::db::Target::shared_memory();
         let writer = crate::db::open_writer(&target).unwrap();
         let readers: Readers = Arc::new(RwLock::new(Arc::new(ReadPool::open(&target, 2).unwrap())));
         let count = |readers: &Readers| {
-            block(with_reader(readers.clone(), |c| {
-                Ok(c.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get::<_, i64>(0))?)
-            }))
-            .unwrap()
+            current(readers)
+                .unwrap()
+                .with(|c| {
+                    Ok(c.query_row("SELECT COUNT(*) FROM agents", [], |r| r.get::<_, i64>(0))?)
+                })
+                .unwrap()
         };
         assert_eq!(count(&readers), 0);
         // Otro conjunto (como tras reconstruir): las consultas siguientes lo usan.

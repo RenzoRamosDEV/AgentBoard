@@ -1,10 +1,12 @@
 //! Hilo de ingesta: el único escritor de la base. Es dueño de la conexión de escritura y atiende
-//! por canal los escaneos (inicial y del vigilante, que se agrupan) y los cambios de precios, que
-//! se aplican entre dos lotes aunque haya un escaneo en curso. Tras cada `COMMIT` sube la
+//! por canal los escaneos (inicial y del vigilante, que se agrupan), los cambios de precios, que
+//! se aplican entre dos lotes aunque haya un escaneo en curso, y las reconstrucciones de la caché
+//! (pedidas por el usuario o tras detectar una base dañada). Tras cada `COMMIT` sube la
 //! generación de datos, que invalida la caché de resultados.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
+use crate::db::{CacheMode, ReadPool, SharedReaders, Storage};
 use crate::ingest::{self, BatchHooks, ScanStats};
 use crate::providers::Provider;
 use crate::settings::PriceOverride;
@@ -29,6 +31,8 @@ pub type Reply = Sender<Result<(), String>>;
 pub enum Job {
     Scan(Origen),
     AplicarPrecios(Vec<PriceOverride>, Reply),
+    /// Vacía la caché (en el modo pedido o, sin él, el actual) y vuelve a leer todos los logs.
+    Reconstruir(Option<CacheMode>, Option<Reply>),
 }
 
 /// Contador que sube tras cada transacción confirmada por el escritor (lote, precios…). Una
@@ -71,6 +75,35 @@ impl IngestHandle {
         rx.recv()
             .map_err(|_| "el hilo de ingesta no respondió".to_string())?
     }
+
+    /// Reconstruye la caché en `mode` (o en el actual) y espera a que esté vacía y lista; el
+    /// escaneo completo sigue después y avisa con `ingest://done`.
+    pub fn rebuild(&self, mode: Option<CacheMode>) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.0
+            .send(Job::Reconstruir(mode, Some(tx)))
+            .map_err(|_| "el hilo de ingesta no está en marcha".to_string())?;
+        rx.recv()
+            .map_err(|_| "el hilo de ingesta no respondió".to_string())?
+    }
+
+    /// Si `e` es de una base dañada, pide reconstruir la caché (sin esperar).
+    pub fn report(&self, e: &anyhow::Error) {
+        if crate::db::is_corruption(e) {
+            tracing::warn!(
+                "agentboard: la caché está dañada; se reconstruye desde los logs: {e:#}"
+            );
+            let _ = self.0.send(Job::Reconstruir(None, None));
+        }
+    }
+}
+
+/// Lo que posee el escritor: la base, el conjunto de lectores que publica y de dónde saca los
+/// precios del usuario al reconstruir.
+struct WriterState {
+    storage: Storage,
+    readers: SharedReaders,
+    prices: Box<dyn Fn() -> Vec<PriceOverride> + Send>,
 }
 
 pub struct IngestThread;
@@ -80,23 +113,30 @@ impl IngestThread {
     /// vida de la app (el estado entre líneas se conserva entre escaneos). `on_done` se llama
     /// tras cada escaneo.
     pub fn spawn(
-        writer: Connection,
+        storage: Storage,
+        readers: SharedReaders,
+        prices: impl Fn() -> Vec<PriceOverride> + Send + 'static,
         providers: Vec<Box<dyn Provider>>,
         generation: Arc<DataGeneration>,
         on_done: impl FnMut(Origen, &ScanStats) + Send + 'static,
     ) -> IngestHandle {
         let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || run(rx, writer, &providers, &generation, on_done));
+        let state = WriterState {
+            storage,
+            readers,
+            prices: Box::new(prices),
+        };
+        std::thread::spawn(move || run(rx, state, &providers, &generation, on_done));
         IngestHandle(tx)
     }
 }
 
-/// Lo que el escritor atiende entre lotes de un escaneo: precios en el momento; los escaneos
-/// pedidos mientras tanto se juntan en uno al terminar.
+/// Lo que el escritor atiende entre lotes de un escaneo: precios en el momento; los escaneos y
+/// reconstrucciones pedidos mientras tanto, al terminar.
 struct Between<'a> {
     rx: &'a Receiver<Job>,
     generation: &'a DataGeneration,
-    deferred: &'a mut VecDeque<Origen>,
+    deferred: &'a mut VecDeque<Job>,
 }
 
 impl BatchHooks for Between<'_> {
@@ -108,10 +148,10 @@ impl BatchHooks for Between<'_> {
     fn waiting(&mut self, conn: &mut Connection) -> Result<()> {
         while let Ok(job) = self.rx.try_recv() {
             match job {
-                Job::Scan(origen) => self.deferred.push_back(origen),
                 Job::AplicarPrecios(overrides, reply) => {
                     apply_prices(conn, &overrides, self.generation, &reply)
                 }
+                other => self.deferred.push_back(other),
             }
         }
         Ok(())
@@ -133,54 +173,106 @@ fn apply_prices(
     let _ = reply.send(result.map_err(|e| format!("{e:#}")));
 }
 
+/// Vacía la caché: crea la base nueva (borrando antes los archivos si había caché en disco),
+/// aplica los precios, publica sus lectores (las consultas en curso terminan con los anteriores)
+/// y suelta la anterior. El escaneo completo lo hace después el llamador.
+fn rebuild(
+    state: &mut WriterState,
+    mode: Option<CacheMode>,
+    generation: &DataGeneration,
+) -> Result<()> {
+    let mode = mode.unwrap_or_else(|| state.storage.mode.clone());
+    if let CacheMode::Disco(old) = &state.storage.mode {
+        crate::db::delete_cache_files(old);
+    }
+    let storage = Storage::open(mode)?;
+    crate::pricing::apply_overrides(&storage.writer, &(state.prices)())?;
+    let pool = Arc::new(storage.readers(ReadPool::SIZE)?);
+    match state.readers.write() {
+        Ok(mut current) => *current = pool,
+        Err(poisoned) => *poisoned.into_inner() = pool,
+    }
+    state.storage = storage;
+    generation.bump();
+    Ok(())
+}
+
 /// Atiende trabajos hasta que se cierra el canal. Los escaneos acumulados se agrupan en uno
 /// (es completo e idempotente); el escaneo inicial tiene prioridad para el aviso.
 fn run(
     rx: Receiver<Job>,
-    mut writer: Connection,
+    mut state: WriterState,
     providers: &[Box<dyn Provider>],
     generation: &DataGeneration,
     mut on_done: impl FnMut(Origen, &ScanStats),
 ) {
-    let mut deferred: VecDeque<Origen> = VecDeque::new();
+    let mut deferred: VecDeque<Job> = VecDeque::new();
     loop {
-        let first = match deferred.pop_front() {
-            Some(origen) => Job::Scan(origen),
+        let job = match deferred.pop_front() {
+            Some(job) => job,
             None => match rx.recv() {
                 Ok(job) => job,
                 Err(_) => return,
             },
         };
-        let mut origen = match first {
+        let mut origen = match job {
             Job::Scan(origen) => origen,
             Job::AplicarPrecios(overrides, reply) => {
-                apply_prices(&writer, &overrides, generation, &reply);
+                apply_prices(&state.storage.writer, &overrides, generation, &reply);
+                continue;
+            }
+            Job::Reconstruir(mode, reply) => {
+                let result = rebuild(&mut state, mode, generation);
+                if let Err(e) = &result {
+                    tracing::error!("agentboard: no se pudo reconstruir la caché: {e:#}");
+                }
+                let ok = result.is_ok();
+                if let Some(reply) = reply {
+                    let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+                }
+                if ok {
+                    deferred.push_front(Job::Scan(Origen::EscaneoInicial));
+                }
                 continue;
             }
         };
-        // Agrupa los escaneos pendientes; los demás trabajos se atienden ya, antes de escanear.
-        for o in deferred.drain(..) {
-            if o == Origen::EscaneoInicial {
-                origen = o;
+        // Agrupa los escaneos pendientes; precios y reconstrucciones se atienden antes.
+        let mut later = VecDeque::new();
+        for job in deferred.drain(..).chain(rx.try_iter()) {
+            match job {
+                Job::Scan(o) => {
+                    if o == Origen::EscaneoInicial {
+                        origen = o;
+                    }
+                }
+                Job::AplicarPrecios(overrides, reply) => {
+                    apply_prices(&state.storage.writer, &overrides, generation, &reply)
+                }
+                other => later.push_back(other),
             }
         }
-        while let Ok(job) = rx.try_recv() {
-            match job {
-                Job::Scan(o) if o == Origen::EscaneoInicial => origen = o,
-                Job::Scan(_) => {}
-                Job::AplicarPrecios(overrides, reply) => {
-                    apply_prices(&writer, &overrides, generation, &reply)
-                }
-            }
+        if !later.is_empty() {
+            // Una reconstrucción pendiente va primero; el escaneo pedido se hace después.
+            deferred = later;
+            deferred.push_back(Job::Scan(origen));
+            continue;
         }
         let mut hooks = Between {
             rx: &rx,
             generation,
             deferred: &mut deferred,
         };
-        match ingest::scan_with_hooks(&mut writer, providers, &mut hooks) {
+        match ingest::scan_with_hooks(&mut state.storage.writer, providers, &mut hooks) {
             Ok(stats) => on_done(origen, &stats),
-            Err(e) => tracing::error!(?origen, "agentboard: falló el escaneo: {e:#}"),
+            Err(e) => {
+                tracing::error!(?origen, "agentboard: falló el escaneo: {e:#}");
+                if crate::db::is_corruption(&e) {
+                    tracing::warn!(
+                        "agentboard: la caché está dañada; se reconstruye desde los logs"
+                    );
+                    deferred.push_front(Job::Reconstruir(None, None));
+                }
+            }
         }
     }
 }
@@ -252,23 +344,38 @@ mod tests {
         target: db::Target,
     }
 
-    fn fixture(files: &[(&str, &str)]) -> (Fixture, Connection) {
+    fn fixture(files: &[(&str, &str)]) -> (Fixture, Storage) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("logs");
         std::fs::create_dir_all(&root).unwrap();
         for (name, body) in files {
             std::fs::write(root.join(name), body).unwrap();
         }
-        let target = db::Target::File(dir.path().join("cache.sqlite"));
-        let writer = db::open_writer(&target).unwrap();
+        let storage = Storage::open(CacheMode::Disco(dir.path().join("cache.sqlite"))).unwrap();
         (
             Fixture {
                 _dir: dir,
                 root,
-                target,
+                target: storage.target.clone(),
             },
-            writer,
+            storage,
         )
+    }
+
+    fn readers_of(storage: &Storage) -> SharedReaders {
+        Arc::new(std::sync::RwLock::new(Arc::new(
+            storage.readers(1).unwrap(),
+        )))
+    }
+
+    fn spawn(
+        storage: Storage,
+        providers: Vec<Box<dyn Provider>>,
+        generation: Arc<DataGeneration>,
+        on_done: impl FnMut(Origen, &ScanStats) + Send + 'static,
+    ) -> IngestHandle {
+        let readers = readers_of(&storage);
+        IngestThread::spawn(storage, readers, Vec::new, providers, generation, on_done)
     }
 
     fn fake(fx: &Fixture) -> Vec<Box<dyn Provider>> {
@@ -290,7 +397,7 @@ mod tests {
     fn el_escaneo_inicial_avisa_con_sus_estadisticas() {
         let (fx, writer) = fixture(&[("a.log", "m1\nm2\n")]);
         let (tx, rx) = mpsc::channel();
-        let handle = IngestThread::spawn(
+        let handle = spawn(
             writer,
             fake(&fx),
             Default::default(),
@@ -314,6 +421,12 @@ mod tests {
         tx.send(Job::Scan(Origen::Vigilante)).unwrap();
         drop(tx);
         let mut done = Vec::new();
+        let readers = readers_of(&writer);
+        let writer = WriterState {
+            storage: writer,
+            readers,
+            prices: Box::new(Vec::new),
+        };
         run(
             rx,
             writer,
@@ -340,7 +453,7 @@ mod tests {
         })];
         let (done_tx, done_rx) = mpsc::channel();
         let generation = Arc::new(DataGeneration::default());
-        let handle = IngestThread::spawn(writer, providers, generation.clone(), move |_, s| {
+        let handle = spawn(writer, providers, generation.clone(), move |_, s| {
             done_tx.send(s.clone()).unwrap();
         });
         handle.request(Origen::EscaneoInicial);
@@ -420,7 +533,7 @@ mod tests {
             fx: &fx,
             seen: Vec::new(),
         };
-        crate::ingest::scan_with_hooks(&mut writer, &providers, &mut check).unwrap();
+        crate::ingest::scan_with_hooks(&mut writer.writer, &providers, &mut check).unwrap();
         drop(dummy_tx);
         let seen = check.seen;
         assert!(!seen.is_empty());
@@ -439,15 +552,15 @@ mod tests {
     fn un_trabajo_fallido_no_detiene_el_hilo() {
         let (fx, writer) = fixture(&[("a.log", "m1\n")]);
         writer
+            .writer
             .execute_batch(
                 "CREATE TRIGGER sin_precios BEFORE INSERT ON prices BEGIN SELECT RAISE(ABORT, 'no'); END;",
             )
             .unwrap();
         let (tx, rx) = mpsc::channel();
-        let handle =
-            IngestThread::spawn(writer, fake(&fx), Default::default(), move |origen, _| {
-                tx.send(origen).unwrap();
-            });
+        let handle = spawn(writer, fake(&fx), Default::default(), move |origen, _| {
+            tx.send(origen).unwrap();
+        });
         let nuevo = PriceOverride {
             model: "modelo-nuevo".into(),
             input: 1.0,

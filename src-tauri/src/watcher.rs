@@ -108,14 +108,24 @@ mod tests {
     fn escanea_carpetas_que_aparecen_despues_de_arrancar() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("projects");
-        let target = db::Target::File(dir.path().join("cache.sqlite"));
-        let writer = db::open_writer(&target).unwrap();
-        let readers = db::ReadPool::open(&target, 1).unwrap();
+        let storage =
+            db::Storage::open(db::CacheMode::Disco(dir.path().join("cache.sqlite"))).unwrap();
+        let readers = storage.readers(1).unwrap();
+        let shared = Arc::new(std::sync::RwLock::new(Arc::new(
+            storage.readers(1).unwrap(),
+        )));
         let root2 = root.clone();
         let providers: Providers = Arc::new(move || {
             vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
         });
-        let ingest = IngestThread::spawn(writer, providers(), Default::default(), |_, _| {});
+        let ingest = IngestThread::spawn(
+            storage,
+            shared,
+            Vec::new,
+            providers(),
+            Default::default(),
+            |_, _| {},
+        );
         let providers2 = providers.clone();
         std::thread::spawn(move || {
             let _ = run(providers2, ingest, Duration::from_millis(100));
@@ -164,9 +174,12 @@ mod tests {
         };
         std::fs::write(&file, line("m1", "2026-09-25T10:00:00Z")).unwrap();
 
-        let target = db::Target::File(dir.path().join("cache.sqlite"));
-        let writer = db::open_writer(&target).unwrap();
-        let readers = db::ReadPool::open(&target, 1).unwrap();
+        let storage =
+            db::Storage::open(db::CacheMode::Disco(dir.path().join("cache.sqlite"))).unwrap();
+        let readers = storage.readers(1).unwrap();
+        let shared = Arc::new(std::sync::RwLock::new(Arc::new(
+            storage.readers(1).unwrap(),
+        )));
         let root2 = root.clone();
         let providers: Providers = Arc::new(move || {
             vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
@@ -175,7 +188,9 @@ mod tests {
 
         let calls2 = calls.clone();
         let ingest = IngestThread::spawn(
-            writer,
+            storage,
+            shared,
+            Vec::new,
             providers(),
             Default::default(),
             move |origen, stats| {

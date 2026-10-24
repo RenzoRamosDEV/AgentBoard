@@ -35,6 +35,15 @@ fn golden_of(providers: &[Box<dyn Provider>], volatile: &[&std::path::Path]) -> 
     db::set_cache_tz(&conn, common::TZ).unwrap();
     let stats = ingest::scan_all(&mut conn, providers).unwrap();
     assert_eq!(stats.errors, 0, "{stats:?}");
+    let orphans: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        orphans, 0,
+        "filas que apuntan a sesiones o agentes inexistentes"
+    );
     let mut out = common::query_golden(&conn).unwrap();
     for (i, dir) in volatile.iter().enumerate() {
         out = out.replace(&dir.display().to_string(), &format!("<raiz{i}>"));

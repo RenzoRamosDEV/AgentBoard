@@ -45,8 +45,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 7. Claves foráneas fuera del escritor (D3)
 
-- [ ] 7.1 Tests en rojo en `ingest.rs`: (a) con `foreign_keys=OFF` una llamada, herramienta, turno o evento de una sesión inexistente sigue fallando y deshace solo su archivo (el test existente `un_fallo_al_escribir_deshace_solo_ese_archivo` más uno por tipo de registro); (b) `PRAGMA foreign_key_check` vacío tras escanear `tests/fixtures` y el fixture `2m`; (c) la comprobación de sesión hace como mucho una búsqueda por sesión y archivo (contador); verificar que fallan los que correspondan
-- [ ] 7.2 Desactivar `foreign_keys` y añadir la comprobación memorizada en el `Writer`; verificar 7.1, 1.2 y `equivalencia_ingesta` en verde
+- [x] 7.1 Tests en rojo en `ingest.rs`: (a) con `foreign_keys=OFF` una llamada, herramienta, turno o evento de una sesión inexistente sigue fallando y deshace solo su archivo (el test existente `un_fallo_al_escribir_deshace_solo_ese_archivo` más uno por tipo de registro); (b) `PRAGMA foreign_key_check` vacío tras escanear `tests/fixtures` y el fixture `2m`; (c) la comprobación de sesión hace como mucho una búsqueda por sesión y archivo (contador); verificar que fallan los que correspondan
+- [x] 7.2 Desactivar `foreign_keys` y añadir la comprobación memorizada en el `Writer`; verificar 7.1, 1.2 y `equivalencia_ingesta` en verde
 - [ ] 7.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (revertir a `foreign_keys=ON` si no mejora ≥ 5 %) y anotar las cifras
 
 ## 8. Escritor único por lotes y lectores separados (D4, D5)

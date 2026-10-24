@@ -729,6 +729,8 @@ const REFRESH_TOOL_USE: &str = "UPDATE tool_calls SET detail = COALESCE(detail, 
        turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
      WHERE call_id = ?4";
 
+const SELECT_SESSION_EXISTS: &str = "SELECT 1 FROM sessions WHERE id = ?1";
+
 /// Sesión y día de una herramienta: su resultado puede cambiar los errores de sus agregados.
 const SELECT_TOOL_KEY: &str = "SELECT session_id, day FROM tool_calls WHERE call_id = ?1";
 
@@ -765,6 +767,9 @@ struct Writer<'a> {
     /// Sesión y día de las herramientas insertadas en este archivo, para anotar la clave cuando
     /// llega su resultado sin buscarla en la base.
     tool_keys: HashMap<String, (String, i64)>,
+    /// Sesiones que existen: escritas en este archivo o comprobadas una vez en la base. Sin
+    /// claves foráneas (D3), el escritor rechaza él los registros de una sesión inexistente.
+    known_sessions: HashSet<String>,
 }
 
 impl<'a> Writer<'a> {
@@ -780,6 +785,7 @@ impl<'a> Writer<'a> {
             calls_seen: HashMap::new(),
             dirty: HashSet::new(),
             tool_keys: HashMap::new(),
+            known_sessions: HashSet::new(),
         }
     }
 
@@ -835,8 +841,32 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    /// Error si la sesión no existe: el `SAVEPOINT` del archivo se deshace, como hacían las
+    /// claves foráneas.
+    fn require_session(&mut self, id: &str) -> Result<()> {
+        if self.known_sessions.contains(id) {
+            return Ok(());
+        }
+        let exists = self
+            .tx
+            .prepare_cached(SELECT_SESSION_EXISTS)?
+            .exists([id])?;
+        if !exists {
+            return Err(anyhow!("registro de una sesión inexistente: {id}"));
+        }
+        self.known_sessions.insert(id.to_string());
+        Ok(())
+    }
+
     /// Devuelve el `call_id` si se insertó una tool call nueva.
     fn apply(&mut self, rec: &Record) -> Result<Option<String>> {
+        match rec {
+            Record::Call(c) => self.require_session(&c.session_id)?,
+            Record::ToolUse(t) => self.require_session(&t.session_id)?,
+            Record::Turn(t) => self.require_session(&t.session_id)?,
+            Record::Event(e) => self.require_session(&e.session_id)?,
+            Record::Session(_) | Record::ToolResult { .. } => {}
+        }
         match rec {
             Record::Session(s) => {
                 let project = match &s.cwd {
@@ -858,6 +888,7 @@ impl<'a> Writer<'a> {
                             ],
                         )?;
                         self.sessions.insert(s.id.clone(), SessionAcc::new(s.ts));
+                        self.known_sessions.insert(s.id.clone());
                     }
                 }
             }
@@ -1484,6 +1515,29 @@ mod tests {
                     }),
                     call(&format!("s-{id}")),
                 ],
+                "herramienta" => vec![Record::ToolUse(crate::providers::ToolUseRec {
+                    call_id: id.to_string(),
+                    message_id: id.to_string(),
+                    session_id: "fantasma".into(),
+                    ts: 1,
+                    tool: "Bash".into(),
+                    target: None,
+                    detail: None,
+                })],
+                "turno" => vec![Record::Turn(crate::providers::TurnRec {
+                    id: id.to_string(),
+                    session_id: "fantasma".into(),
+                    ts: 1,
+                    intent: None,
+                })],
+                "evento" => vec![Record::Event(crate::providers::EventRec {
+                    session_id: "fantasma".into(),
+                    ts: 1,
+                    kind: id.to_string(),
+                    payload_json: None,
+                })],
+                // Llamada de una sesión escrita por otro archivo.
+                "de" => vec![call(&format!("s-{}", id.split('-').next().unwrap_or(id)))],
                 _ => vec![call("fantasma")],
             })
         }
@@ -1508,6 +1562,54 @@ mod tests {
             .unwrap();
         assert_eq!(ids, ["a1", "c1"]);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM file_state"), 2);
+    }
+
+    #[test]
+    fn sin_claves_foraneas_un_registro_de_sesion_inexistente_deshace_su_archivo() {
+        for orphan in ["huerfana b2", "herramienta b2", "turno b2", "evento b2"] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("a.log"), "ok a1\n").unwrap();
+            fs::write(dir.path().join("b.log"), format!("ok b1\n{orphan}\n")).unwrap();
+            let mut conn = db::open_in_memory().unwrap();
+            conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
+            let providers: Vec<Box<dyn Provider>> = vec![Box::new(Fake(dir.path().to_path_buf()))];
+            let stats = scan_all_with_threads(&mut conn, &providers, 1).unwrap();
+            assert_eq!((stats.files, stats.errors), (1, 1), "{orphan}");
+            for sql in [
+                "SELECT COUNT(*) FROM calls WHERE session_id <> 's-a1'",
+                "SELECT COUNT(*) FROM tool_calls",
+                "SELECT COUNT(*) FROM turns",
+                "SELECT COUNT(*) FROM events",
+                "SELECT COUNT(*) FROM sessions WHERE id <> 's-a1'",
+            ] {
+                assert_eq!(count(&conn, sql), 0, "{orphan}: {sql}");
+            }
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 1, "{orphan}");
+        }
+    }
+
+    #[test]
+    fn la_sesion_de_cada_registro_se_busca_como_mucho_una_vez_por_archivo() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.log"), "ok a1\n").unwrap();
+        let body: String = (0..50).map(|i| format!("de a1-{i}\n")).collect();
+        fs::write(dir.path().join("b.log"), format!("ok b1\n{body}")).unwrap();
+        let mut conn = db::open_in_memory().unwrap();
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(Fake(dir.path().to_path_buf()))];
+        let log = db::trace::start(&conn);
+        let stats = scan_all_with_threads(&mut conn, &providers, 1).unwrap();
+        assert_eq!((stats.files, stats.errors), (2, 0));
+        let lookups: Vec<String> = db::trace::take(log)
+            .into_iter()
+            .map(|e| e.sql)
+            .filter(|s| s.starts_with("SELECT 1 FROM sessions"))
+            .collect();
+        assert_eq!(
+            lookups.len(),
+            1,
+            "a.log no busca (su sesión llega en el archivo), b.log busca s-a una vez"
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 52);
     }
 
     #[test]

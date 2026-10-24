@@ -4,14 +4,14 @@
 
 mod common;
 
-use agentboard_lib::{db, ingest};
+use agentboard_lib::ingest;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn bench(c: &mut Criterion) {
     let Some(root) = common::ensure_fixture("50m") else {
         return;
     };
-    let mut conn = db::open_in_memory().expect("base");
+    let mut conn = common::open_measure_db().expect("base");
     let stats = ingest::scan_all(&mut conn, &common::providers(&root)).expect("escaneo");
     assert_eq!(stats.errors, 0, "{stats:?}");
     let filter = common::last_30_days();

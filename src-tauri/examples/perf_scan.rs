@@ -296,8 +296,9 @@ fn main() -> Result<()> {
     let target = storage.as_ref().map(|s| s.target.clone());
     let mut conn = match storage {
         Some(s) => s.writer,
-        None => db::open_in_memory()?,
+        None => common::open_measure_db()?,
     };
+    db::set_cache_tz(&conn, common::TZ)?;
     cold(
         &mut conn,
         &providers,

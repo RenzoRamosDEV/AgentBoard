@@ -18,8 +18,9 @@ use std::time::Duration;
 /// Fin de la ventana temporal de los fixtures (`WINDOW_END` en `scripts/gen-fixtures.py`).
 pub const WINDOW_END_MS: i64 = 1_788_220_800_000; // 2026-09-01T00:00:00Z
 pub const DAY_MS: i64 = 86_400_000;
-/// 2026-08-01T00:00:00Z: el «mes en curso» del Resumen para los fixtures.
-pub const MONTH_START_MS: i64 = WINDOW_END_MS - 31 * DAY_MS;
+/// 2026-08-01T00:00 en Madrid (2026-07-31T22:00:00Z): el «mes en curso» del Resumen para los
+/// fixtures, en la medianoche local que manda la interfaz.
+pub const MONTH_START_MS: i64 = WINDOW_END_MS - 31 * DAY_MS - 2 * 3_600_000;
 pub const TZ: &str = "Europe/Madrid";
 
 pub fn manifest_dir() -> PathBuf {
@@ -70,13 +71,27 @@ pub fn providers(root: &Path) -> Vec<Box<dyn Provider>> {
     ]
 }
 
-/// Últimos 30 días de la ventana de los fixtures (no depende de «ahora»).
+/// Últimos 30 días de la ventana de los fixtures (no depende de «ahora»), en medianoches de `TZ`
+/// como los manda la interfaz: del 3 de agosto al 1 de septiembre de 2026 incluidos.
 pub fn last_30_days() -> queries::Filter {
+    let zone = agentboard_lib::tz::parse(TZ);
+    let to = agentboard_lib::tz::day_start(WINDOW_END_MS + DAY_MS, &zone);
     queries::Filter {
-        from: Some(WINDOW_END_MS - 30 * DAY_MS),
-        to: Some(WINDOW_END_MS),
+        from: Some(agentboard_lib::tz::day_start(
+            to - 30 * DAY_MS + 6 * 3_600_000,
+            &zone,
+        )),
+        to: Some(to),
         ..Default::default()
     }
+}
+
+/// Abre la base de medición con la zona de la caché en `TZ`, como la app con la zona del
+/// sistema igual a la de la interfaz (así los periodos de días completos leen de los agregados).
+pub fn open_measure_db() -> Result<Connection> {
+    let conn = agentboard_lib::db::open_in_memory()?;
+    agentboard_lib::db::set_cache_tz(&conn, TZ)?;
+    Ok(conn)
 }
 
 pub type Query = fn(&Connection, &queries::Filter) -> Result<()>;

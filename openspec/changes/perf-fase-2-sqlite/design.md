@@ -220,3 +220,22 @@ Medición A/B frente a la partida (alternando binarios, load 4–7):
 | RSS pico MQ 200 MB / 1 GB | 85 / 297 MiB | 89 / 310 MiB | +5 / +4 % |
 
 Huellas de `200m` (ingesta y consultas) idénticas a las de partida.
+
+### Paso 3: primera llamada de la sesión (D6) — conservado
+
+`sessions.first_call_id` lo recalcula `derived::refresh` para las sesiones anotadas en
+`dirty_sessions`: las que anota el escritor al insertar llamadas (en Rust, sin disparador de
+inserción, por lo visto en el paso 2), las de filas pendientes y las que anotan los disparadores
+de actualización y borrado. Desempate por `rowid`: el golden no cambió (ningún empate de `ts`
+afectaba a `overhead_tokens`). El índice `calls(session_id, is_sidechain, ts)` sustituye a
+`calls_session(session_id)`, que es su prefijo (desviación de D9: un índice menos que mantener;
+con los dos, el frío subía un 7 %).
+
+| Métrica (A/B frente al paso 2, load 4–8) | Paso 2 | Paso 3 | Cambio |
+|---|---|---|---|
+| `breakdown(project)` / `breakdown(model)` 200 MB | 155 / 143 ms | 56 / 46 ms | −64 / −68 % |
+| Resumen 200 MB frío / repetido | 820 / 792 ms | 539 / 540 ms | −34 / −32 % |
+| `breakdown(project)` / `breakdown(model)` 1 GB | 837 / 779 ms | 347 / 270 ms | −59 / −65 % |
+| Resumen 1 GB frío / repetido | 4 925 / 4 902 ms | 3 457 / 3 408 ms | −30 / −30 % |
+| Frío 200 MB (9 pares) | 2 819 ms | 2 902 ms | +2,9 % (mediana de las razones por par 1,005) |
+| RSS pico MQ 1 GB | 310 MiB | 340 MiB | +10 % |

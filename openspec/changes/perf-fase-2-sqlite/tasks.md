@@ -21,7 +21,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 - [x] 3.1 Tests en rojo en `queries.rs`: (a) `sessions.first_call_id` es la llamada principal con menor `(ts, rowid)` y cambia si llega una anterior (también de otro archivo); (b) llamadas de subagente (`is_sidechain`) nunca son la primera; (c) el SQL de `breakdown` no contiene `ROW_NUMBER`; verificar que fallan
 - [x] 3.2 Mantener `first_call_id` (en la función de refresco que crece en 5.2; aquí basta con recalcularlo para las sesiones tocadas al final de cada lote y en `testdata::seed`) y cambiar el CTE `firsts` por el `JOIN` de D6; verificar 3.1 y 1.2 en verde (si `overhead_tokens` difiere por empates de `ts`, aplicar el riesgo de design.md)
-- [ ] 3.3 Medir (MQ en `200m`/`1g`); aplicar la regla D13 y anotar las cifras
+- [x] 3.3 Medir (MQ en `200m`/`1g`); aplicar la regla D13 y anotar las cifras
 
 ## 4. Día local precalculado (D6)
 

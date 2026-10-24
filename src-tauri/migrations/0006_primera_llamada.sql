@@ -5,6 +5,8 @@
 
 ALTER TABLE sessions ADD COLUMN first_call_id TEXT;
 CREATE INDEX calls_first ON calls(session_id, is_sidechain, ts);
+-- Prefijo del anterior: cada inserción mantendría un índice más sin que lo use ninguna consulta.
+DROP INDEX calls_session;
 
 CREATE TABLE dirty_sessions (session_id TEXT PRIMARY KEY) WITHOUT ROWID;
 

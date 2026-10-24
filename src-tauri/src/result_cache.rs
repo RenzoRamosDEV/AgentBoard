@@ -128,9 +128,11 @@ mod tests {
             DataGeneration::default(),
             Cell::new(0),
         );
+        assert!(cache.is_empty());
         cache
             .get_or_compute(&generation, "k".into(), compute(&n, 1))
             .unwrap();
+        assert!(!cache.is_empty());
         generation.bump_for_tests();
         let v = cache
             .get_or_compute(&generation, "k".into(), compute(&n, 2))

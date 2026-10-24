@@ -216,6 +216,57 @@ fn queries(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Arranque con una caché en disco ya llena: abrirla (validarla), aplicar los precios, tener los
+/// datos del Resumen leídos por un lector y, después, el escaneo incremental que no encuentra nada.
+fn warm(
+    path: &std::path::Path,
+    providers: &[Box<dyn agentboard_lib::providers::Provider>],
+) -> Result<()> {
+    let t = Instant::now();
+    let mut storage = db::Storage::open(db::CacheMode::Disco(path.to_path_buf()))?;
+    if storage.mode == db::CacheMode::Memoria {
+        bail!("no se pudo abrir la caché {}", path.display());
+    }
+    agentboard_lib::pricing::apply_overrides(&storage.writer, &[])?;
+    let readers = storage.readers(db::ReadPool::SIZE)?;
+    let opened = t.elapsed();
+    readers.with(|c| common::full_summary(c, &common::last_30_days()))?;
+    let summary = t.elapsed();
+    let scan = Instant::now();
+    let stats = ingest::scan_all(&mut storage.writer, providers)?;
+    let incremental = scan.elapsed();
+    row("warm", "abrir caché y aplicar precios", ms(opened));
+    row("warm", "arranque hasta datos del Resumen", ms(summary));
+    row(
+        "warm",
+        "escaneo incremental sin cambios",
+        format!(
+            "{} ({} archivos, {} líneas)",
+            ms(incremental),
+            stats.files,
+            stats.lines
+        ),
+    );
+    let size: u64 = ["", "-wal", "-shm"]
+        .iter()
+        .filter_map(|suffix| std::fs::metadata(format!("{}{suffix}", path.display())).ok())
+        .map(|m| m.len())
+        .sum();
+    row(
+        "warm",
+        "tamaño de la caché",
+        format!("{:.1} MiB", size as f64 / 1048576.0),
+    );
+    if let Some(kib) = common::peak_rss_kib() {
+        row(
+            "memoria",
+            "RSS pico (VmHWM)",
+            format!("{:.1} MiB", kib as f64 / 1024.0),
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     telemetry::init();
     let args = common::parse_args(std::env::args().skip(1))
@@ -227,19 +278,26 @@ fn main() -> Result<()> {
         );
     }
     let providers = common::providers(&args.fixtures);
-    // Escritor: en el archivo de `--cache` (WAL), en memoria compartida si hay que medir lectores
-    // aparte, o en una base privada en memoria (como la Fase 1 y el servidor MCP).
-    let target = match &args.cache {
-        Some(path) => Some(db::Target::File(path.clone())),
-        None if args.phase == Phase::Contention => Some(db::Target::shared_memory()),
-        None => None,
-    };
-    let mut conn = match &target {
-        Some(t) => db::open_writer(t)?,
-        None => db::open_in_memory()?,
-    };
     row("fase", "métrica", "valor");
     row("fixtures", "carpeta", args.fixtures.display());
+    if args.phase == Phase::Warm {
+        let Some(path) = &args.cache else {
+            bail!("--phase warm necesita --cache <ruta> con una caché ya llena (--phase cold --cache)");
+        };
+        return warm(path, &providers);
+    }
+    // Escritor: en la caché de `--cache` (en disco, WAL), en memoria compartida si hay que medir
+    // lectores aparte, o en una base privada en memoria (como la Fase 1 y el servidor MCP).
+    let storage = match &args.cache {
+        Some(path) => Some(db::Storage::open(db::CacheMode::Disco(path.clone()))?),
+        None if args.phase == Phase::Contention => Some(db::Storage::open(db::CacheMode::Memoria)?),
+        None => None,
+    };
+    let target = storage.as_ref().map(|s| s.target.clone());
+    let mut conn = match storage {
+        Some(s) => s.writer,
+        None => db::open_in_memory()?,
+    };
     cold(
         &mut conn,
         &providers,
@@ -254,9 +312,6 @@ fn main() -> Result<()> {
         for line in common::query_fingerprint(&conn)?.lines() {
             row("huella-c", "", line);
         }
-    }
-    if args.phase == Phase::Warm {
-        bail!("--phase warm llega con la caché en disco (tarea 10.6)");
     }
     if let (Phase::Contention, Some(target)) = (args.phase, &target) {
         contention(&mut conn, target, &providers, &args)?;

@@ -54,7 +54,7 @@ export default function App() {
   const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), language: storedLang(), monthlyBudget: null, dailyBudget: null, budgets: [], priceOverrides: [], alertAt80: true, alertAt100: true, trayShowsToday: false });
+  const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), language: storedLang(), monthlyBudget: null, dailyBudget: null, budgets: [], priceOverrides: [], alertAt80: true, alertAt100: true, trayShowsToday: false, memoryOnly: false });
   const lang = resolveLang(settings.language);
   setLang(lang);
   const [showSettings, setShowSettings] = useState(() => devParams?.get("settings") === "1");

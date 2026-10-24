@@ -236,6 +236,8 @@ export interface Settings {
   alertAt80: boolean;
   alertAt100: boolean;
   trayShowsToday: boolean;
+  /** Sin caché en disco: al abrir la app se vuelven a leer todos los logs. */
+  memoryOnly: boolean;
 }
 
 export type PriceSource = "default" | "edited" | "reported" | "missing";
@@ -277,5 +279,7 @@ export const api = {
   dataInfo: () => invoke<DataInfo>("get_data_info"),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
+  /** Vacía la caché y relee todos los logs; al terminar llega `ingest://done`. */
+  rebuildCache: () => invoke<void>("rebuild_cache"),
   exportData: (filter: Filter, format: "csv" | "json") => invoke<string>("export_data", { filter, format }),
 };

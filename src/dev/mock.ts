@@ -2,6 +2,7 @@
  * Datos de ejemplo para desarrollar la UI en un navegador normal (`npm run dev`),
  * sin el núcleo Rust. Solo se carga en modo dev y fuera de Tauri.
  */
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const DAY = 864e5;
@@ -93,7 +94,7 @@ function sessionDetail(id: string) {
 
 function mockSettings() {
   return {
-    theme: "system", language: "system", monthlyBudget: 60, dailyBudget: 5, alertAt80: true, alertAt100: true, trayShowsToday: false,
+    theme: "system", language: "system", monthlyBudget: 60, dailyBudget: 5, alertAt80: true, alertAt100: true, trayShowsToday: false, memoryOnly: false,
     budgets: [{ kind: "agent", key: "codex", label: "Codex CLI", monthly: 5 }, { kind: "project", key: "AgentBoard", label: "AgentBoard", monthly: 40 }],
     priceOverrides: [{ model: "claude-haiku-4-5", input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1, cacheWrite1h: 1.6 }],
     ...JSON.parse(localStorage.getItem("mockSettings") ?? "{}"),
@@ -269,14 +270,14 @@ export function installMocks() {
       case "set_settings":
         localStorage.setItem("mockSettings", JSON.stringify(a.settings));
         return a.settings;
-      case "plugin:event|listen":
-        return 1;
-      case "plugin:event|unlisten":
+      case "rebuild_cache":
+        // Como el backend: la relectura termina un poco después con `ingest://done`.
+        setTimeout(() => void emit("ingest://done", { files: 212, lines: 0, records: 0, errors: 0 }), 800);
         return null;
     }
     console.warn("mock sin implementar:", cmd, args);
     return null;
-  });
+  }, { shouldMockEvents: true });
 }
 
 /**

@@ -8,6 +8,7 @@
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 
 /// Coste con el precio vigente en la fecha de cada llamada: la fórmula de la vista `call_costs`
 /// de la migración 0004, con el mismo orden de operaciones (mismo resultado en coma flotante).
@@ -141,8 +142,144 @@ pub fn refresh(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Anota claves `(sesión, día)` cuyos derivados hay que rehacer (el escritor de la ingesta, que
-/// inserta sin disparadores).
+/// Lo que el escritor de la ingesta inserta, sumado por clave: llamadas por (día, sesión, modelo)
+/// y herramientas por (día, sesión, herramienta). Sumar inserciones es exacto (las sumas se
+/// suman, `MIN`/`MAX` se combinan), así que estas claves no se recalculan desde las llamadas, que
+/// en una sesión larga son cada vez más: lo demás (filas que cambian o se borran, precios,
+/// limpiezas, primera llamada) sigue yendo a `dirty_keys` y se rehace entero.
+#[derive(Debug, Default)]
+pub struct Deltas {
+    calls: HashMap<(i64, String, String), CallSums>,
+    tools: HashMap<(i64, String, String), ToolSums>,
+    sessions: HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct CallSums {
+    calls: i64,
+    cost: f64,
+    savings: f64,
+    input: i64,
+    output: i64,
+    cache_read: i64,
+    cache_write: i64,
+    unpriced: i64,
+    min_ts: i64,
+    max_ts: i64,
+}
+
+#[derive(Debug, Default)]
+struct ToolSums {
+    uses: i64,
+    errors: i64,
+    min_ts: i64,
+}
+
+/// Una llamada nueva tal como queda en `calls`.
+pub struct NewCall<'a> {
+    pub day: i64,
+    pub session: &'a str,
+    pub model: &'a str,
+    pub ts: i64,
+    pub input: i64,
+    pub output: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
+    pub has_price: bool,
+    pub cost: f64,
+    pub savings: f64,
+}
+
+const ADD_DAILY: &str = "INSERT INTO daily_stats (day, session_id, model, calls, cost_usd,
+       cache_savings_usd, input_tokens, output_tokens, cache_read, cache_write, unpriced_calls,
+       first_calls, first_ctx_tokens, min_ts, max_ts)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, ?12, ?13)
+     ON CONFLICT(day, session_id, model) DO UPDATE SET
+       calls = calls + excluded.calls, cost_usd = cost_usd + excluded.cost_usd,
+       cache_savings_usd = cache_savings_usd + excluded.cache_savings_usd,
+       input_tokens = input_tokens + excluded.input_tokens,
+       output_tokens = output_tokens + excluded.output_tokens,
+       cache_read = cache_read + excluded.cache_read, cache_write = cache_write + excluded.cache_write,
+       unpriced_calls = unpriced_calls + excluded.unpriced_calls,
+       min_ts = MIN(min_ts, excluded.min_ts), max_ts = MAX(max_ts, excluded.max_ts)";
+
+const ADD_TOOLS: &str = "INSERT INTO tool_stats (day, session_id, tool, uses, errors, min_ts)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(day, session_id, tool) DO UPDATE SET
+       uses = uses + excluded.uses, errors = errors + excluded.errors,
+       min_ts = MIN(min_ts, excluded.min_ts)";
+
+impl Deltas {
+    pub fn call(&mut self, c: &NewCall) {
+        let e = self
+            .calls
+            .entry((c.day, c.session.to_string(), c.model.to_string()))
+            .or_insert_with(|| CallSums {
+                min_ts: c.ts,
+                max_ts: c.ts,
+                ..Default::default()
+            });
+        e.calls += 1;
+        e.cost += c.cost;
+        e.savings += c.savings;
+        e.input += c.input;
+        e.output += c.output;
+        e.cache_read += c.cache_read;
+        e.cache_write += c.cache_write;
+        e.unpriced += i64::from(!c.has_price);
+        e.min_ts = e.min_ts.min(c.ts);
+        e.max_ts = e.max_ts.max(c.ts);
+        if !self.sessions.contains(c.session) {
+            self.sessions.insert(c.session.to_string());
+        }
+    }
+
+    /// `uses` herramientas nuevas y `errors` errores más (o menos) en la clave.
+    pub fn tool(&mut self, day: i64, session: &str, tool: &str, ts: i64, uses: i64, errors: i64) {
+        let e = self
+            .tools
+            .entry((day, session.to_string(), tool.to_string()))
+            .or_insert_with(|| ToolSums {
+                min_ts: ts,
+                ..Default::default()
+            });
+        e.uses += uses;
+        e.errors += errors;
+        e.min_ts = e.min_ts.min(ts);
+    }
+
+    /// Suma lo acumulado a los agregados y anota las sesiones para revisar su primera llamada.
+    pub fn apply(&mut self, conn: &Connection) -> Result<()> {
+        let mut add = conn.prepare_cached(ADD_DAILY)?;
+        for ((day, session, model), c) in self.calls.drain() {
+            add.execute(params![
+                day,
+                session,
+                model,
+                c.calls,
+                c.cost,
+                c.savings,
+                c.input,
+                c.output,
+                c.cache_read,
+                c.cache_write,
+                c.unpriced,
+                c.min_ts,
+                c.max_ts
+            ])?;
+        }
+        let mut add = conn.prepare_cached(ADD_TOOLS)?;
+        for ((day, session, tool), t) in self.tools.drain() {
+            add.execute(params![day, session, tool, t.uses, t.errors, t.min_ts])?;
+        }
+        mark_keys(conn, self.sessions.iter().map(|s| (s.as_str(), 0)))?;
+        self.sessions.clear();
+        Ok(())
+    }
+}
+
+/// Anota claves `(sesión, día)` cuyos derivados hay que rehacer desde las llamadas; el día 0 anota
+/// solo la sesión (revisar su primera llamada).
 pub fn mark_keys<'a>(
     conn: &Connection,
     keys: impl IntoIterator<Item = (&'a str, i64)>,
@@ -293,7 +430,64 @@ mod tests {
             ],
         )
         .unwrap();
-        mark_keys(conn, [(session, day)]).unwrap();
+        let mut deltas = Deltas::default();
+        deltas.call(&NewCall {
+            day,
+            session,
+            model,
+            ts,
+            input: c.input_tokens,
+            output: c.output_tokens,
+            cache_read: c.cache_read,
+            cache_write: 0,
+            has_price: cost.has_price,
+            cost: cost.cost_usd,
+            savings: cost.cache_savings_usd,
+        });
+        deltas.apply(conn).unwrap();
+    }
+
+    /// Herramienta nueva como la escribe el escritor: con día y sumada a sus agregados.
+    fn writer_tool(conn: &Connection, id: &str, session: &str, ts: i64, tool: &str) {
+        let day = crate::tz::day_number(ts, &db::cache_zone(conn).unwrap());
+        conn.execute(
+            "INSERT INTO tool_calls (call_id, session_id, ts, tool, day) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, session, ts, tool, day],
+        )
+        .unwrap();
+        let mut deltas = Deltas::default();
+        deltas.tool(day, session, tool, ts, 1, 0);
+        deltas.apply(conn).unwrap();
+    }
+
+    /// Resultado de una herramienta como lo aplica el escritor: cambia `is_error` y suma la
+    /// diferencia de errores a su clave.
+    fn writer_result(conn: &Connection, id: &str, is_error: bool) {
+        let old: Option<(String, Option<i64>, String, i64, bool)> = conn
+            .query_row(
+                "SELECT session_id, day, tool, ts, is_error FROM tool_calls WHERE call_id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .unwrap();
+        conn.execute(
+            "UPDATE tool_calls SET is_error = ?2 WHERE call_id = ?1",
+            rusqlite::params![id, is_error],
+        )
+        .unwrap();
+        if let Some((session, Some(day), tool, ts, was)) = old {
+            let mut deltas = Deltas::default();
+            deltas.tool(
+                day,
+                &session,
+                &tool,
+                ts,
+                0,
+                i64::from(is_error) - i64::from(was),
+            );
+            deltas.apply(conn).unwrap();
+        }
     }
 
     #[test]
@@ -346,12 +540,18 @@ mod tests {
                     }
                     6 => {
                         let tool = ["Bash", "Read", "mcp__srv__x"][rng.next(3) as usize];
-                        conn.execute(
-                            "INSERT INTO tool_calls (call_id, session_id, ts, tool, is_error) VALUES (?1, ?2, ?3, ?4, ?5)",
-                            rusqlite::params![format!("t{tools}"), session, ts, tool, rng.next(3) == 0],
-                        )
-                        .unwrap();
+                        if rng.next(2) == 0 {
+                            writer_tool(&conn, &format!("t{tools}"), &session, ts, tool);
+                        } else {
+                            conn.execute(
+                                "INSERT INTO tool_calls (call_id, session_id, ts, tool, is_error) VALUES (?1, ?2, ?3, ?4, ?5)",
+                                rusqlite::params![format!("t{tools}"), session, ts, tool, rng.next(3) == 0],
+                            )
+                            .unwrap();
+                        }
                         tools += 1;
+                        let id = format!("t{}", rng.next(tools));
+                        writer_result(&conn, &id, rng.next(2) == 0);
                     }
                     7 => {
                         let id = format!("t{}", rng.next(tools.max(1)));
@@ -453,11 +653,8 @@ mod tests {
         let day = crate::tz::day_number(BASE_TS, &db::cache_zone(&conn).unwrap());
         assert_eq!(
             table(&conn, "SELECT day, session_id FROM rewritten ORDER BY 1, 2"),
-            vec![
-                vec![Value::Integer(day), Value::Text("s1".into())],
-                vec![Value::Integer(day), Value::Text("s1".into())],
-            ],
-            "las dos filas de modelo de esa clave y nada más"
+            vec![vec![Value::Integer(day), Value::Text("s1".into())]],
+            "solo la fila de ese día, sesión y modelo (una inserción suma, no recalcula)"
         );
         assert_derived_up_to_date(&conn, "tras la llamada nueva");
     }

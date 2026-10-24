@@ -903,7 +903,17 @@ const LINK_SESSION_FILE: &str =
     "INSERT OR IGNORE INTO session_files (session_id, file) VALUES (?1, ?2)";
 
 /// Sesión y día de una herramienta: su resultado puede cambiar los errores de sus agregados.
-const SELECT_TOOL_KEY: &str = "SELECT session_id, day FROM tool_calls WHERE call_id = ?1";
+const SELECT_TOOL_KEY: &str =
+    "SELECT session_id, day, tool, ts, is_error FROM tool_calls WHERE call_id = ?1";
+
+/// Lo que hace falta de una herramienta para sumar a sus agregados el cambio de su resultado.
+struct ToolKey {
+    session: String,
+    day: Option<i64>,
+    tool: String,
+    ts: i64,
+    is_error: bool,
+}
 
 const UPDATE_TOOL_RESULT: &str = "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
      WHERE call_id = ?4";
@@ -932,12 +942,12 @@ struct Writer<'a> {
     /// mensaje en una línea por bloque de contenido y las repeticiones iguales no se reescriben
     /// (un turno que llegue entre medias lo asigna `backfill_turns` al terminar el archivo).
     calls_seen: HashMap<String, CallRec>,
-    /// Claves `(sesión, día)` con llamadas o herramientas escritas en este archivo, para que
-    /// `derived::refresh` rehaga sus agregados (no hay disparadores de inserción).
-    dirty: HashSet<(String, i64)>,
-    /// Sesión y día de las herramientas insertadas en este archivo, para anotar la clave cuando
-    /// llega su resultado sin buscarla en la base.
-    tool_keys: HashMap<String, (String, i64)>,
+    /// Lo insertado en este archivo, sumado por clave de agregado (no hay disparadores de
+    /// inserción; ver `derived::Deltas`).
+    deltas: crate::derived::Deltas,
+    /// Clave de agregado y `is_error` de las herramientas vistas en este archivo, para aplicar el
+    /// cambio de errores de su resultado sin buscarlas en la base.
+    tool_keys: HashMap<String, ToolKey>,
     /// Sesiones que existen: escritas en este archivo o comprobadas una vez en la base. Sin
     /// claves foráneas (D3), el escritor rechaza él los registros de una sesión inexistente.
     known_sessions: HashSet<String>,
@@ -957,7 +967,7 @@ impl<'a> Writer<'a> {
             models: HashMap::new(),
             new_turns: HashMap::new(),
             calls_seen: HashMap::new(),
-            dirty: HashSet::new(),
+            deltas: crate::derived::Deltas::default(),
             tool_keys: HashMap::new(),
             known_sessions: HashSet::new(),
             file,
@@ -1001,8 +1011,7 @@ impl<'a> Writer<'a> {
                 .prepare_cached(UPDATE_SESSION_MODEL)?
                 .execute(params![model, id])?;
         }
-        crate::derived::mark_keys(self.tx, self.dirty.iter().map(|(s, d)| (s.as_str(), *d)))?;
-        self.dirty.clear();
+        self.deltas.apply(self.tx)?;
         Ok(())
     }
 
@@ -1113,7 +1122,19 @@ impl<'a> Writer<'a> {
                     if written || self.run(INSERT_CALL, values)? == 0 {
                         self.run(UPDATE_CALL, &values[..14])?;
                     } else {
-                        self.dirty.insert((c.session_id.clone(), day));
+                        self.deltas.call(&crate::derived::NewCall {
+                            day,
+                            session: &c.session_id,
+                            model: &c.model,
+                            ts: c.ts,
+                            input: c.input_tokens,
+                            output: c.output_tokens,
+                            cache_read: c.cache_read,
+                            cache_write: c.cache_write,
+                            has_price: cost.has_price,
+                            cost: cost.cost_usd,
+                            savings: cost.cache_savings_usd,
+                        });
                     }
                     self.calls_seen.insert(c.message_id.clone(), c.clone());
                 }
@@ -1137,9 +1158,17 @@ impl<'a> Writer<'a> {
                     ],
                 )?;
                 if n > 0 {
-                    self.dirty.insert((t.session_id.clone(), day));
-                    self.tool_keys
-                        .insert(t.call_id.clone(), (t.session_id.clone(), day));
+                    self.deltas.tool(day, &t.session_id, &t.tool, t.ts, 1, 0);
+                    self.tool_keys.insert(
+                        t.call_id.clone(),
+                        ToolKey {
+                            session: t.session_id.clone(),
+                            day: Some(day),
+                            tool: t.tool.clone(),
+                            ts: t.ts,
+                            is_error: false,
+                        },
+                    );
                     return Ok(Some(t.call_id.clone()));
                 }
                 // Ya existía (relectura): completa las columnas añadidas después.
@@ -1154,17 +1183,32 @@ impl<'a> Writer<'a> {
                 is_error,
                 agent_id,
             } => {
-                if self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])? > 0 {
-                    let key = match self.tool_keys.get(call_id) {
-                        Some(key) => key.clone(),
-                        None => self
-                            .tx
-                            .prepare_cached(SELECT_TOOL_KEY)?
-                            .query_row([call_id], |r| {
-                                Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0)))
-                            })?,
-                    };
-                    self.dirty.insert(key);
+                let known = match self.tool_keys.remove(call_id) {
+                    Some(key) => Some(key),
+                    None => self
+                        .tx
+                        .prepare_cached(SELECT_TOOL_KEY)?
+                        .query_row([call_id], |r| {
+                            Ok(ToolKey {
+                                session: r.get(0)?,
+                                day: r.get(1)?,
+                                tool: r.get(2)?,
+                                ts: r.get(3)?,
+                                is_error: r.get(4)?,
+                            })
+                        })
+                        .optional()?,
+                };
+                self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])?;
+                if let Some(mut key) = known {
+                    // Una fila aún sin día la rehace entera `derived::refresh` al dárselo.
+                    if let (Some(day), true) = (key.day, key.is_error != *is_error) {
+                        let errors = i64::from(*is_error) - i64::from(key.is_error);
+                        self.deltas
+                            .tool(day, &key.session, &key.tool, key.ts, 0, errors);
+                    }
+                    key.is_error = *is_error;
+                    self.tool_keys.insert(call_id.clone(), key);
                 }
             }
             Record::Turn(t) => {

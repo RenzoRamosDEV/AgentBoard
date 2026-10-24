@@ -178,3 +178,45 @@ Huellas de `200m` de partida: la de ingesta (`--fingerprint`) es la de la Fase 1
 `77129075c09dce09`, proyectos `6e7d6f2e8f56231b`); la de consultas (`--query-fingerprint`,
 200 líneas, una por consulta y filtro) está en `docs/perf/huella-consultas-200m.txt` (sha256
 `bd576fe1…54218ac`).
+
+### Paso 2: coste precalculado (D6) — conservado, con cambios
+
+Primera versión, tal como D6 (disparadores `AFTER INSERT/UPDATE` en `calls` que recalculan el
+coste): consultas −20 a −40 %, pero **frío 200 MB 4,19 → 9,34 s (+123 %)**. La alternativa de
+D13 (coste en el `UPSERT`, `INSERT … SELECT` con el precio) seguía en +130 %. El perfil
+(`perf record` del perfil `profiling`) lo explicó: cualquier disparador en `calls`, y también
+cualquier `INSERT … SELECT`, hace que SQLite trate la sentencia como de varias escrituras y abra un
+subdiario de sentencia en cada inserción (`sqlite3BtreeSavepoint` → `memjrnlTruncate`, 31 % de las
+muestras). Versión conservada (desviación de D6):
+
+- **Sin disparadores de inserción en `calls`.** El escritor calcula el coste en Rust con
+  `pricing::PriceBook` (la tabla `prices` en memoria, cargada una vez por lote; misma fórmula y
+  orden de operaciones que 0004, verificado bit a bit por un test) y lo inserta con
+  `INSERT OR IGNORE … VALUES`; si la llamada ya existía, un `UPDATE` que solo escribe si algo
+  cambió (antes, el `UPSERT` reescribía la fila en cada línea repetida).
+- Las repeticiones idénticas del mismo mensaje dentro de un archivo (Claude Code escribe una línea
+  por bloque de contenido) ni siquiera llegan a SQLite: el `Writer` recuerda lo ya escrito en ese
+  archivo; un turno que llegue entre medias lo asigna `backfill_turns` como antes.
+- Una llamada que cambia de valores (disparador de actualización) o un cambio de precios
+  (disparadores en `prices`) deja el coste **pendiente** (`has_price` nulo, índice parcial) y
+  `derived::refresh` lo recalcula al final de la misma transacción (lote, `apply_overrides`,
+  `ingest_file`, apertura de la base). Las filas insertadas con SQL directo (tests) quedan
+  pendientes igual: los helpers de test llaman a `derived::refresh` tras sembrar (D7 ya lo
+  preveía para `testdata::seed`); ninguna aserción cambió.
+- Sin el índice `calls(model, ts)` de D9: solo lo usaba el recálculo por cambio de precios, que es
+  raro y puede recorrer `calls`.
+- `db::trace` ya no cuenta como ejecución de la sentencia la entrada de SQLite al empezar un
+  disparador (`-- TRIGGER …`).
+
+Medición A/B frente a la partida (alternando binarios, load 4–7):
+
+| Métrica | Partida | Paso 2 | Cambio |
+|---|---|---|---|
+| Frío 200 MB | 3 460 ms (3 210–3 758) | 3 546 ms (3 530–3 867) | +2,5 % (≤ 5 %: se conserva) |
+| Resumen 200 MB frío / repetido | 1 536 / 1 613 ms | 965 / 975 ms | −37 % / −40 % |
+| `summary` · `breakdown(project)` · `breakdown(model)` · `timeseries(day)` · `activity` 200 MB | 79 · 217 · 219 · 70 · 106 ms | 38 · 173 · 165 · 37 · 54 ms | −52 · −20 · −24 · −48 · −49 % |
+| Resumen 1 GB frío / repetido | 6 645 / 6 055 ms | 4 441 / 4 428 ms | −33 % / −27 % |
+| `summary` · `breakdown(project)` · `breakdown(model)` · `timeseries(day)` · `activity` 1 GB | 358 · 924 · 967 · 303 · 487 ms | 200 · 754 · 770 · 158 · 271 ms | −44 · −18 · −20 · −48 · −44 % |
+| RSS pico MQ 200 MB / 1 GB | 85 / 297 MiB | 89 / 310 MiB | +5 / +4 % |
+
+Huellas de `200m` (ingesta y consultas) idénticas a las de partida.

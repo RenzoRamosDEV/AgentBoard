@@ -27,7 +27,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 - [x] 4.1 Tests en rojo: (a) el `Writer` guarda `day = YYYYMMDD` local de la zona de la caché, también en los bordes de medianoche y en los dos cambios de hora de `Europe/Madrid`; (b) un `UPSERT` que adelanta `ts` de una llamada a otro día cambia su `day`; (c) filas sin `day` (SQL directo) lo reciben en el refresco; (d) abrir una base con `cache_meta.tz` distinta de la zona del sistema vacía los días y los recalcula; verificar que fallan
 - [x] 4.2 Columna `day` en `calls` y `tool_calls`, `cache_meta.tz`, cálculo en el `Writer` y en el refresco (D6); verificar 4.1, 1.2 y `equivalencia_ingesta` en verde
-- [ ] 4.3 Medir (MF); aplicar la regla D13 (estructural) y anotar las cifras
+- [x] 4.3 Medir (MF); aplicar la regla D13 (estructural) y anotar las cifras
 
 ## 5. Agregados diarios incrementales (D7)
 

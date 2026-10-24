@@ -239,3 +239,15 @@ con los dos, el frío subía un 7 %).
 | Resumen 1 GB frío / repetido | 4 925 / 4 902 ms | 3 457 / 3 408 ms | −30 / −30 % |
 | Frío 200 MB (9 pares) | 2 819 ms | 2 902 ms | +2,9 % (mediana de las razones por par 1,005) |
 | RSS pico MQ 1 GB | 310 MiB | 340 MiB | +10 % |
+
+### Paso 4: día local precalculado (D6) — conservado
+
+`day` (`YYYYMMDD`, `tz::day_number`) lo escribe el escritor con la zona de la caché
+(`cache_meta.tz`, la del sistema al abrir); un `UPDATE` que cambia `ts` lo deja nulo (disparador)
+y `derived::refresh` lo rellena, igual que con las filas de SQL directo. En el `ON CONFLICT` no se
+calcula el día de la `ts` ganadora (desviación menor de D6): esa fila pasa por el refresco, que da
+lo mismo. `db::set_cache_tz` con otra zona pone todos los días a nulo y los rehace en la misma
+transacción.
+
+Frío 200 MB (A/B frente al paso 3, 6 pares, load ~8): 2 818 → 2 847 ms (+1,0 %; razones por par
+0,94–1,06): paso estructural, se conserva.

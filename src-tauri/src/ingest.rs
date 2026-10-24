@@ -1,13 +1,15 @@
 //! Lectura incremental de logs: offset por archivo, upsert por id y nada se borra solo.
 
 use crate::providers::{Provider, Record, Source};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Condvar, Mutex};
 use tracing::field::Empty;
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -68,40 +70,272 @@ fn ensure_agent(conn: &Connection, p: &dyn Provider) -> Result<()> {
 }
 
 /// Escaneo completo: importa todo lo que haya en disco (solo lo nuevo si ya se importó).
-#[tracing::instrument(level = "info", skip_all, fields(files = Empty, lines = Empty, records = Empty, errors = Empty))]
 pub fn scan_all(conn: &mut Connection, providers: &[Box<dyn Provider>]) -> Result<ScanStats> {
-    register_agents(conn, providers)?;
+    scan_all_with_threads(conn, providers, default_threads())
+}
+
+/// `scan_all` leyendo y parseando con `threads` hilos (el resultado no depende de cuántos).
+pub fn scan_all_with_threads(
+    conn: &mut Connection,
+    providers: &[Box<dyn Provider>],
+    threads: usize,
+) -> Result<ScanStats> {
+    scan(&mut ExclusiveDb(conn), providers, threads)
+}
+
+/// `scan_all` sobre una base compartida: el `Mutex` solo se toma para escribir cada lote, así
+/// que otras hebras pueden consultar mientras se leen y parsean los archivos.
+pub fn scan_shared(db: &Mutex<Connection>, providers: &[Box<dyn Provider>]) -> Result<ScanStats> {
+    scan(&mut SharedDb(db), providers, default_threads())
+}
+
+pub fn default_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// Registros por transacción del escritor: suelta la base cada pocos milisegundos.
+const BATCH_RECORDS: usize = 5_000;
+/// Archivos leídos por delante del escritor, por hilo de lectura (acota la memoria en vuelo).
+const WINDOW_PER_THREAD: usize = 4;
+
+/// Acceso del escritor a la base: una conexión propia o una compartida tras un `Mutex`.
+trait DbSink {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>;
+}
+
+struct ExclusiveDb<'a>(&'a mut Connection);
+
+impl DbSink for ExclusiveDb<'_> {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        f(self.0)
+    }
+}
+
+struct SharedDb<'a>(&'a Mutex<Connection>);
+
+impl DbSink for SharedDb<'_> {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        let mut conn = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("base de datos envenenada: {e}"))?;
+        f(&mut conn)
+    }
+}
+
+/// Un archivo que leer, en el orden en que se escribe: proveedor, raíz y ruta ordenada.
+struct Job {
+    provider: usize,
+    path: PathBuf,
+}
+
+type ReadResult = Result<Option<ParsedFile>>;
+
+#[tracing::instrument(name = "scan_all", level = "info", skip_all, fields(files = Empty, lines = Empty, records = Empty, errors = Empty))]
+fn scan<D: DbSink>(
+    db: &mut D,
+    providers: &[Box<dyn Provider>],
+    threads: usize,
+) -> Result<ScanStats> {
+    let states = db.with(|conn| {
+        register_agents(conn, providers)?;
+        // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
+        conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
+        load_file_states(conn)
+    })?;
     let mut stats = ScanStats::default();
-    // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
-    conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
-    let states = load_file_states(conn)?;
-    for p in providers {
+    let mut jobs = Vec::new();
+    for (i, p) in providers.iter().enumerate() {
         for root in p.log_roots().into_iter().filter(|r| r.is_dir()) {
-            for path in walk(&root) {
-                if !p.matches(&path) {
-                    continue;
-                }
-                let prev = states.get(path.to_string_lossy().as_ref());
-                match ingest_file_from(conn, p.as_ref(), &path, prev) {
-                    Ok(r) => {
-                        stats.files += 1;
-                        stats.lines += r.lines;
-                        stats.records += r.records;
-                    }
-                    Err(e) => {
-                        stats.errors += 1;
-                        tracing::warn!(ruta = %path.display(), "agentboard: error leyendo {}: {e:#}", path.display());
-                    }
+            for path in walk(&root).into_iter().filter(|path| p.matches(path)) {
+                // Los archivos sin cambios se descartan aquí, sin abrirlos ni ocupar un lector.
+                if p.source() == Source::Jsonl
+                    && is_unchanged(&path, states.get(path.to_string_lossy().as_ref()))
+                {
+                    stats.files += 1;
+                } else {
+                    jobs.push(Job { provider: i, path });
                 }
             }
         }
     }
+    let threads = threads.clamp(1, jobs.len().max(1));
+    let window = Window::new(WINDOW_PER_THREAD * threads);
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| -> Result<()> {
+        let (tx, rx) = mpsc::sync_channel::<(usize, ReadResult)>(window.size);
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+        let parent = tracing::Span::current();
+        for _ in 0..threads {
+            let tx = tx.clone();
+            let (dispatch, parent) = (dispatch.clone(), parent.clone());
+            let (jobs, states, window, next) = (&jobs, &states, &window, &next);
+            scope.spawn(move || {
+                tracing::dispatcher::with_default(&dispatch, || {
+                    let _span = parent.entered();
+                    read_jobs(providers, jobs, states, window, next, &tx);
+                })
+            });
+        }
+        drop(tx);
+        let written = write_in_order(db, providers, &jobs, rx, &window, &mut stats);
+        window.close();
+        written
+    })?;
     let span = tracing::Span::current();
     span.record("files", stats.files);
     span.record("lines", stats.lines);
     span.record("records", stats.records);
     span.record("errors", stats.errors);
     Ok(stats)
+}
+
+/// Cuántos archivos ha recogido ya el escritor: un lector no empieza el archivo `i` hasta que
+/// `i < recogidos + size`. El siguiente que espera el escritor siempre cabe, así que no hay
+/// interbloqueo, y la memoria en vuelo queda acotada.
+struct Window {
+    size: usize,
+    taken: Mutex<(usize, bool)>,
+    moved: Condvar,
+}
+
+impl Window {
+    fn new(size: usize) -> Self {
+        Self {
+            size,
+            taken: Mutex::new((0, false)),
+            moved: Condvar::new(),
+        }
+    }
+
+    /// Espera a que el archivo `i` quepa en la ventana; `false` si el escaneo terminó antes.
+    fn wait_for(&self, i: usize) -> bool {
+        let mut state = self.taken.lock().unwrap_or_else(|e| e.into_inner());
+        while i >= state.0 + self.size && !state.1 {
+            state = self.moved.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+        !state.1
+    }
+
+    fn advance(&self, taken: usize) {
+        self.taken.lock().unwrap_or_else(|e| e.into_inner()).0 = taken;
+        self.moved.notify_all();
+    }
+
+    fn close(&self) {
+        self.taken.lock().unwrap_or_else(|e| e.into_inner()).1 = true;
+        self.moved.notify_all();
+    }
+}
+
+fn read_jobs(
+    providers: &[Box<dyn Provider>],
+    jobs: &[Job],
+    states: &HashMap<String, FileState>,
+    window: &Window,
+    next: &AtomicUsize,
+    tx: &mpsc::SyncSender<(usize, ReadResult)>,
+) {
+    loop {
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        let Some(job) = jobs.get(i) else {
+            return;
+        };
+        if !window.wait_for(i) {
+            return;
+        }
+        let prev = states.get(job.path.to_string_lossy().as_ref());
+        let read = read_file(providers[job.provider].as_ref(), &job.path, prev);
+        if tx.send((i, read)).is_err() {
+            return;
+        }
+    }
+}
+
+/// Recibe los archivos leídos en cualquier orden y los escribe en el orden de `jobs`, por lotes.
+fn write_in_order<D: DbSink>(
+    db: &mut D,
+    providers: &[Box<dyn Provider>],
+    jobs: &[Job],
+    rx: mpsc::Receiver<(usize, ReadResult)>,
+    window: &Window,
+    stats: &mut ScanStats,
+) -> Result<()> {
+    let mut pending: BTreeMap<usize, ReadResult> = BTreeMap::new();
+    let mut batch: Vec<(usize, ParsedFile)> = Vec::new();
+    let mut batch_records = 0;
+    let mut taken = 0;
+    while taken < jobs.len() {
+        let Some(read) = pending.remove(&taken) else {
+            let received = match rx.try_recv() {
+                Ok(r) => r,
+                Err(_) => {
+                    // Nada listo: se escribe lo acumulado antes de esperar al siguiente archivo.
+                    write_batch(db, providers, jobs, &mut batch, stats)?;
+                    batch_records = 0;
+                    rx.recv()
+                        .map_err(|_| anyhow!("los lectores terminaron antes de tiempo"))?
+                }
+            };
+            pending.insert(received.0, received.1);
+            continue;
+        };
+        let i = taken;
+        taken += 1;
+        window.advance(taken);
+        match read {
+            Ok(None) => stats.files += 1,
+            Ok(Some(parsed)) => {
+                batch_records += parsed.records.len();
+                batch.push((i, parsed));
+                if batch_records >= BATCH_RECORDS {
+                    write_batch(db, providers, jobs, &mut batch, stats)?;
+                    batch_records = 0;
+                }
+            }
+            Err(e) => read_error(&jobs[i].path, &e, stats),
+        }
+    }
+    write_batch(db, providers, jobs, &mut batch, stats)
+}
+
+fn read_error(path: &Path, e: &anyhow::Error, stats: &mut ScanStats) {
+    stats.errors += 1;
+    tracing::warn!(ruta = %path.display(), "agentboard: error leyendo {}: {e:#}", path.display());
+}
+
+/// Una transacción por lote y un `SAVEPOINT` por archivo: un fallo deshace solo ese archivo.
+fn write_batch<D: DbSink>(
+    db: &mut D,
+    providers: &[Box<dyn Provider>],
+    jobs: &[Job],
+    batch: &mut Vec<(usize, ParsedFile)>,
+    stats: &mut ScanStats,
+) -> Result<()> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    db.with(|conn| {
+        let mut tx = conn.transaction()?;
+        for (i, parsed) in batch.drain(..) {
+            let job = &jobs[i];
+            let sp = tx.savepoint()?;
+            match write_file(&sp, providers[job.provider].as_ref(), &parsed) {
+                Ok(r) => {
+                    sp.commit()?;
+                    stats.files += 1;
+                    stats.lines += r.lines;
+                    stats.records += r.records;
+                }
+                Err(e) => {
+                    drop(sp);
+                    read_error(&job.path, &e, stats);
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    })
 }
 
 /// Archivos bajo `root`, recursivo, sin seguir enlaces.
@@ -171,6 +405,16 @@ pub fn load_file_states(conn: &Connection) -> Result<HashMap<String, FileState>>
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Misma identidad y nada tras el offset guardado. Si no se puede consultar, no se da por
+/// igual: la lectura dirá el error.
+fn is_unchanged(path: &Path, prev: Option<&FileState>) -> bool {
+    let Some(prev) = prev else {
+        return false;
+    };
+    fs::metadata(path)
+        .is_ok_and(|m| file_identity(&m) == prev.file_id && m.len() as i64 == prev.offset)
+}
+
 /// Lo nuevo de un archivo, ya parseado y listo para escribir.
 #[derive(Debug, Default)]
 pub struct ParsedFile {
@@ -215,7 +459,7 @@ fn read_jsonl(
     let size = meta.len() as i64;
     let file_id = file_identity(&meta);
     let same_file = |s: &FileState| s.file_id == file_id && size >= s.offset;
-    if prev.is_some_and(|s| same_file(s) && s.offset == size) {
+    if prev.is_some_and(|s| s.file_id == file_id && s.offset == size) {
         return Ok(None);
     }
     // Un documento completo (no JSONL) se relee entero cada vez que cambia.
@@ -365,16 +609,7 @@ pub fn ingest_file(
             })
         })
         .optional()?;
-    ingest_file_from(conn, provider, path, prev.as_ref())
-}
-
-fn ingest_file_from(
-    conn: &mut Connection,
-    provider: &dyn Provider,
-    path: &Path,
-    prev: Option<&FileState>,
-) -> Result<FileResult> {
-    let Some(parsed) = read_file(provider, path, prev)? else {
+    let Some(parsed) = read_file(provider, path, prev.as_ref())? else {
         return Ok(FileResult::default());
     };
     let tx = conn.transaction()?;
@@ -803,6 +1038,100 @@ mod tests {
             })
             .count();
         assert_eq!(selects, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archivo_ilegible_entre_validos_cuenta_un_error_y_el_resto_se_importa() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_d, file, p, mut conn) = setup();
+        let dir = file.parent().unwrap();
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            fs::write(
+                dir.join(format!("{name}.jsonl")),
+                line(&format!("m{i}"), 1, "2026-09-25T10:00:00Z") + "\n",
+            )
+            .unwrap();
+        }
+        let bad = dir.join("b.jsonl");
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&bad).is_ok() {
+            return; // root ignora los permisos
+        }
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(p)];
+        let mut stats = ScanStats::default();
+        let out = crate::telemetry::tests::captured(None, || {
+            stats = scan_all_with_threads(&mut conn, &providers, 4).unwrap();
+        });
+        assert_eq!((stats.files, stats.errors), (2, 1));
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 2);
+        assert!(out.contains(&bad.display().to_string()), "{out}");
+    }
+
+    /// Proveedor de prueba: `ok <id>` crea sesión y llamada; `huerfana <id>` crea una llamada
+    /// de una sesión inexistente (viola la clave foránea al escribir).
+    struct Fake(PathBuf);
+
+    impl Provider for Fake {
+        fn id(&self) -> &'static str {
+            "fake"
+        }
+        fn name(&self) -> &'static str {
+            "Fake"
+        }
+        fn log_roots(&self) -> Vec<PathBuf> {
+            vec![self.0.clone()]
+        }
+        fn matches(&self, path: &Path) -> bool {
+            path.extension().is_some_and(|e| e == "log")
+        }
+        fn parse_line(&self, _path: &Path, line: &str) -> Result<Vec<Record>> {
+            use crate::providers::{CallRec, SessionRec};
+            let (kind, id) = line.split_once(' ').unwrap_or((line, ""));
+            let call = |session: &str| {
+                Record::Call(CallRec {
+                    message_id: id.to_string(),
+                    session_id: session.to_string(),
+                    ts: 1,
+                    model: "m".into(),
+                    ..Default::default()
+                })
+            };
+            Ok(match kind {
+                "ok" => vec![
+                    Record::Session(SessionRec {
+                        id: format!("s-{id}"),
+                        cwd: None,
+                        git_branch: None,
+                        ts: 1,
+                        is_subagent: false,
+                    }),
+                    call(&format!("s-{id}")),
+                ],
+                _ => vec![call("fantasma")],
+            })
+        }
+    }
+
+    #[test]
+    fn un_fallo_al_escribir_deshace_solo_ese_archivo() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.log"), "ok a1\n").unwrap();
+        fs::write(dir.path().join("b.log"), "ok b1\nhuerfana b2\n").unwrap();
+        fs::write(dir.path().join("c.log"), "ok c1\n").unwrap();
+        let mut conn = db::open_in_memory().unwrap();
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(Fake(dir.path().to_path_buf()))];
+        let stats = scan_all_with_threads(&mut conn, &providers, 2).unwrap();
+        assert_eq!((stats.files, stats.errors), (2, 1));
+        let ids: Vec<String> = conn
+            .prepare("SELECT message_id FROM calls ORDER BY 1")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(ids, ["a1", "c1"]);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM file_state"), 2);
     }
 
     #[test]

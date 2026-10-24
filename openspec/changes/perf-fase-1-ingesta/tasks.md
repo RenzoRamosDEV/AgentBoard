@@ -34,9 +34,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 5. Escaneo paralelo determinista
 
-- [ ] 5.1 Tests en rojo: (a) escanear el fixture `2m` con 1 y con 4 hilos da la misma huella, repetido 5 veces; (b) con `N = 2`, un archivo grande y 50 pequeños el escaneo termina (sin interbloqueo) con la misma huella; (c) un archivo ilegible entre válidos cuenta un error con su ruta y el resto se importa; (d) un archivo cuya escritura falla (p. ej. registro que viola una restricción en test) deshace solo ese archivo; verificar que fallan
-- [ ] 5.2 Implementar el pipeline de D4 (plan → workers con `std::thread::scope`, ventana `4 × N`, `sync_channel` → escritor que reordena por índice y escribe en lotes de ~5 000 registros con `SAVEPOINT` por archivo), con el sumidero `&mut Connection` para `scan_all` (firma sin cambios) y `&Mutex<Connection>` para uso compartido; conservar `ScanStats` y spans; verificar 5.1, 1.3, `cargo test --workspace` (incluido `trazas_sin_regresion` y el MCP) en verde
-- [ ] 5.3 Medir (M, frío y `live --repeat 200`) con el número de hilos por defecto; ajustar lote y ventana solo si la medición lo justifica; aplicar la regla D9 y anotar las cifras
+- [x] 5.1 Tests en rojo: (a) escanear el fixture `2m` con 1 y con 4 hilos da la misma huella, repetido 5 veces; (b) con `N = 2`, un archivo grande y 50 pequeños el escaneo termina (sin interbloqueo) con la misma huella; (c) un archivo ilegible entre válidos cuenta un error con su ruta y el resto se importa; (d) un archivo cuya escritura falla (p. ej. registro que viola una restricción en test) deshace solo ese archivo; verificar que fallan
+- [x] 5.2 Implementar el pipeline de D4 (plan → workers con `std::thread::scope`, ventana `4 × N`, `sync_channel` → escritor que reordena por índice y escribe en lotes de ~5 000 registros con `SAVEPOINT` por archivo), con el sumidero `&mut Connection` para `scan_all` (firma sin cambios) y `&Mutex<Connection>` para uso compartido; conservar `ScanStats` y spans; verificar 5.1, 1.3, `cargo test --workspace` (incluido `trazas_sin_regresion` y el MCP) en verde
+- [x] 5.3 Medir (M, frío y `live --repeat 200`) con el número de hilos por defecto; ajustar lote y ventana solo si la medición lo justifica; aplicar la regla D9 y anotar las cifras
 
 ## 6. Hilo de ingesta dedicado
 

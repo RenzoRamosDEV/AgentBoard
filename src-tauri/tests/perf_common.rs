@@ -26,8 +26,32 @@ fn valores_por_defecto() {
             live_lines: 1000,
             repeat: 1,
             fingerprint: false,
+            query_fingerprint: false,
+            cache: None,
         }
     );
+}
+
+#[test]
+fn opciones_de_la_fase_2() {
+    let a = args(&[
+        "--fixtures",
+        "d",
+        "--query-fingerprint",
+        "--cache",
+        "/tmp/c.sqlite",
+    ])
+    .unwrap();
+    assert!(a.query_fingerprint);
+    assert!(!a.fingerprint);
+    assert_eq!(a.cache, Some(PathBuf::from("/tmp/c.sqlite")));
+    for (raw, phase) in [("warm", Phase::Warm), ("contention", Phase::Contention)] {
+        assert_eq!(
+            args(&["--fixtures", "d", "--phase", raw]).unwrap().phase,
+            phase
+        );
+    }
+    assert!(args(&["--fixtures", "d", "--cache"]).is_err());
 }
 
 #[test]

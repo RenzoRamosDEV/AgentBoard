@@ -237,6 +237,8 @@ pub enum Phase {
     Cold,
     Live,
     Queries,
+    Warm,
+    Contention,
     All,
 }
 
@@ -247,10 +249,12 @@ pub struct Args {
     pub live_lines: usize,
     pub repeat: usize,
     pub fingerprint: bool,
+    pub query_fingerprint: bool,
+    pub cache: Option<PathBuf>,
 }
 
 pub const USAGE: &str =
-    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|all] [--live-lines N] [--repeat R] [--fingerprint]";
+    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|warm|contention|all] [--live-lines N] [--repeat R] [--fingerprint] [--query-fingerprint] [--cache <ruta>]";
 
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut fixtures = None;
@@ -258,6 +262,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
     let mut live_lines = 1000;
     let mut repeat = 1;
     let mut fingerprint = false;
+    let mut query_fingerprint = false;
+    let mut cache = None;
     let mut it = args.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("falta el valor de {flag}"));
@@ -268,6 +274,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
                     "cold" => Phase::Cold,
                     "live" => Phase::Live,
                     "queries" => Phase::Queries,
+                    "warm" => Phase::Warm,
+                    "contention" => Phase::Contention,
                     "all" => Phase::All,
                     other => return Err(format!("fase desconocida: {other}")),
                 }
@@ -275,6 +283,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
             "--live-lines" => live_lines = positive(&flag, &value()?)?,
             "--repeat" => repeat = positive(&flag, &value()?)?,
             "--fingerprint" => fingerprint = true,
+            "--query-fingerprint" => query_fingerprint = true,
+            "--cache" => cache = Some(PathBuf::from(value()?)),
             other => return Err(format!("argumento desconocido: {other}")),
         }
     }
@@ -284,6 +294,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
         live_lines,
         repeat,
         fingerprint,
+        query_fingerprint,
+        cache,
     })
 }
 

@@ -126,11 +126,12 @@ fn queries(conn: &Connection) -> Result<()> {
             format!("{} primera, {} mediana", ms(first), ms(warm)),
         );
     }
-    let (first, warm) = timed(|| common::full_summary(conn, &f))?;
+    let (first, repeated) = timed(|| common::full_summary(conn, &f))?;
+    row("queries", "resumen completo frío (18 llamadas)", ms(first));
     row(
         "queries",
-        "resumen completo (18 llamadas)",
-        format!("{} primera, {} mediana", ms(first), ms(warm)),
+        "resumen completo repetido (mediana)",
+        ms(repeated),
     );
     Ok(())
 }
@@ -158,6 +159,14 @@ fn main() -> Result<()> {
         for line in common::fingerprint(&conn)?.lines() {
             row("huella", "", line);
         }
+    }
+    if args.query_fingerprint {
+        for line in common::query_fingerprint(&conn)?.lines() {
+            row("huella-c", "", line);
+        }
+    }
+    if matches!(args.phase, Phase::Warm | Phase::Contention) || args.cache.is_some() {
+        bail!("--phase warm|contention y --cache llegan con la caché en disco y los lectores");
     }
     if matches!(args.phase, Phase::Live | Phase::All) {
         live(&mut conn, &providers, &args)?;

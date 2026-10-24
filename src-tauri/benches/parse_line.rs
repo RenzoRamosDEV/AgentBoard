@@ -1,11 +1,14 @@
-//! Parseo de una línea representativa (respuesta con tokens y uso de herramienta) por proveedor.
-//! Uso: `cargo bench --bench parse_line`
+//! Parseo de una línea representativa (respuesta con tokens y uso de herramienta) por proveedor
+//! y, con el fixture `50m`, de su archivo más grande entero (incluye las líneas que no producen
+//! filas). Uso: `cargo bench --bench parse_line`
+
+mod common;
 
 use agentboard_lib::providers::{
     claude_code::ClaudeCode, codex::Codex, copilot::Copilot, cursor::Cursor, gemini::Gemini,
     Provider,
 };
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::PathBuf;
 
@@ -84,5 +87,47 @@ fn bench(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench);
+/// Archivo más grande del proveedor en el fixture (el primero por ruta si empatan).
+fn largest(provider: &dyn Provider) -> Option<PathBuf> {
+    provider
+        .log_roots()
+        .iter()
+        .flat_map(|r| agentboard_lib::ingest::walk(r))
+        .filter(|p| provider.matches(p))
+        .max_by_key(|p| {
+            (
+                std::fs::metadata(p).map_or(0, |m| m.len()),
+                std::cmp::Reverse(p.clone()),
+            )
+        })
+}
+
+fn bench_files(c: &mut Criterion) {
+    let Some(root) = common::ensure_fixture("50m") else {
+        return;
+    };
+    let mut group = c.benchmark_group("parse_file");
+    group.sample_size(20);
+    for (name, provider) in ["claude_code", "codex", "copilot", "cursor", "gemini"]
+        .into_iter()
+        .zip(common::providers(&root))
+    {
+        let Some(path) = largest(provider.as_ref()) else {
+            continue;
+        };
+        let text = std::fs::read_to_string(&path).expect("fixture 50m");
+        group.throughput(Throughput::Bytes(text.len() as u64));
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                provider.reset(&path);
+                for line in text.lines() {
+                    let _ = black_box(provider.parse_line(&path, black_box(line)));
+                }
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench, bench_files);
 criterion_main!(benches);

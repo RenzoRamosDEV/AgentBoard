@@ -162,6 +162,44 @@ impl<'de> Deserialize<'de> for Seen {
     }
 }
 
+/// Entero o cadena (p. ej. una fecha que llega como epoch ms o como texto).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub enum IntOrStr<'a> {
+    Int(Option<i64>),
+    Str(Cow<'a, str>),
+    #[default]
+    Other,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for IntOrStr<'a> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<'a>(PhantomData<&'a ()>);
+        impl<'de: 'a, 'a> de::Visitor<'de> for V<'a> {
+            type Value = IntOrStr<'a>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<IntOrStr<'a>, E> {
+                Ok(IntOrStr::Int(Some(v)))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<IntOrStr<'a>, E> {
+                Ok(IntOrStr::Int(i64::try_from(v).ok()))
+            }
+            fn visit_borrowed_str<E: de::Error>(self, v: &'de str) -> Result<IntOrStr<'a>, E> {
+                Ok(IntOrStr::Str(Cow::Borrowed(v)))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<IntOrStr<'a>, E> {
+                Ok(IntOrStr::Str(Cow::Owned(v.to_owned())))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<IntOrStr<'a>, E> {
+                Ok(IntOrStr::Str(Cow::Owned(v)))
+            }
+            ignore_others!(IntOrStr<'a>, IntOrStr::Other, [bool, f64, unit, seq, map]);
+        }
+        d.deserialize_any(V(PhantomData))
+    }
+}
+
 /// Booleano si el valor es un booleano.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Bool(pub Option<bool>);

@@ -6,12 +6,14 @@
 //! agregados por modelo en `session.shutdown`, así que al cerrar la sesión se reparten entre
 //! las respuestas de ese modelo desde el cierre anterior (una sesión reanudada cierra varias veces).
 
+use super::json::{Bool, Int, IntOrStr, Obj, Str};
 use super::{
     parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,
 };
 use anyhow::Result;
-use serde_json::Value;
-use std::collections::HashMap;
+use serde::Deserialize;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -31,16 +33,6 @@ struct Usage {
 }
 
 impl Usage {
-    fn from_json(v: &Value) -> Self {
-        let n = |k: &str| v[k].as_i64().unwrap_or(0);
-        Self {
-            input: n("inputTokens"),
-            output: n("outputTokens"),
-            cache_read: n("cacheReadTokens"),
-            cache_write: n("cacheWriteTokens"),
-            reasoning: n("reasoningTokens"),
-        }
-    }
     fn delta(self, prev: Self) -> Self {
         let d = |a: i64, b: i64| (a - b).max(0);
         Self {
@@ -61,7 +53,8 @@ struct FileState {
     model: String,
     turn_id: Option<String>,
     turns: u32,
-    pending_prompt: Option<String>,
+    /// Intención del último prompt, a la espera de su turno (el texto no se guarda).
+    pending_intent: Option<&'static str>,
     /// Respuestas por modelo desde el último `session.shutdown`: (message_id, ts, tokens de salida).
     pending_calls: HashMap<String, Vec<(String, i64, i64)>>,
     /// Último total acumulado por modelo, para calcular el delta del siguiente cierre.
@@ -102,11 +95,196 @@ fn canonical_tool(name: &str) -> &str {
     }
 }
 
-/// `timestamp` llega como epoch ms (número) o como fecha RFC 3339.
-fn line_ts(v: &Value) -> Option<i64> {
-    v["timestamp"]
-        .as_i64()
-        .or_else(|| v["timestamp"].as_str().and_then(parse_ts))
+/// Envoltura de una línea: tipo y fecha (epoch ms o RFC 3339).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Probe<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    timestamp: IntOrStr<'a>,
+}
+
+impl Probe<'_> {
+    fn ts(&self) -> Option<i64> {
+        match &self.timestamp {
+            IntOrStr::Int(ms) => *ms,
+            IntOrStr::Str(s) => parse_ts(s),
+            IntOrStr::Other => None,
+        }
+    }
+
+    /// ¿Puede la línea producir filas o cambiar el estado del archivo? (Derivado de `parse_line`.)
+    fn is_useful(&self) -> bool {
+        matches!(
+            self.kind.as_deref(),
+            Some(
+                "session.start"
+                    | "session.resume"
+                    | "session.model_change"
+                    | "user.message"
+                    | "assistant.turn_start"
+                    | "assistant.message"
+                    | "tool.execution_start"
+                    | "subagent.started"
+                    | "skill.invoked"
+                    | "tool.execution_complete"
+                    | "subagent.completed"
+                    | "session.shutdown"
+                    | "session.compaction_complete"
+                    | "abort"
+            )
+        )
+    }
+}
+
+/// Línea útil: su `id` y los campos usados de `data` (sin textos de mensajes ni resultados).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Line<'a> {
+    #[serde(borrow)]
+    id: Str<'a>,
+    #[serde(borrow)]
+    data: Obj<Data<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Data<'a> {
+    #[serde(borrow)]
+    session_id: Str<'a>,
+    #[serde(borrow)]
+    selected_model: Str<'a>,
+    #[serde(borrow)]
+    current_model: Str<'a>,
+    #[serde(borrow)]
+    context: Obj<Context<'a>>,
+    #[serde(borrow)]
+    new_model: Str<'a>,
+    #[serde(borrow)]
+    model: Str<'a>,
+    #[serde(borrow)]
+    turn_id: Str<'a>,
+    #[serde(borrow)]
+    message_id: Str<'a>,
+    output_tokens: Int,
+    #[serde(borrow)]
+    tool_name: Str<'a>,
+    #[serde(borrow)]
+    name: Str<'a>,
+    #[serde(borrow)]
+    arguments: Obj<Arguments<'a>>,
+    #[serde(borrow)]
+    agent_name: Str<'a>,
+    #[serde(borrow)]
+    agent_type: Str<'a>,
+    #[serde(borrow)]
+    subagent_type: Str<'a>,
+    #[serde(borrow)]
+    agent: Str<'a>,
+    #[serde(borrow)]
+    skill_name: Str<'a>,
+    #[serde(borrow)]
+    skill: Str<'a>,
+    #[serde(borrow)]
+    tool_call_id: Str<'a>,
+    #[serde(borrow)]
+    subagent_id: Str<'a>,
+    #[serde(borrow)]
+    agent_id: Str<'a>,
+    #[serde(borrow)]
+    id: Str<'a>,
+    success: Bool,
+    #[serde(borrow)]
+    error: Str<'a>,
+    #[serde(borrow)]
+    model_metrics: Obj<BTreeMap<Cow<'a, str>, Obj<Metric>>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Context<'a> {
+    #[serde(borrow)]
+    cwd: Str<'a>,
+    #[serde(borrow)]
+    branch: Str<'a>,
+}
+
+/// Argumentos de una herramienta: objetivo y nombre del subagente o la skill.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Arguments<'a> {
+    #[serde(borrow)]
+    command: Str<'a>,
+    #[serde(borrow)]
+    path: Str<'a>,
+    #[serde(borrow)]
+    file_path: Str<'a>,
+    #[serde(borrow)]
+    pattern: Str<'a>,
+    #[serde(borrow)]
+    query: Str<'a>,
+    #[serde(borrow)]
+    url: Str<'a>,
+    #[serde(borrow)]
+    description: Str<'a>,
+    #[serde(rename = "agentName", borrow)]
+    agent_name: Str<'a>,
+    #[serde(rename = "agentType", borrow)]
+    agent_type: Str<'a>,
+    #[serde(rename = "subagentType", borrow)]
+    subagent_type: Str<'a>,
+    #[serde(borrow)]
+    name: Str<'a>,
+    #[serde(borrow)]
+    agent: Str<'a>,
+    #[serde(rename = "skillName", borrow)]
+    skill_name: Str<'a>,
+    #[serde(borrow)]
+    skill: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Metric {
+    usage: Obj<MetricUsage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct MetricUsage {
+    input_tokens: Int,
+    output_tokens: Int,
+    cache_read_tokens: Int,
+    cache_write_tokens: Int,
+    reasoning_tokens: Int,
+}
+
+impl From<&MetricUsage> for Usage {
+    fn from(u: &MetricUsage) -> Self {
+        Self {
+            input: u.input_tokens.0,
+            output: u.output_tokens.0,
+            cache_read: u.cache_read_tokens.0,
+            cache_write: u.cache_write_tokens.0,
+            reasoning: u.reasoning_tokens.0,
+        }
+    }
+}
+
+/// Un `user.message`: solo su texto, para la intención.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserLine<'a> {
+    #[serde(borrow)]
+    data: Obj<UserData<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserData<'a> {
+    #[serde(borrow)]
+    content: Str<'a>,
 }
 
 impl Provider for Copilot {
@@ -148,8 +326,12 @@ impl Provider for Copilot {
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
-        let v: Value = serde_json::from_str(line)?;
-        let Some(ts) = line_ts(&v) else {
+        // Sonda: tipo y fecha; los tipos que no producen filas ni cambian el estado se descartan
+        // sin leer su contenido.
+        let Obj(Some(probe)) = serde_json::from_str::<Obj<Probe>>(line)? else {
+            return Ok(vec![]);
+        };
+        let Some(ts) = probe.ts() else {
             return Ok(vec![]);
         };
         let mut states = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -163,40 +345,62 @@ impl Provider for Copilot {
                 .unwrap_or("")
                 .to_string();
         }
-        let d = &v["data"];
+        if !probe.is_useful() {
+            return Ok(vec![]);
+        }
+        let kind = probe.kind.as_deref().unwrap_or("");
+        if kind == "user.message" {
+            // Solo la intención: el texto del prompt no se guarda.
+            let user: Obj<UserLine> = serde_json::from_str(line)?;
+            let text = user
+                .0
+                .as_ref()
+                .and_then(|u| u.data.0.as_ref())
+                .and_then(|d| d.content.as_deref())
+                .unwrap_or("");
+            st.pending_intent = prompt_intent(text);
+            return Ok(vec![]);
+        }
+        let parsed: Obj<Line> = serde_json::from_str(line)?;
+        let empty_line = Line::default();
+        let line_rec = parsed.0.as_ref().unwrap_or(&empty_line);
+        let empty = Data::default();
+        let d = line_rec.data.0.as_ref().unwrap_or(&empty);
+        let no_args = Arguments::default();
+        let args = d.arguments.0.as_ref().unwrap_or(&no_args);
         let mut out = Vec::new();
 
-        match v["type"].as_str().unwrap_or("") {
+        match kind {
             "session.start" | "session.resume" => {
-                if let Some(id) = d["sessionId"].as_str() {
+                if let Some(id) = d.session_id.as_deref() {
                     st.session_id = id.to_string();
                 }
-                if let Some(m) = d["selectedModel"].as_str().or(d["currentModel"].as_str()) {
+                if let Some(m) = d.selected_model.as_deref().or(d.current_model.as_deref()) {
                     st.model = m.to_string();
                 }
-                if let Some(c) = d["context"]["cwd"].as_str() {
+                let context = d.context.0.as_ref();
+                if let Some(c) = context.and_then(|c| c.cwd.as_deref()) {
                     st.cwd = Some(c.to_string());
                 }
-                if let Some(b) = d["context"]["branch"].as_str() {
+                if let Some(b) = context.and_then(|c| c.branch.as_deref()) {
                     st.branch = Some(b.to_string());
                 }
             }
             "session.model_change" => {
-                if let Some(m) = d["newModel"]
-                    .as_str()
-                    .or(d["selectedModel"].as_str())
-                    .or(d["model"].as_str())
+                if let Some(m) = d
+                    .new_model
+                    .as_deref()
+                    .or(d.selected_model.as_deref())
+                    .or(d.model.as_deref())
                 {
                     st.model = m.to_string();
                 }
             }
-            "user.message" => {
-                st.pending_prompt = Some(d["content"].as_str().unwrap_or("").to_string())
-            }
             "assistant.turn_start" => {
                 st.turns += 1;
-                let id = d["turnId"]
-                    .as_str()
+                let id = d
+                    .turn_id
+                    .as_deref()
                     .map(str::to_string)
                     .unwrap_or_else(|| format!("{}:{}", st.session_id, st.turns));
                 st.turn_id = Some(id.clone());
@@ -204,22 +408,23 @@ impl Provider for Copilot {
                     id,
                     session_id: st.session_id.clone(),
                     ts,
-                    intent: st.pending_prompt.take().as_deref().and_then(prompt_intent),
+                    intent: st.pending_intent.take(),
                 }));
             }
             "assistant.message" => {
-                if let Some(m) = d["model"].as_str() {
+                if let Some(m) = d.model.as_deref() {
                     st.model = m.to_string();
                 }
-                if let Some(t) = d["turnId"].as_str() {
+                if let Some(t) = d.turn_id.as_deref() {
                     st.turn_id = Some(t.to_string());
                 }
-                let message_id = d["messageId"]
-                    .as_str()
-                    .or(v["id"].as_str())
+                let message_id = d
+                    .message_id
+                    .as_deref()
+                    .or(line_rec.id.as_deref())
                     .unwrap_or("")
                     .to_string();
-                let output = d["outputTokens"].as_i64().unwrap_or(0);
+                let output = d.output_tokens.0;
                 if !message_id.is_empty() {
                     let model = crate::pricing::normalize_model(&st.model);
                     st.pending_calls.entry(model.clone()).or_default().push((
@@ -240,8 +445,7 @@ impl Provider for Copilot {
                 }
             }
             "tool.execution_start" | "subagent.started" | "skill.invoked" => {
-                let kind = v["type"].as_str().unwrap_or("");
-                let raw = d["toolName"].as_str().or(d["name"].as_str()).unwrap_or(
+                let raw = d.tool_name.as_deref().or(d.name.as_deref()).unwrap_or(
                     if kind == "skill.invoked" {
                         "skill"
                     } else {
@@ -253,41 +457,48 @@ impl Provider for Copilot {
                 } else {
                     canonical_tool(raw).to_string()
                 };
-                let args = &d["arguments"];
                 let target = [
-                    "command",
-                    "path",
-                    "file_path",
-                    "pattern",
-                    "query",
-                    "url",
-                    "description",
+                    &args.command,
+                    &args.path,
+                    &args.file_path,
+                    &args.pattern,
+                    &args.query,
+                    &args.url,
+                    &args.description,
                 ]
                 .iter()
-                .find_map(|k| args[*k].as_str())
+                .find_map(|k| k.as_deref())
                 .map(|s| s.chars().take(500).collect::<String>());
                 let detail = match tool.as_str() {
                     "Agent" => Some(
-                        ["agentName", "agentType", "subagentType", "name", "agent"]
-                            .iter()
-                            .find_map(|k| d[*k].as_str().or(args[*k].as_str()))
-                            .unwrap_or("general-purpose")
-                            .to_string(),
-                    ),
-                    "Skill" => ["skillName", "name", "skill"]
+                        [
+                            (&d.agent_name, &args.agent_name),
+                            (&d.agent_type, &args.agent_type),
+                            (&d.subagent_type, &args.subagent_type),
+                            (&d.name, &args.name),
+                            (&d.agent, &args.agent),
+                        ]
                         .iter()
-                        .find_map(|k| d[*k].as_str().or(args[*k].as_str()))
-                        .map(str::to_string),
+                        .find_map(|(a, b)| a.as_deref().or(b.as_deref()))
+                        .unwrap_or("general-purpose")
+                        .to_string(),
+                    ),
+                    "Skill" => [
+                        (&d.skill_name, &args.skill_name),
+                        (&d.name, &args.name),
+                        (&d.skill, &args.skill),
+                    ]
+                    .iter()
+                    .find_map(|(a, b)| a.as_deref().or(b.as_deref()))
+                    .map(str::to_string),
                     _ => None,
                 };
-                let call_id = ["toolCallId", "subagentId", "agentId", "id"]
-                    .iter()
-                    .find_map(|k| d[*k].as_str())
-                    .or(v["id"].as_str())
+                let call_id = tool_call_id(d)
+                    .or(line_rec.id.as_deref())
                     .unwrap_or("")
                     .to_string();
                 if !call_id.is_empty() {
-                    if let Some(t) = d["turnId"].as_str() {
+                    if let Some(t) = d.turn_id.as_deref() {
                         st.turn_id = Some(t.to_string());
                     }
                     out.push(Record::ToolUse(ToolUseRec {
@@ -302,24 +513,25 @@ impl Provider for Copilot {
                 }
             }
             "tool.execution_complete" | "subagent.completed" => {
-                if let Some(call_id) = ["toolCallId", "subagentId", "agentId", "id"]
-                    .iter()
-                    .find_map(|k| d[*k].as_str())
-                {
+                if let Some(call_id) = tool_call_id(d) {
                     out.push(Record::ToolResult {
                         call_id: call_id.to_string(),
                         ts,
-                        is_error: d["success"].as_bool() == Some(false) || d["error"].is_string(),
+                        is_error: d.success.0 == Some(false) || d.error.0.is_some(),
                         agent_id: None,
                     });
                 }
             }
             "session.shutdown" => {
                 // Reparte el delta de tokens de cada modelo entre sus respuestas pendientes.
-                if let Some(metrics) = d["modelMetrics"].as_object() {
+                if let Some(metrics) = d.model_metrics.0.as_ref() {
                     for (raw_model, m) in metrics {
                         let model = crate::pricing::normalize_model(raw_model);
-                        let total = Usage::from_json(&m["usage"]);
+                        let total =
+                            m.0.as_ref()
+                                .and_then(|m| m.usage.0.as_ref())
+                                .map(Usage::from)
+                                .unwrap_or_default();
                         let prev = st
                             .last_usage
                             .insert(model.clone(), total)
@@ -397,6 +609,13 @@ impl Provider for Copilot {
     }
 }
 
+/// Id de la llamada a una herramienta o subagente, por orden de preferencia.
+fn tool_call_id<'d>(d: &'d Data) -> Option<&'d str> {
+    [&d.tool_call_id, &d.subagent_id, &d.agent_id, &d.id]
+        .iter()
+        .find_map(|k| k.as_deref())
+}
+
 fn call(session_id: &str, message_id: String, ts: i64, model: String, u: Usage) -> Record {
     Record::Call(CallRec {
         message_id,
@@ -427,16 +646,97 @@ mod tests {
         assert!(!p.matches(Path::new("/h/.copilot/session-state/abc/workspace.yaml")));
     }
 
+    fn probe(line: &str) -> Probe<'_> {
+        serde_json::from_str::<Obj<Probe>>(line).unwrap().0.unwrap()
+    }
+
     #[test]
     fn fecha_numerica_o_texto() {
         assert_eq!(
-            line_ts(&serde_json::json!({ "timestamp": 1770000000100i64 })),
+            probe(r#"{ "timestamp": 1770000000100 }"#).ts(),
             Some(1_770_000_000_100)
         );
         assert_eq!(
-            line_ts(&serde_json::json!({ "timestamp": "2026-09-25T09:57:51.467Z" })),
+            probe(r#"{ "timestamp": "2026-09-25T09:57:51.467Z" }"#).ts(),
             Some(1_790_330_271_467)
         );
+        assert_eq!(probe(r#"{ "timestamp": 1.5 }"#).ts(), None);
+        assert_eq!(probe(r#"{ "timestamp": 18446744073709551615 }"#).ts(), None);
+        assert_eq!(probe(r#"{ "timestamp": "ayer" }"#).ts(), None);
+        assert_eq!(probe("{}").ts(), None);
+    }
+
+    #[test]
+    fn la_sonda_solo_deja_pasar_los_tipos_que_producen_filas_o_estado() {
+        let useful = |t: &str| probe(&format!(r#"{{"type":"{t}","timestamp":1}}"#)).is_useful();
+        for t in [
+            "session.start",
+            "session.resume",
+            "session.model_change",
+            "user.message",
+            "assistant.turn_start",
+            "assistant.message",
+            "tool.execution_start",
+            "subagent.started",
+            "skill.invoked",
+            "tool.execution_complete",
+            "subagent.completed",
+            "session.shutdown",
+            "session.compaction_complete",
+            "abort",
+        ] {
+            assert!(useful(t), "{t}");
+        }
+        for t in [
+            "assistant.reasoning",
+            "session.info",
+            "hook.start",
+            "",
+            "otro",
+        ] {
+            assert!(!useful(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn una_linea_descartada_fija_la_sesion_de_la_carpeta() {
+        let p = Copilot::with_roots(vec![]);
+        let path = Path::new("/h/s/sesion-1/events.jsonl");
+        let razonamiento =
+            r#"{"type":"assistant.reasoning","timestamp":1,"data":{"content":"pienso"}}"#;
+        assert!(p.parse_line(path, razonamiento).unwrap().is_empty());
+        assert!(p.knows(path));
+        let fin = r#"{"type":"abort","timestamp":2,"data":{}}"#;
+        let recs = p.parse_line(path, fin).unwrap();
+        assert!(
+            matches!(&recs[0], Record::Session(s) if s.id == "sesion-1"),
+            "{recs:?}"
+        );
+    }
+
+    #[test]
+    fn el_resultado_de_una_herramienta_no_se_lee() {
+        let p = Copilot::with_roots(vec![]);
+        let path = Path::new("/h/s/sesion-1/events.jsonl");
+        let salida = "x\\n".repeat(100_000);
+        let fin = format!(
+            r#"{{"type":"tool.execution_complete","timestamp":3,"data":{{"toolCallId":"c1","success":false,"result":{{"content":"{salida}"}}}}}}"#
+        );
+        let recs = p.parse_line(path, &fin).unwrap();
+        assert!(recs.contains(&Record::ToolResult {
+            call_id: "c1".into(),
+            ts: 3,
+            is_error: true,
+            agent_id: None
+        }));
+        let error = r#"{"type":"tool.execution_complete","timestamp":3,"data":{"toolCallId":"c2","error":"boom"}}"#;
+        assert!(p.parse_line(path, error).unwrap().iter().any(
+            |r| matches!(r, Record::ToolResult { call_id, is_error: true, .. } if call_id == "c2")
+        ));
+        let objeto = r#"{"type":"tool.execution_complete","timestamp":3,"data":{"toolCallId":"c3","error":{"m":1}}}"#;
+        assert!(p.parse_line(path, objeto).unwrap().iter().any(
+            |r| matches!(r, Record::ToolResult { call_id, is_error: false, .. } if call_id == "c3")
+        ));
     }
 
     #[test]

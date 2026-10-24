@@ -360,9 +360,10 @@ fn configure_writer(conn: &Connection, file: bool) -> Result<()> {
         conn.pragma_update(None, "synchronous", "OFF")?;
     }
     conn.pragma_update(None, "temp_store", "MEMORY")?;
-    // Sin claves foráneas (~14 % del escaneo frío): el escritor inserta la sesión antes que sus
-    // filas y rechaza él los registros de una sesión inexistente (`ingest::Writer`).
-    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    // Claves foráneas activas: desactivarlas no mejoró el escaneo frío (paso 7, medido A/B) una vez
+    // que el escritor inserta sin disparadores. El escritor además rechaza él los registros de una
+    // sesión inexistente (`ingest::Writer`), así que el resultado no depende de este PRAGMA.
+    conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(Duration::from_secs(5))?;
     // La ingesta reutiliza ~16 sentencias y las consultas otras tantas (rusqlite trae 16).
     conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);

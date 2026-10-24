@@ -948,8 +948,8 @@ struct Writer<'a> {
     /// Clave de agregado y `is_error` de las herramientas vistas en este archivo, para aplicar el
     /// cambio de errores de su resultado sin buscarlas en la base.
     tool_keys: HashMap<String, ToolKey>,
-    /// Sesiones que existen: escritas en este archivo o comprobadas una vez en la base. Sin
-    /// claves foráneas (D3), el escritor rechaza él los registros de una sesión inexistente.
+    /// Sesiones que existen: escritas en este archivo o comprobadas una vez en la base. El
+    /// escritor rechaza él los registros de una sesión inexistente, con o sin claves foráneas.
     known_sessions: HashSet<String>,
     /// Id de este archivo en `file_state` y sesiones ya enlazadas a él en `session_files`.
     file: i64,

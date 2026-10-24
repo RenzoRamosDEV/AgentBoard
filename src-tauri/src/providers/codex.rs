@@ -5,12 +5,14 @@
 //! A diferencia de Claude Code, el modelo y la carpeta no van en cada línea: se guardan por
 //! archivo en `state` mientras se lee.
 
+use super::json::{Bool, Int, List, NotNull, Obj, OptInt, Seen, Str};
 use super::{
     parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,
 };
 use anyhow::Result;
-use serde_json::Value;
-use std::collections::HashMap;
+use serde::Deserialize;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -29,8 +31,9 @@ struct FileState {
     model: String,
     is_subagent: bool,
     turn_id: Option<String>,
-    /// Texto del último prompt humano, a la espera de su `turn_context` (no se guarda).
-    pending_prompt: Option<String>,
+    /// Intención del último prompt humano, a la espera de su `turn_context` (el texto no se
+    /// guarda).
+    pending_intent: Option<&'static str>,
     /// Con `token_usage_record` presentes se ignoran los `token_count` (formato antiguo).
     has_usage_records: bool,
     /// Con eventos `item_completed` (formato nuevo) las herramientas salen de ellos y se ignoran
@@ -72,26 +75,133 @@ fn canonical_tool(name: &str) -> &str {
     }
 }
 
-/// Objetivo legible de una llamada: comando de shell o archivo del parche.
-fn tool_target(name: &str, args: &Value) -> Option<String> {
-    let s = match name {
-        "Bash" => match &args["command"] {
-            Value::Array(parts) => {
-                let parts: Vec<&str> = parts.iter().filter_map(|p| p.as_str()).collect();
-                // `bash -lc "<cmd>"`: el comando real es el último argumento.
-                if parts.len() >= 3 && parts[1].starts_with('-') && parts[1].contains('c') {
-                    parts[2].to_string()
-                } else {
-                    parts.join(" ")
-                }
+/// Argumentos de una herramienta: los campos que dan su objetivo y su rol de subagente.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Args<'a> {
+    #[serde(borrow)]
+    command: Command<'a>,
+    #[serde(borrow)]
+    cmd: Str<'a>,
+    #[serde(borrow)]
+    input: Str<'a>,
+    #[serde(borrow)]
+    patch: Str<'a>,
+    #[serde(borrow)]
+    path: Str<'a>,
+    #[serde(borrow)]
+    file_path: Str<'a>,
+    #[serde(borrow)]
+    pattern: Str<'a>,
+    #[serde(borrow)]
+    query: Str<'a>,
+    #[serde(borrow)]
+    url: Str<'a>,
+    #[serde(borrow)]
+    description: Str<'a>,
+    #[serde(borrow)]
+    agent_type: Str<'a>,
+    #[serde(borrow)]
+    agent_role: Str<'a>,
+    #[serde(borrow)]
+    role: Str<'a>,
+}
+
+/// `command`: lista de argumentos, cadena u otra cosa.
+#[derive(Debug, Default)]
+enum Command<'a> {
+    Parts(Vec<Str<'a>>),
+    Text(Cow<'a, str>),
+    #[default]
+    Other,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Command<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        command_from(d)
+    }
+}
+
+fn command_from<'de: 'a, 'a, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Command<'a>, D::Error> {
+    use serde::de::{self, value::SeqAccessDeserializer, IgnoredAny, Visitor};
+    struct V<'a>(std::marker::PhantomData<&'a ()>);
+    impl<'de: 'a, 'a> Visitor<'de> for V<'a> {
+        type Value = Command<'a>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("cualquier valor JSON")
+        }
+        fn visit_borrowed_str<E: de::Error>(
+            self,
+            v: &'de str,
+        ) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Text(Cow::Borrowed(v)))
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Text(Cow::Owned(v.to_owned())))
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Text(Cow::Owned(v)))
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(
+            self,
+            seq: A,
+        ) -> std::result::Result<Command<'a>, A::Error> {
+            let List(parts) = List::deserialize(SeqAccessDeserializer::new(seq))?;
+            Ok(Command::Parts(parts))
+        }
+        fn visit_map<A: de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<Command<'a>, A::Error> {
+            while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            Ok(Command::Other)
+        }
+        fn visit_bool<E: de::Error>(self, _: bool) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Other)
+        }
+        fn visit_i64<E: de::Error>(self, _: i64) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Other)
+        }
+        fn visit_u64<E: de::Error>(self, _: u64) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Other)
+        }
+        fn visit_f64<E: de::Error>(self, _: f64) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Other)
+        }
+        fn visit_unit<E: de::Error>(self) -> std::result::Result<Command<'a>, E> {
+            Ok(Command::Other)
+        }
+    }
+    d.deserialize_any(V(std::marker::PhantomData))
+}
+
+/// Comando de shell legible: `bash -lc "<cmd>"` da el último argumento.
+fn shell_target(command: &Command, cmd: Option<&str>) -> String {
+    match command {
+        Command::Parts(parts) => {
+            let parts: Vec<&str> = parts.iter().filter_map(|p| p.as_deref()).collect();
+            if parts.len() >= 3 && parts[1].starts_with('-') && parts[1].contains('c') {
+                parts[2].to_string()
+            } else {
+                parts.join(" ")
             }
-            Value::String(s) => s.clone(),
-            _ => args["cmd"].as_str().unwrap_or("").to_string(),
-        },
+        }
+        Command::Text(s) => s.to_string(),
+        Command::Other => cmd.unwrap_or("").to_string(),
+    }
+}
+
+/// Objetivo legible de una llamada: comando de shell o archivo del parche.
+fn tool_target(name: &str, args: &Args) -> Option<String> {
+    let s = match name {
+        "Bash" => shell_target(&args.command, args.cmd.as_deref()),
         "Edit" => {
-            let patch = args["input"]
-                .as_str()
-                .or(args["patch"].as_str())
+            let patch = args
+                .input
+                .as_deref()
+                .or(args.patch.as_deref())
                 .unwrap_or("");
             patch
                 .lines()
@@ -104,25 +214,186 @@ fn tool_target(name: &str, args: &Value) -> Option<String> {
                 .to_string()
         }
         _ => [
-            "path",
-            "file_path",
-            "pattern",
-            "query",
-            "url",
-            "description",
+            &args.path,
+            &args.file_path,
+            &args.pattern,
+            &args.query,
+            &args.url,
+            &args.description,
         ]
         .iter()
-        .find_map(|k| args[*k].as_str())
+        .find_map(|k| k.as_deref())
         .unwrap_or("")
         .to_string(),
     };
     (!s.is_empty()).then(|| s.chars().take(500).collect())
 }
 
+/// Línea útil de Codex: solo su `payload` (la fecha y el tipo vienen de la sonda).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Line<'a> {
+    #[serde(borrow)]
+    payload: Obj<Payload<'a>>,
+}
+
+/// Campos usados de todos los `payload` útiles; los demás (instrucciones, textos del modelo…)
+/// se saltan sin copiarlos.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Payload<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    id: Str<'a>,
+    #[serde(borrow)]
+    session_id: Str<'a>,
+    #[serde(borrow)]
+    cwd: Str<'a>,
+    #[serde(borrow)]
+    git: Obj<Git<'a>>,
+    #[serde(borrow)]
+    parent_thread_id: Str<'a>,
+    #[serde(borrow)]
+    thread_source: Str<'a>,
+    source: Obj<Source>,
+    #[serde(borrow)]
+    model: Str<'a>,
+    #[serde(borrow)]
+    turn_id: Str<'a>,
+    #[serde(borrow)]
+    response_id: Str<'a>,
+    usage: Obj<TokenUsage>,
+    #[serde(borrow)]
+    message: Str<'a>,
+    #[serde(borrow)]
+    item: Obj<Item<'a>>,
+    info: Obj<Info>,
+    #[serde(borrow)]
+    name: Str<'a>,
+    #[serde(borrow)]
+    namespace: Str<'a>,
+    #[serde(borrow)]
+    action: Obj<Args<'a>>,
+    #[serde(borrow)]
+    input: Str<'a>,
+    #[serde(borrow)]
+    arguments: Str<'a>,
+    #[serde(borrow)]
+    call_id: Str<'a>,
+    #[serde(borrow)]
+    output: Output<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Git<'a> {
+    #[serde(borrow)]
+    branch: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Source {
+    sub_agent: Seen,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Info {
+    last_token_usage: Obj<TokenUsage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct TokenUsage {
+    input_tokens: Int,
+    cached_input_tokens: Int,
+    output_tokens: Int,
+    cache_write_input_tokens: Int,
+    reasoning_output_tokens: Int,
+}
+
+/// Un item de `item_completed` (formato nuevo de Codex).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Item<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    id: Str<'a>,
+    #[serde(borrow)]
+    status: Str<'a>,
+    duration: Obj<Duration>,
+    #[serde(borrow)]
+    command: Command<'a>,
+    exit_code: OptInt,
+    #[serde(borrow)]
+    changes: Obj<BTreeMap<Cow<'a, str>, Obj<Change<'a>>>>,
+    #[serde(borrow)]
+    server: Str<'a>,
+    #[serde(borrow)]
+    tool: Str<'a>,
+    error: NotNull,
+    #[serde(borrow)]
+    query: Str<'a>,
+    #[serde(rename = "kind", borrow)]
+    sub_kind: Str<'a>,
+    #[serde(borrow)]
+    action: Obj<ItemAction<'a>>,
+    #[serde(borrow)]
+    receiver_agents: List<Obj<Receiver<'a>>>,
+    #[serde(borrow)]
+    model: Str<'a>,
+    #[serde(borrow)]
+    prompt: Str<'a>,
+    #[serde(borrow)]
+    agent_thread_id: Str<'a>,
+    #[serde(borrow)]
+    content: List<Obj<TextPart<'a>>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Duration {
+    secs: OptInt,
+    nanos: Int,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Change<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ItemAction<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    url: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Receiver<'a> {
+    #[serde(borrow)]
+    role: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct TextPart<'a> {
+    #[serde(borrow)]
+    text: Str<'a>,
+}
+
 /// Duración `{"secs", "nanos"}` de un item, en ms.
-fn duration_ms(d: &Value) -> Option<i64> {
-    let secs = d["secs"].as_i64()?;
-    Some(secs * 1000 + d["nanos"].as_i64().unwrap_or(0) / 1_000_000)
+fn duration_ms(d: &Obj<Duration>) -> Option<i64> {
+    let d = d.0.as_ref()?;
+    Some(d.secs.0? * 1000 + d.nanos.0 / 1_000_000)
 }
 
 /// Una herramienta sacada de un `item_completed` (formato nuevo de Codex).
@@ -136,7 +407,7 @@ struct ItemTool {
 }
 
 /// Herramientas de un `item_completed`. Un `FileChange` da una por archivo.
-fn item_tools(it: &Value) -> Vec<ItemTool> {
+fn item_tools(it: &Item) -> Vec<ItemTool> {
     let t = |call_id: String,
              tool: &str,
              target: Option<String>,
@@ -150,49 +421,45 @@ fn item_tools(it: &Value) -> Vec<ItemTool> {
         is_error,
         duration_ms,
     };
-    let id = it["id"].as_str().unwrap_or("").to_string();
-    let status = it["status"].as_str().unwrap_or("");
-    let failed = matches!(status, "failed" | "declined");
-    let dur = duration_ms(&it["duration"]);
-    match it["type"].as_str() {
+    let id = it.id.as_deref().unwrap_or("").to_string();
+    let failed = matches!(it.status.as_deref(), Some("failed" | "declined"));
+    let dur = duration_ms(&it.duration);
+    match it.kind.as_deref() {
         // `source` es `unified_exec_startup` también en los comandos del modelo: cuentan todos.
         Some("CommandExecution") => {
-            let target = tool_target("Bash", &serde_json::json!({ "command": it["command"] }));
-            let err = failed || it["exit_code"].as_i64().is_some_and(|c| c != 0);
+            let target = shell_target(&it.command, None);
+            let target = (!target.is_empty()).then(|| target.chars().take(500).collect());
+            let err = failed || it.exit_code.0.is_some_and(|c| c != 0);
             vec![t(id, "Bash", target, None, err, dur)]
         }
-        Some("FileChange") => {
-            let mut files: Vec<(&String, &Value)> = it["changes"]
-                .as_object()
-                .map(|m| m.iter().collect())
-                .unwrap_or_default();
-            files.sort_by(|a, b| a.0.cmp(b.0));
-            files
-                .into_iter()
-                .enumerate()
-                .map(|(i, (path, change))| {
-                    let tool = match change["type"].as_str() {
-                        Some("add") => "Write",
-                        Some("delete") => "Delete",
-                        _ => "Edit",
-                    };
-                    t(
-                        format!("{id}:{i}"),
-                        tool,
-                        Some(path.chars().take(500).collect()),
-                        None,
-                        failed,
-                        None,
-                    )
-                })
-                .collect()
-        }
+        Some("FileChange") => it
+            .changes
+            .0
+            .iter()
+            .flatten()
+            .enumerate()
+            .map(|(i, (path, change))| {
+                let tool = match change.0.as_ref().and_then(|c| c.kind.as_deref()) {
+                    Some("add") => "Write",
+                    Some("delete") => "Delete",
+                    _ => "Edit",
+                };
+                t(
+                    format!("{id}:{i}"),
+                    tool,
+                    Some(path.chars().take(500).collect()),
+                    None,
+                    failed,
+                    None,
+                )
+            })
+            .collect(),
         Some("McpToolCall") => {
             let (server, tool) = (
-                it["server"].as_str().unwrap_or("mcp"),
-                it["tool"].as_str().unwrap_or("tool"),
+                it.server.as_deref().unwrap_or("mcp"),
+                it.tool.as_deref().unwrap_or("tool"),
             );
-            let err = failed || !it["error"].is_null();
+            let err = failed || it.error.0;
             vec![t(
                 id,
                 &format!("mcp__{server}__{tool}"),
@@ -205,32 +472,39 @@ fn item_tools(it: &Value) -> Vec<ItemTool> {
         Some("WebSearch") => vec![t(
             id,
             "WebSearch",
-            it["query"].as_str().map(str::to_string),
+            it.query.as_deref().map(str::to_string),
             None,
             false,
             None,
         )],
-        Some("Extension") if it["kind"].as_str() == Some("web.search") => {
-            let open = it["action"]["type"].as_str() == Some("openPage");
+        Some("Extension") if it.sub_kind.as_deref() == Some("web.search") => {
+            let action = it.action.0.as_ref();
+            let open = action.and_then(|a| a.kind.as_deref()) == Some("openPage");
             let (tool, target) = if open {
                 (
                     "WebFetch",
-                    it["action"]["url"].as_str().or(it["query"].as_str()),
+                    action
+                        .and_then(|a| a.url.as_deref())
+                        .or(it.query.as_deref()),
                 )
             } else {
-                ("WebSearch", it["query"].as_str())
+                ("WebSearch", it.query.as_deref())
             };
             vec![t(id, tool, target.map(str::to_string), None, false, None)]
         }
-        Some("CollabAgentToolCall") if it["tool"].as_str().is_some_and(|t| t.contains("spawn")) => {
-            let detail = it["receiver_agents"][0]["role"]
-                .as_str()
-                .or(it["model"].as_str())
+        Some("CollabAgentToolCall") if it.tool.as_deref().is_some_and(|t| t.contains("spawn")) => {
+            let detail = it
+                .receiver_agents
+                .0
+                .first()
+                .and_then(|r| r.0.as_ref())
+                .and_then(|r| r.role.as_deref())
+                .or(it.model.as_deref())
                 .unwrap_or("general-purpose");
             vec![t(
                 id,
                 "Agent",
-                it["prompt"].as_str().map(|p| p.chars().take(200).collect()),
+                it.prompt.as_deref().map(|p| p.chars().take(200).collect()),
                 Some(detail.to_string()),
                 failed,
                 None,
@@ -241,40 +515,166 @@ fn item_tools(it: &Value) -> Vec<ItemTool> {
 }
 
 /// Texto de un `UserMessage` del formato nuevo.
-fn item_text(it: &Value) -> String {
-    it["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|c| c["text"].as_str())
+fn item_text(it: &Item) -> String {
+    it.content
+        .0
+        .iter()
+        .filter_map(|c| c.0.as_ref().and_then(|c| c.text.as_deref()))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// `function_call_output.output` es texto o `{"content","success"}`; el texto antiguo de shell
-/// es un JSON con `metadata.exit_code`.
-fn output_is_error(output: &Value) -> bool {
-    if let Some(ok) = output["success"].as_bool() {
-        return !ok;
-    }
-    if let Some(text) = output.as_str() {
-        if let Ok(v) = serde_json::from_str::<Value>(text) {
-            if let Some(code) = v["metadata"]["exit_code"].as_i64() {
-                return code != 0;
+/// `function_call_output.output`: texto u objeto `{"content","success"}`.
+#[derive(Debug, Default)]
+enum Output<'a> {
+    Text(Cow<'a, str>),
+    Object(Option<bool>),
+    #[default]
+    Other,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Output<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::{self, value::MapAccessDeserializer, IgnoredAny, Visitor};
+        #[derive(Default, Deserialize)]
+        #[serde(default)]
+        struct Fields {
+            success: Bool,
+        }
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de: 'a, 'a> Visitor<'de> for V<'a> {
+            type Value = Output<'a>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_borrowed_str<E: de::Error>(
+                self,
+                v: &'de str,
+            ) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Text(Cow::Borrowed(v)))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Text(Cow::Owned(v.to_owned())))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Text(Cow::Owned(v)))
+            }
+            fn visit_map<A: de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> std::result::Result<Output<'a>, A::Error> {
+                let f = Fields::deserialize(MapAccessDeserializer::new(map))?;
+                Ok(Output::Object(f.success.0))
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Output<'a>, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(Output::Other)
+            }
+            fn visit_bool<E: de::Error>(self, _: bool) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Other)
+            }
+            fn visit_i64<E: de::Error>(self, _: i64) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Other)
+            }
+            fn visit_u64<E: de::Error>(self, _: u64) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Other)
+            }
+            fn visit_f64<E: de::Error>(self, _: f64) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Other)
+            }
+            fn visit_unit<E: de::Error>(self) -> std::result::Result<Output<'a>, E> {
+                Ok(Output::Other)
             }
         }
-        // Salida antigua en texto plano: «Process exited with code N\nFinal output:…».
-        if let Some(rest) = text.strip_prefix("Process exited with code ") {
-            let code: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '-')
-                .collect();
-            if let Ok(n) = code.parse::<i64>() {
-                return n != 0;
+        d.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+/// Metadatos de la salida antigua de shell (un JSON dentro del texto).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ShellOutput {
+    metadata: Obj<ShellMetadata>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ShellMetadata {
+    exit_code: OptInt,
+}
+
+/// ¿La salida de una herramienta indica error? Objeto con `success`, JSON con
+/// `metadata.exit_code` o texto «Process exited with code N».
+fn output_is_error(output: &Output) -> bool {
+    match output {
+        Output::Object(Some(ok)) => !ok,
+        Output::Text(text) => {
+            if let Ok(Obj(Some(v))) = serde_json::from_str::<Obj<ShellOutput>>(text) {
+                if let Some(code) = v.metadata.0.and_then(|m| m.exit_code.0) {
+                    return code != 0;
+                }
             }
+            // Salida antigua en texto plano: «Process exited with code N\nFinal output:…».
+            if let Some(rest) = text.strip_prefix("Process exited with code ") {
+                let code: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '-')
+                    .collect();
+                if let Ok(n) = code.parse::<i64>() {
+                    return n != 0;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Envoltura de una línea: fecha, tipo y tipo del `payload`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Probe<'a> {
+    #[serde(borrow)]
+    timestamp: Str<'a>,
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    payload: Obj<PayloadProbe<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PayloadProbe<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+}
+
+impl Probe<'_> {
+    /// ¿Puede la línea producir filas o cambiar el estado del archivo? (Derivado de `parse_line`.)
+    fn is_useful(&self) -> bool {
+        let payload = self.payload.0.as_ref().and_then(|p| p.kind.as_deref());
+        match self.kind.as_deref() {
+            Some("session_meta" | "turn_context" | "token_usage_record" | "compacted") => true,
+            Some("event_msg") => matches!(
+                payload,
+                Some("user_message" | "item_completed" | "token_count" | "turn_aborted")
+            ),
+            Some("response_item") => matches!(
+                payload,
+                Some(
+                    "function_call"
+                        | "custom_tool_call"
+                        | "local_shell_call"
+                        | "function_call_output"
+                        | "custom_tool_call_output"
+                )
+            ),
+            _ => false,
         }
     }
-    false
 }
 
 impl Provider for Codex {
@@ -320,37 +720,56 @@ impl Provider for Codex {
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
-        let v: Value = serde_json::from_str(line)?;
-        let Some(ts) = v["timestamp"].as_str().and_then(parse_ts) else {
+        // Sonda: tipo y fecha; las líneas que no producen filas ni cambian el estado (razonamiento,
+        // mensajes del modelo…) se descartan sin construir el `Value` de todo su contenido.
+        let Obj(Some(probe)) = serde_json::from_str::<Obj<Probe>>(line)? else {
+            return Ok(vec![]);
+        };
+        let Some(ts) = probe.timestamp.as_deref().and_then(parse_ts) else {
             return Ok(vec![]);
         };
         let mut states = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let st = states.entry(path.to_path_buf()).or_default();
-        let payload = &v["payload"];
+        if !probe.is_useful() {
+            return Ok(vec![]);
+        }
+        let Obj(Some(parsed)) = serde_json::from_str::<Obj<Line>>(line)? else {
+            return Ok(vec![]);
+        };
+        let empty = Payload::default();
+        let payload = parsed.payload.0.as_ref().unwrap_or(&empty);
+        let payload_kind = payload.kind.as_deref();
         let mut out = Vec::new();
 
-        match v["type"].as_str() {
+        match probe.kind.as_deref() {
             Some("session_meta") => {
-                st.thread_id = payload["id"]
-                    .as_str()
-                    .or(payload["session_id"].as_str())
+                st.thread_id = payload
+                    .id
+                    .as_deref()
+                    .or(payload.session_id.as_deref())
                     .unwrap_or("")
                     .to_string();
-                st.cwd = payload["cwd"].as_str().map(str::to_string);
-                st.branch = payload["git"]["branch"].as_str().map(str::to_string);
-                st.is_subagent = payload["parent_thread_id"].is_string()
-                    || payload["thread_source"].as_str() == Some("subagent")
-                    || payload["source"].get("sub_agent").is_some();
+                st.cwd = payload.cwd.as_deref().map(str::to_string);
+                st.branch = payload
+                    .git
+                    .0
+                    .as_ref()
+                    .and_then(|g| g.branch.as_deref())
+                    .map(str::to_string);
+                st.is_subagent = payload.parent_thread_id.0.is_some()
+                    || payload.thread_source.as_deref() == Some("subagent")
+                    || payload.source.0.as_ref().is_some_and(|s| s.sub_agent.0);
             }
             Some("turn_context") => {
-                if let Some(m) = payload["model"].as_str() {
+                if let Some(m) = payload.model.as_deref() {
                     st.model = m.to_string();
                 }
-                if let Some(c) = payload["cwd"].as_str() {
+                if let Some(c) = payload.cwd.as_deref() {
                     st.cwd = Some(c.to_string());
                 }
-                let id = payload["turn_id"]
-                    .as_str()
+                let id = payload
+                    .turn_id
+                    .as_deref()
                     .map(str::to_string)
                     .unwrap_or_else(|| format!("{}:{ts}", st.thread_id));
                 st.turn_id = Some(id.clone());
@@ -359,7 +778,7 @@ impl Provider for Codex {
                         id,
                         session_id: st.thread_id.clone(),
                         ts,
-                        intent: st.pending_prompt.take().as_deref().and_then(prompt_intent),
+                        intent: st.pending_intent.take(),
                     }));
                 }
             }
@@ -368,149 +787,170 @@ impl Provider for Codex {
                 push_call(
                     &mut out,
                     st,
-                    payload["response_id"].as_str().unwrap_or("").to_string(),
-                    &payload["usage"],
+                    payload.response_id.as_deref().unwrap_or("").to_string(),
+                    payload.usage.0.as_ref().unwrap_or(&TokenUsage::default()),
                     ts,
                 );
             }
-            Some("event_msg") => match payload["type"].as_str() {
-                Some("user_message") | Some("item_completed")
-                    if payload["type"].as_str() == Some("user_message")
-                        || payload["item"]["type"].as_str() == Some("UserMessage") =>
-                {
-                    if payload["type"].as_str() == Some("item_completed") {
-                        st.has_items = true;
-                    }
-                    let text = if payload["type"].as_str() == Some("user_message") {
-                        payload["message"].as_str().unwrap_or("").to_string()
-                    } else {
-                        item_text(&payload["item"])
-                    };
-                    match &st.turn_id {
-                        // El prompt llega tras su turn_context: completa la intención del turno.
-                        Some(turn) if !st.is_subagent => out.push(Record::Turn(TurnRec {
-                            id: turn.clone(),
-                            session_id: st.thread_id.clone(),
-                            ts,
-                            intent: prompt_intent(&text),
-                        })),
-                        _ => st.pending_prompt = Some(text),
-                    }
-                }
-                Some("token_count") if !st.has_usage_records => {
-                    let usage = &payload["info"]["last_token_usage"];
-                    if usage.is_object() {
-                        let id = format!("tc:{}:{ts}", st.thread_id);
-                        push_call(&mut out, st, id, usage, ts);
-                    }
-                }
-                Some("item_completed") => {
-                    st.has_items = true;
-                    let it = &payload["item"];
-                    // Subagente arrancado: enlaza la llamada `spawn_agent` (mismo id) con su hilo.
-                    if it["type"].as_str() == Some("SubAgentActivity")
-                        && it["kind"].as_str() == Some("started")
+            Some("event_msg") => {
+                let item = payload.item.0.as_ref();
+                match payload_kind {
+                    Some("user_message") | Some("item_completed")
+                        if payload_kind == Some("user_message")
+                            || item.and_then(|i| i.kind.as_deref()) == Some("UserMessage") =>
                     {
-                        if let (Some(call_id), Some(thread)) =
-                            (it["id"].as_str(), it["agent_thread_id"].as_str())
-                        {
-                            out.push(Record::ToolResult {
-                                call_id: call_id.to_string(),
+                        if payload_kind == Some("item_completed") {
+                            st.has_items = true;
+                        }
+                        // La intención se calcula ya: el texto del prompt no se guarda.
+                        let intent = match item {
+                            Some(it) if payload_kind == Some("item_completed") => {
+                                prompt_intent(&item_text(it))
+                            }
+                            _ => prompt_intent(payload.message.as_deref().unwrap_or("")),
+                        };
+                        match &st.turn_id {
+                            // El prompt llega tras su turn_context: completa la intención del turno.
+                            Some(turn) if !st.is_subagent => out.push(Record::Turn(TurnRec {
+                                id: turn.clone(),
+                                session_id: st.thread_id.clone(),
                                 ts,
-                                is_error: false,
-                                agent_id: Some(thread.to_string()),
-                            });
+                                intent,
+                            })),
+                            _ => st.pending_intent = intent,
                         }
                     }
-                    if it["type"].as_str() == Some("ContextCompaction") {
-                        out.push(Record::Event(EventRec {
-                            session_id: st.thread_id.clone(),
-                            ts,
-                            kind: "compaction".into(),
-                            payload_json: None,
-                        }));
+                    Some("token_count") if !st.has_usage_records => {
+                        if let Some(usage) = payload
+                            .info
+                            .0
+                            .as_ref()
+                            .and_then(|i| i.last_token_usage.0.as_ref())
+                        {
+                            let id = format!("tc:{}:{ts}", st.thread_id);
+                            push_call(&mut out, st, id, usage, ts);
+                        }
                     }
-                    for ItemTool {
-                        call_id,
-                        tool,
-                        target,
-                        detail,
-                        is_error,
-                        duration_ms: dur,
-                    } in item_tools(it)
-                    {
-                        // El item llega al terminar: la herramienta empezó `dur` antes.
-                        let start = ts - dur.unwrap_or(0);
-                        out.push(Record::ToolUse(ToolUseRec {
-                            call_id: call_id.clone(),
-                            message_id: st.turn_id.clone().unwrap_or_default(),
-                            session_id: st.thread_id.clone(),
-                            ts: start,
+                    Some("item_completed") => {
+                        st.has_items = true;
+                        let empty_item = Item::default();
+                        let it = item.unwrap_or(&empty_item);
+                        let kind = it.kind.as_deref();
+                        // Subagente arrancado: enlaza la llamada `spawn_agent` (mismo id) con su hilo.
+                        if kind == Some("SubAgentActivity")
+                            && it.sub_kind.as_deref() == Some("started")
+                        {
+                            if let (Some(call_id), Some(thread)) =
+                                (it.id.as_deref(), it.agent_thread_id.as_deref())
+                            {
+                                out.push(Record::ToolResult {
+                                    call_id: call_id.to_string(),
+                                    ts,
+                                    is_error: false,
+                                    agent_id: Some(thread.to_string()),
+                                });
+                            }
+                        }
+                        if kind == Some("ContextCompaction") {
+                            out.push(Record::Event(EventRec {
+                                session_id: st.thread_id.clone(),
+                                ts,
+                                kind: "compaction".into(),
+                                payload_json: None,
+                            }));
+                        }
+                        for ItemTool {
+                            call_id,
                             tool,
                             target,
                             detail,
-                        }));
-                        out.push(Record::ToolResult {
-                            call_id,
-                            ts,
                             is_error,
-                            agent_id: None,
-                        });
+                            duration_ms: dur,
+                        } in item_tools(it)
+                        {
+                            // El item llega al terminar: la herramienta empezó `dur` antes.
+                            let start = ts - dur.unwrap_or(0);
+                            out.push(Record::ToolUse(ToolUseRec {
+                                call_id: call_id.clone(),
+                                message_id: st.turn_id.clone().unwrap_or_default(),
+                                session_id: st.thread_id.clone(),
+                                ts: start,
+                                tool,
+                                target,
+                                detail,
+                            }));
+                            out.push(Record::ToolResult {
+                                call_id,
+                                ts,
+                                is_error,
+                                agent_id: None,
+                            });
+                        }
                     }
+                    Some("turn_aborted") => out.push(Record::Event(EventRec {
+                        session_id: st.thread_id.clone(),
+                        ts,
+                        kind: "interruption".into(),
+                        payload_json: None,
+                    })),
+                    _ => {}
                 }
-                Some("turn_aborted") => out.push(Record::Event(EventRec {
-                    session_id: st.thread_id.clone(),
-                    ts,
-                    kind: "interruption".into(),
-                    payload_json: None,
-                })),
-                _ => {}
-            },
+            }
             Some("compacted") => out.push(Record::Event(EventRec {
                 session_id: st.thread_id.clone(),
                 ts,
                 kind: "compaction".into(),
                 payload_json: None,
             })),
-            Some("response_item") => match payload["type"].as_str() {
+            Some("response_item") => match payload_kind {
                 // Formato nuevo: las herramientas salen de `item_completed`, y `exec` es solo la
                 // envoltura del modo código (el JavaScript que llama a las herramientas reales).
                 // `spawn_agent` sí se lee siempre: el item del subagente no dice su tipo.
                 Some("function_call") | Some("custom_tool_call") | Some("local_shell_call")
-                    if (!st.has_items || payload["name"].as_str() == Some("spawn_agent"))
-                        && payload["name"].as_str() != Some("exec") =>
+                    if (!st.has_items || payload.name.as_deref() == Some("spawn_agent"))
+                        && payload.name.as_deref() != Some("exec") =>
                 {
-                    let raw = payload["name"].as_str().unwrap_or("local_shell");
+                    let raw = payload.name.as_deref().unwrap_or("local_shell");
                     // Los namespaces propios de Codex no son servidores MCP (p. ej. `spawn_agent`
                     // viene en `collaboration`).
-                    let namespace = payload["namespace"].as_str().filter(|n| {
+                    let namespace = payload.namespace.as_deref().filter(|n| {
                         !matches!(*n, "functions" | "collaboration" | "multi_tool_use")
                     });
                     let tool = match namespace {
                         Some(ns) => format!("mcp__{ns}__{raw}"),
                         None => canonical_tool(raw).to_string(),
                     };
-                    let args: Value = match payload["type"].as_str() {
-                        Some("local_shell_call") => payload["action"].clone(),
+                    let no_args = Args::default();
+                    let custom;
+                    let from_text;
+                    let args: &Args = match payload_kind {
+                        Some("local_shell_call") => payload.action.0.as_ref().unwrap_or(&no_args),
                         Some("custom_tool_call") => {
-                            serde_json::json!({ "input": payload["input"] })
+                            custom = Args {
+                                input: payload.input.clone(),
+                                ..Default::default()
+                            };
+                            &custom
                         }
-                        _ => payload["arguments"]
-                            .as_str()
-                            .and_then(|a| serde_json::from_str(a).ok())
-                            .unwrap_or(Value::Null),
+                        _ => {
+                            from_text = payload
+                                .arguments
+                                .as_deref()
+                                .and_then(|a| serde_json::from_str::<Obj<Args>>(a).ok())
+                                .and_then(|o| o.0);
+                            from_text.as_ref().unwrap_or(&no_args)
+                        }
                     };
                     let detail = (tool == "Agent").then(|| {
                         // Sin rol pedido, Codex usa su rol por defecto: `default`.
-                        args["agent_type"]
-                            .as_str()
-                            .or(args["agent_role"].as_str())
-                            .or(args["role"].as_str())
+                        args.agent_type
+                            .as_deref()
+                            .or(args.agent_role.as_deref())
+                            .or(args.role.as_deref())
                             .unwrap_or("default")
                             .to_string()
                     });
-                    let Some(call_id) = payload["call_id"].as_str().or(payload["id"].as_str())
-                    else {
+                    let Some(call_id) = payload.call_id.as_deref().or(payload.id.as_deref()) else {
                         return Ok(out);
                     };
                     out.push(Record::ToolUse(ToolUseRec {
@@ -518,17 +958,17 @@ impl Provider for Codex {
                         message_id: st.turn_id.clone().unwrap_or_default(),
                         session_id: st.thread_id.clone(),
                         ts,
-                        target: tool_target(&tool, &args),
+                        target: tool_target(&tool, args),
                         tool,
                         detail,
                     }));
                 }
                 Some("function_call_output") | Some("custom_tool_call_output") => {
-                    if let Some(call_id) = payload["call_id"].as_str() {
+                    if let Some(call_id) = payload.call_id.as_deref() {
                         out.push(Record::ToolResult {
                             call_id: call_id.to_string(),
                             ts,
-                            is_error: output_is_error(&payload["output"]),
+                            is_error: output_is_error(&payload.output),
                             agent_id: None,
                         });
                     }
@@ -554,24 +994,29 @@ impl Provider for Codex {
     }
 }
 
-fn push_call(out: &mut Vec<Record>, st: &FileState, message_id: String, usage: &Value, ts: i64) {
+fn push_call(
+    out: &mut Vec<Record>,
+    st: &FileState,
+    message_id: String,
+    usage: &TokenUsage,
+    ts: i64,
+) {
     if st.thread_id.is_empty() || message_id.is_empty() {
         return;
     }
-    let n = |k: &str| usage[k].as_i64().unwrap_or(0);
     // `input_tokens` de Codex incluye los tokens leídos de caché.
-    let cached = n("cached_input_tokens");
+    let cached = usage.cached_input_tokens.0;
     out.push(Record::Call(CallRec {
         message_id,
         session_id: st.thread_id.clone(),
         ts,
         model: crate::pricing::normalize_model(&st.model),
-        input_tokens: (n("input_tokens") - cached).max(0),
-        output_tokens: n("output_tokens"),
+        input_tokens: (usage.input_tokens.0 - cached).max(0),
+        output_tokens: usage.output_tokens.0,
         cache_read: cached,
-        cache_write: n("cache_write_input_tokens"),
+        cache_write: usage.cache_write_input_tokens.0,
         cache_write_1h: 0,
-        reasoning_tokens: n("reasoning_output_tokens"),
+        reasoning_tokens: usage.reasoning_output_tokens.0,
         activity: None,
         is_sidechain: st.is_subagent,
         agent_id: st.is_subagent.then(|| st.thread_id.clone()),
@@ -584,45 +1029,122 @@ mod tests {
     use super::*;
 
     #[test]
+    fn la_sonda_solo_deja_pasar_los_tipos_que_producen_filas_o_estado() {
+        let probe = |line: &str| -> bool {
+            let Obj(Some(p)) = serde_json::from_str::<Obj<Probe>>(line).unwrap() else {
+                return false;
+            };
+            p.is_useful()
+        };
+        let line = |t: &str, payload: &str| {
+            format!(r#"{{"timestamp":"2026-09-24T09:00:00Z","type":"{t}","payload":{payload}}}"#)
+        };
+        for (t, pt) in [
+            ("response_item", "reasoning"),
+            ("response_item", "message"),
+            ("response_item", "web_search_call"),
+            ("event_msg", "agent_message"),
+            ("event_msg", "agent_reasoning"),
+            ("event_msg", "task_complete"),
+            ("event_msg", "exec_command_end"),
+            ("desconocido", "x"),
+        ] {
+            assert!(
+                !probe(&line(t, &format!(r#"{{"type":"{pt}"}}"#))),
+                "{t}/{pt}"
+            );
+        }
+        for (t, pt) in [
+            ("session_meta", "x"),
+            ("turn_context", "x"),
+            ("token_usage_record", "x"),
+            ("compacted", "x"),
+            ("event_msg", "user_message"),
+            ("event_msg", "item_completed"),
+            ("event_msg", "token_count"),
+            ("event_msg", "turn_aborted"),
+            ("response_item", "function_call"),
+            ("response_item", "custom_tool_call"),
+            ("response_item", "local_shell_call"),
+            ("response_item", "function_call_output"),
+            ("response_item", "custom_tool_call_output"),
+        ] {
+            assert!(
+                probe(&line(t, &format!(r#"{{"type":"{pt}"}}"#))),
+                "{t}/{pt}"
+            );
+        }
+    }
+
+    #[test]
+    fn una_linea_descartada_no_produce_filas_pero_cuenta_como_leida() {
+        let c = Codex::with_roots(vec![]);
+        let path = Path::new("rollout-x.jsonl");
+        let reasoning = r#"{"timestamp":"2026-09-24T09:00:00Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"pienso"}],"encrypted_content":"x"}}"#;
+        assert!(c.parse_line(path, reasoning).unwrap().is_empty());
+        assert!(c.knows(path), "como antes: el archivo ya se empezó a leer");
+        assert!(c.parse_line(path, "[1]").unwrap().is_empty());
+        assert!(c.parse_line(path, "{roto").is_err());
+    }
+
+    fn output(json: &str) -> Output<'_> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn args(json: &str) -> Args<'_> {
+        serde_json::from_str::<Obj<Args>>(json).unwrap().0.unwrap()
+    }
+
+    #[test]
     fn error_de_shell_en_texto_plano() {
-        use serde_json::json;
-        assert!(output_is_error(&json!(
-            "Process exited with code 1\nFinal output:\nfailed"
+        assert!(output_is_error(&output(
+            r#""Process exited with code 1\nFinal output:\nfailed""#
         )));
-        assert!(!output_is_error(&json!("Process exited with code 0\nok")));
-        assert!(output_is_error(&json!("Process exited with code -1\n")));
-        assert!(!output_is_error(&json!(
-            "texto cualquiera con error dentro"
+        assert!(!output_is_error(&output(
+            r#""Process exited with code 0\nok""#
         )));
-        assert!(output_is_error(&json!({"success": false})));
+        assert!(output_is_error(&output(
+            r#""Process exited with code -1\n""#
+        )));
+        assert!(!output_is_error(&output(
+            r#""texto cualquiera con error dentro""#
+        )));
+        assert!(output_is_error(&output(r#"{"success": false}"#)));
     }
 
     #[test]
     fn objetivo_de_shell_y_parche() {
-        let args =
-            serde_json::json!({ "command": ["bash", "-lc", "git status | head"], "workdir": "/p" });
+        let a = args(r#"{ "command": ["bash", "-lc", "git status | head"], "workdir": "/p" }"#);
         assert_eq!(
-            tool_target("Bash", &args).as_deref(),
+            tool_target("Bash", &a).as_deref(),
             Some("git status | head")
         );
-        let args = serde_json::json!({ "command": ["ls", "-la"] });
-        assert_eq!(tool_target("Bash", &args).as_deref(), Some("ls -la"));
-        let patch = serde_json::json!({ "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-a\n+b\n*** End Patch" });
+        let a = args(r#"{ "command": ["ls", "-la"] }"#);
+        assert_eq!(tool_target("Bash", &a).as_deref(), Some("ls -la"));
+        let a = args(r#"{ "command": "make", "cmd": "otro" }"#);
+        assert_eq!(tool_target("Bash", &a).as_deref(), Some("make"));
+        let a = args(r#"{ "command": {"x": 1}, "cmd": "otro" }"#);
+        assert_eq!(tool_target("Bash", &a).as_deref(), Some("otro"));
+        let patch = args(
+            r#"{ "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-a\n+b\n*** End Patch" }"#,
+        );
         assert_eq!(tool_target("Edit", &patch).as_deref(), Some("src/lib.rs"));
     }
 
     #[test]
     fn error_en_la_salida() {
-        assert!(output_is_error(
-            &serde_json::json!({ "content": "x", "success": false })
-        ));
-        assert!(!output_is_error(
-            &serde_json::json!({ "content": "x", "success": true })
-        ));
-        assert!(output_is_error(&Value::String(
-            r#"{"output":"boom","metadata":{"exit_code":1,"duration_seconds":0.1}}"#.into()
+        assert!(output_is_error(&output(
+            r#"{ "content": "x", "success": false }"#
         )));
-        assert!(!output_is_error(&Value::String("todo bien".into())));
+        assert!(!output_is_error(&output(
+            r#"{ "content": "x", "success": true }"#
+        )));
+        assert!(!output_is_error(&output(r#"{ "content": "x" }"#)));
+        assert!(output_is_error(&output(
+            r#""{\"output\":\"boom\",\"metadata\":{\"exit_code\":1,\"duration_seconds\":0.1}}""#
+        )));
+        assert!(!output_is_error(&output(r#""todo bien""#)));
+        assert!(!output_is_error(&output("[true]")));
     }
 
     #[test]

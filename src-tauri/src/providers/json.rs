@@ -103,6 +103,65 @@ impl<'de> Deserialize<'de> for Int {
     }
 }
 
+/// Entero con la semántica de `Value::as_i64` sin valor por defecto: `None` si falta o no es un
+/// entero que quepa en `i64`.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct OptInt(pub Option<i64>);
+
+impl<'de> Deserialize<'de> for OptInt {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = OptInt;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<OptInt, E> {
+                Ok(OptInt(Some(v)))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<OptInt, E> {
+                Ok(OptInt(i64::try_from(v).ok()))
+            }
+            ignore_others!(OptInt, OptInt(None), [bool, f64, str, unit, seq, map]);
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// `true` si el campo está y no es `null` (como `!v[k].is_null()`), sin leer su contenido.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct NotNull(pub bool);
+
+impl<'de> Deserialize<'de> for NotNull {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = NotNull;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<NotNull, E> {
+                Ok(NotNull(false))
+            }
+            fn visit_none<E: de::Error>(self) -> Result<NotNull, E> {
+                Ok(NotNull(false))
+            }
+            ignore_others!(NotNull, NotNull(true), [bool, i64, u64, f64, str, seq, map]);
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// `true` si el campo está, sea cual sea su valor (como `v.get(k).is_some()`).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Seen(pub bool);
+
+impl<'de> Deserialize<'de> for Seen {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        IgnoredAny::deserialize(d).map(|_| Seen(true))
+    }
+}
+
 /// Booleano si el valor es un booleano.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Bool(pub Option<bool>);

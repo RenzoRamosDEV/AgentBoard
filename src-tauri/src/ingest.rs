@@ -729,6 +729,9 @@ const REFRESH_TOOL_USE: &str = "UPDATE tool_calls SET detail = COALESCE(detail, 
        turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
      WHERE call_id = ?4";
 
+/// Sesión y día de una herramienta: su resultado puede cambiar los errores de sus agregados.
+const SELECT_TOOL_KEY: &str = "SELECT session_id, day FROM tool_calls WHERE call_id = ?1";
+
 const UPDATE_TOOL_RESULT: &str = "UPDATE tool_calls SET is_error = ?1, duration_ms = MAX(0, ?2 - ts), agent_id = COALESCE(?3, agent_id)
      WHERE call_id = ?4";
 
@@ -756,8 +759,12 @@ struct Writer<'a> {
     /// mensaje en una línea por bloque de contenido y las repeticiones iguales no se reescriben
     /// (un turno que llegue entre medias lo asigna `backfill_turns` al terminar el archivo).
     calls_seen: HashMap<String, CallRec>,
-    /// Sesiones con llamadas insertadas en este archivo, para recalcular sus derivados.
-    new_call_sessions: HashSet<String>,
+    /// Claves `(sesión, día)` con llamadas o herramientas escritas en este archivo, para que
+    /// `derived::refresh` rehaga sus agregados (no hay disparadores de inserción).
+    dirty: HashSet<(String, i64)>,
+    /// Sesión y día de las herramientas insertadas en este archivo, para anotar la clave cuando
+    /// llega su resultado sin buscarla en la base.
+    tool_keys: HashMap<String, (String, i64)>,
 }
 
 impl<'a> Writer<'a> {
@@ -771,7 +778,8 @@ impl<'a> Writer<'a> {
             models: HashMap::new(),
             new_turns: HashMap::new(),
             calls_seen: HashMap::new(),
-            new_call_sessions: HashSet::new(),
+            dirty: HashSet::new(),
+            tool_keys: HashMap::new(),
         }
     }
 
@@ -811,8 +819,8 @@ impl<'a> Writer<'a> {
                 .prepare_cached(UPDATE_SESSION_MODEL)?
                 .execute(params![model, id])?;
         }
-        crate::derived::mark_sessions(self.tx, self.new_call_sessions.iter().map(String::as_str))?;
-        self.new_call_sessions.clear();
+        crate::derived::mark_keys(self.tx, self.dirty.iter().map(|(s, d)| (s.as_str(), *d)))?;
+        self.dirty.clear();
         Ok(())
     }
 
@@ -858,6 +866,7 @@ impl<'a> Writer<'a> {
                 if seen != Some(c) {
                     let written = seen.is_some();
                     let cost = self.ctx.prices.cost(c);
+                    let day = crate::tz::day_number(c.ts, &self.ctx.zone);
                     let values = params![
                         c.message_id,
                         c.session_id,
@@ -876,12 +885,12 @@ impl<'a> Writer<'a> {
                         cost.has_price,
                         cost.cost_usd,
                         cost.cache_savings_usd,
-                        crate::tz::day_number(c.ts, &self.ctx.zone)
+                        day
                     ];
                     if written || self.run(INSERT_CALL, values)? == 0 {
                         self.run(UPDATE_CALL, &values[..14])?;
-                    } else if !self.new_call_sessions.contains(&c.session_id) {
-                        self.new_call_sessions.insert(c.session_id.clone());
+                    } else {
+                        self.dirty.insert((c.session_id.clone(), day));
                     }
                     self.calls_seen.insert(c.message_id.clone(), c.clone());
                 }
@@ -890,6 +899,7 @@ impl<'a> Writer<'a> {
                 }
             }
             Record::ToolUse(t) => {
+                let day = crate::tz::day_number(t.ts, &self.ctx.zone);
                 let n = self.run(
                     INSERT_TOOL_USE,
                     params![
@@ -900,10 +910,13 @@ impl<'a> Writer<'a> {
                         t.tool,
                         t.target,
                         t.detail,
-                        crate::tz::day_number(t.ts, &self.ctx.zone)
+                        day
                     ],
                 )?;
                 if n > 0 {
+                    self.dirty.insert((t.session_id.clone(), day));
+                    self.tool_keys
+                        .insert(t.call_id.clone(), (t.session_id.clone(), day));
                     return Ok(Some(t.call_id.clone()));
                 }
                 // Ya existía (relectura): completa las columnas añadidas después.
@@ -918,7 +931,18 @@ impl<'a> Writer<'a> {
                 is_error,
                 agent_id,
             } => {
-                self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])?;
+                if self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])? > 0 {
+                    let key = match self.tool_keys.get(call_id) {
+                        Some(key) => key.clone(),
+                        None => self
+                            .tx
+                            .prepare_cached(SELECT_TOOL_KEY)?
+                            .query_row([call_id], |r| {
+                                Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0)))
+                            })?,
+                    };
+                    self.dirty.insert(key);
+                }
             }
             Record::Turn(t) => {
                 let ts: i64 = self

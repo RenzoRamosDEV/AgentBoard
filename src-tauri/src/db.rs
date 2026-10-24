@@ -17,6 +17,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (5, include_str!("../migrations/0005_coste_precalculado.sql")),
     (6, include_str!("../migrations/0006_primera_llamada.sql")),
     (7, include_str!("../migrations/0007_dia_local.sql")),
+    (8, include_str!("../migrations/0008_agregados_diarios.sql")),
 ];
 
 /// Sentencias preparadas que la conexión conserva compiladas.
@@ -85,7 +86,8 @@ pub fn cache_zone(conn: &Connection) -> Result<chrono_tz::Tz> {
     Ok(crate::tz::parse(&cache_tz(conn)?))
 }
 
-/// Fija la zona de la caché. Si cambia, todos los días quedan pendientes y se recalculan.
+/// Fija la zona de la caché. Si cambia, todos los días quedan pendientes y se recalculan, y con
+/// ellos todos los agregados diarios.
 pub fn set_cache_tz(conn: &Connection, name: &str) -> Result<()> {
     if cache_tz(conn)? == name {
         return Ok(());
@@ -96,7 +98,10 @@ pub fn set_cache_tz(conn: &Connection, name: &str) -> Result<()> {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [name],
     )?;
-    tx.execute_batch("UPDATE calls SET day = NULL; UPDATE tool_calls SET day = NULL;")?;
+    tx.execute_batch(
+        "DELETE FROM daily_stats; DELETE FROM tool_stats;
+         UPDATE calls SET day = NULL; UPDATE tool_calls SET day = NULL;",
+    )?;
     crate::derived::refresh(&tx)?;
     tx.commit()?;
     Ok(())

@@ -46,17 +46,16 @@ fn cold(
     Ok(())
 }
 
-fn live(
+/// `repeat` refrescos de `live_lines` líneas nuevas en un archivo de actividad simulada; `round`
+/// separa los ids de varias tandas sobre el mismo archivo.
+fn refreshes(
     conn: &mut Connection,
     providers: &[Box<dyn agentboard_lib::providers::Provider>],
     args: &common::Args,
-) -> Result<()> {
-    let dir = args
-        .fixtures
-        .join("claude_code/-home-dev-Proyectos-proyecto-00");
-    std::fs::create_dir_all(&dir)?;
-    let session = format!("perf-live-{}", std::process::id());
-    let guard = LiveFile::new(dir.join(format!("{session}.jsonl")));
+    guard: &LiveFile,
+    session: &str,
+    round: usize,
+) -> Result<(Vec<Duration>, usize)> {
     let mut times = Vec::with_capacity(args.repeat);
     let mut records = 0;
     for r in 0..args.repeat {
@@ -65,13 +64,33 @@ fn live(
             .append(true)
             .open(&guard.path)
             .with_context(|| format!("no se pudo escribir {}", guard.path.display()))?;
-        f.write_all(common::live_lines(&session, r * args.live_lines, args.live_lines).as_bytes())?;
+        let first = (round * args.repeat + r) * args.live_lines;
+        f.write_all(common::live_lines(session, first, args.live_lines).as_bytes())?;
         drop(f);
         let t = Instant::now();
         let stats = ingest::scan_all(conn, providers)?;
         times.push(t.elapsed());
         records += stats.records;
     }
+    Ok((times, records))
+}
+
+fn live_file(args: &common::Args) -> Result<(LiveFile, String)> {
+    let dir = args
+        .fixtures
+        .join("claude_code/-home-dev-Proyectos-proyecto-00");
+    std::fs::create_dir_all(&dir)?;
+    let session = format!("perf-live-{}", std::process::id());
+    Ok((LiveFile::new(dir.join(format!("{session}.jsonl"))), session))
+}
+
+fn live(
+    conn: &mut Connection,
+    providers: &[Box<dyn agentboard_lib::providers::Provider>],
+    args: &common::Args,
+) -> Result<()> {
+    let (guard, session) = live_file(args)?;
+    let (times, records) = refreshes(conn, providers, args, &guard, &session, 0)?;
     let total: Duration = times.iter().sum();
     row(
         "live",
@@ -100,6 +119,64 @@ fn live(
         );
     }
     row("live", "registros nuevos", records);
+    Ok(())
+}
+
+/// Refrescos del escritor sin lecturas y con un hilo que repite el Resumen completo por los
+/// lectores a la vez: con la caché en disco no deberían esperarse.
+fn contention(
+    conn: &mut Connection,
+    target: &db::Target,
+    providers: &[Box<dyn agentboard_lib::providers::Provider>],
+    args: &common::Args,
+) -> Result<()> {
+    let (guard, session) = live_file(args)?;
+    let (alone, _) = refreshes(conn, providers, args, &guard, &session, 0)?;
+    let pool = std::sync::Arc::new(db::ReadPool::open(target, db::ReadPool::SIZE)?);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader = {
+        let (pool, stop) = (pool.clone(), stop.clone());
+        std::thread::spawn(move || -> Result<(usize, Vec<Duration>)> {
+            let f = common::last_30_days();
+            let mut times = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let t = Instant::now();
+                pool.with(|c| common::full_summary(c, &f))?;
+                times.push(t.elapsed());
+            }
+            Ok((times.len(), times))
+        })
+    };
+    let busy = refreshes(conn, providers, args, &guard, &session, 1);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (summaries, summary_times) = reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("el hilo lector falló"))??;
+    let (busy, _) = busy?;
+    let (a, b) = (median(&alone), median(&busy));
+    row("contention", "refresco sin lecturas (mediana)", ms(a));
+    row(
+        "contention",
+        "refresco con el Resumen en bucle (mediana)",
+        ms(b),
+    );
+    row(
+        "contention",
+        "con / sin lecturas",
+        format!("× {:.2}", b.as_secs_f64() / a.as_secs_f64().max(1e-9)),
+    );
+    row(
+        "contention",
+        "Resúmenes completos durante los refrescos",
+        format!(
+            "{summaries} (mediana {})",
+            if summary_times.is_empty() {
+                "n/d".to_string()
+            } else {
+                ms(median(&summary_times))
+            }
+        ),
+    );
     Ok(())
 }
 
@@ -147,7 +224,17 @@ fn main() -> Result<()> {
         );
     }
     let providers = common::providers(&args.fixtures);
-    let mut conn = db::open_in_memory()?;
+    // Escritor: en el archivo de `--cache` (WAL), en memoria compartida si hay que medir lectores
+    // aparte, o en una base privada en memoria (como la Fase 1 y el servidor MCP).
+    let target = match &args.cache {
+        Some(path) => Some(db::Target::File(path.clone())),
+        None if args.phase == Phase::Contention => Some(db::Target::shared_memory()),
+        None => None,
+    };
+    let mut conn = match &target {
+        Some(t) => db::open_writer(t)?,
+        None => db::open_in_memory()?,
+    };
     row("fase", "métrica", "valor");
     row("fixtures", "carpeta", args.fixtures.display());
     cold(
@@ -165,8 +252,11 @@ fn main() -> Result<()> {
             row("huella-c", "", line);
         }
     }
-    if matches!(args.phase, Phase::Warm | Phase::Contention) || args.cache.is_some() {
-        bail!("--phase warm|contention y --cache llegan con la caché en disco y los lectores");
+    if args.phase == Phase::Warm {
+        bail!("--phase warm llega con la caché en disco (tarea 10.6)");
+    }
+    if let (Phase::Contention, Some(target)) = (args.phase, &target) {
+        contention(&mut conn, target, &providers, &args)?;
     }
     if matches!(args.phase, Phase::Live | Phase::All) {
         live(&mut conn, &providers, &args)?;

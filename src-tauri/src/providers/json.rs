@@ -365,10 +365,11 @@ impl<'de: 'a, 'a, T: Deserialize<'de>> Deserialize<'de> for ListOrStr<'a, T> {
 }
 
 /// Lista de `T` o la longitud de una cadena, sin copiarla.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ListOrLen<T> {
     List(Vec<T>),
     Len(usize),
+    #[default]
     Other,
 }
 
@@ -470,5 +471,49 @@ mod tests {
         assert_eq!(parse(r#"{"n":9223372036854775808}"#).n, Int(0));
         assert_eq!(parse(r#"{"n":-9223372036854775808}"#).n, Int(i64::MIN));
         assert_eq!(parse(r#"{"n":1e3}"#).n, Int(0));
+    }
+
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct More<'a> {
+        o: OptInt,
+        #[serde(borrow)]
+        t: IntOrStr<'a>,
+        n: NotNull,
+        len: StrLen,
+        p: Present<Bool>,
+        #[serde(borrow)]
+        ls: ListOrStr<'a, Int>,
+        ll: ListOrLen<Int>,
+    }
+
+    fn more(json: &str) -> More<'_> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn enteros_opcionales_fechas_y_presencia() {
+        let m = more(r#"{"o":-5,"t":-7,"n":null,"len":"a\"b","p":null,"ls":"x","ll":"hola"}"#);
+        assert_eq!(m.o, OptInt(Some(-5)));
+        assert_eq!(m.t, IntOrStr::Int(Some(-7)));
+        assert_eq!(m.n, NotNull(false));
+        assert_eq!(m.len, StrLen(Some(3)));
+        assert_eq!(m.p, Present(Some(Bool(None))), "presente aunque sea null");
+        assert_eq!(m.ls, ListOrStr::Str(Cow::Borrowed("x")));
+        assert_eq!(m.ll, ListOrLen::Len(4));
+        let m = more(r#"{"o":3,"t":"2026","n":{"x":1},"ls":[1,"a"],"ll":[2],"len":5}"#);
+        assert_eq!(m.o, OptInt(Some(3)));
+        assert_eq!(m.t, IntOrStr::Str(Cow::Borrowed("2026")));
+        assert_eq!(m.n, NotNull(true));
+        assert_eq!(m.ls, ListOrStr::List(vec![Int(1), Int(0)]));
+        assert_eq!(m.ll, ListOrLen::List(vec![Int(2)]));
+        assert_eq!(m.len, StrLen(None));
+        let m = more(r#"{"o":1.5,"t":true,"ls":{},"ll":7}"#);
+        assert_eq!(
+            (m.o, m.t, m.p),
+            (OptInt(None), IntOrStr::Other, Present(None))
+        );
+        assert_eq!((m.ls, m.ll), (ListOrStr::Other, ListOrLen::Other));
+        assert_eq!(more(r#"{"o":18446744073709551615}"#).o, OptInt(None));
     }
 }

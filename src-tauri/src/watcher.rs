@@ -1,15 +1,14 @@
 //! Vigilante de archivos: observa las carpetas de logs de los agentes y, al cambiar algo,
-//! relee de forma incremental (los offsets de `file_state` evitan duplicar) y avisa a la UI.
+//! pide una relectura al hilo de ingesta (los offsets de `file_state` evitan duplicar).
 
-use crate::ingest;
+use crate::ingest_thread::{IngestHandle, Origen};
 use crate::providers::Provider;
 use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
-use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Espera tras el primer cambio antes de releer, para agrupar ráfagas de escrituras.
@@ -18,16 +17,13 @@ const DEBOUNCE: Duration = Duration::from_millis(400);
 const RECHECK: Duration = Duration::from_secs(20);
 
 /// Fábrica de providers; se inyecta para poder probar el vigilante con carpetas de test.
+/// Solo se usa para descubrir las carpetas que vigilar.
 pub type Providers = Arc<dyn Fn() -> Vec<Box<dyn Provider>> + Send + Sync>;
 
-/// Lanza el vigilante en su propio hilo. `on_change` se llama tras cada relectura con cambios.
-pub fn spawn(
-    db: Arc<Mutex<Connection>>,
-    providers: Providers,
-    on_change: impl Fn() + Send + 'static,
-) {
+/// Lanza el vigilante en su propio hilo; cada ráfaga de cambios pide un escaneo a `ingest`.
+pub fn spawn(providers: Providers, ingest: IngestHandle) {
     std::thread::spawn(move || {
-        if let Err(e) = run(db, providers, on_change, RECHECK) {
+        if let Err(e) = run(providers, ingest, RECHECK) {
             tracing::error!("agentboard: el vigilante se detuvo: {e:#}");
         }
     });
@@ -41,12 +37,7 @@ fn existing_roots(providers: &Providers) -> Vec<PathBuf> {
         .collect()
 }
 
-fn run(
-    db: Arc<Mutex<Connection>>,
-    providers: Providers,
-    on_change: impl Fn(),
-    recheck: Duration,
-) -> Result<()> {
+fn run(providers: Providers, ingest: IngestHandle, recheck: Duration) -> Result<()> {
     let (tx, rx) = channel();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if res.is_ok() {
@@ -72,15 +63,6 @@ fn run(
         added
     };
     watch_new(&mut watcher, &mut watched);
-    // Las mismas instancias en todas las relecturas: los proveedores con estado entre líneas
-    // (Codex, Gemini, Cursor, Copilot) lo conservan y no releen cada archivo entero.
-    let readers = providers();
-    let scan = |db: &Arc<Mutex<Connection>>| match db.lock() {
-        Ok(mut conn) => ingest::scan_all(&mut conn, &readers)
-            .map(|s| s.records)
-            .unwrap_or(0),
-        Err(_) => 0,
-    };
 
     loop {
         // Espera al primer evento (o revisa periódicamente si hay carpetas nuevas).
@@ -102,14 +84,9 @@ fn run(
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
 
-        let mut scanned = scan(&db);
-        // Puede haber aparecido una carpeta nueva durante la actividad: se vigila y escanea ya.
-        if watch_new(&mut watcher, &mut watched) {
-            scanned += scan(&db);
-        }
-        if scanned > 0 {
-            on_change();
-        }
+        // Una carpeta aparecida durante la actividad se vigila ya; el escaneo pedido la incluye.
+        watch_new(&mut watcher, &mut watched);
+        ingest.request(Origen::Vigilante);
     }
 }
 
@@ -121,8 +98,10 @@ fn run(
 mod tests {
     use super::*;
     use crate::db;
+    use crate::ingest_thread::{IngestThread, Origen};
     use crate::providers::claude_code::ClaudeCode;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     #[test]
     fn escanea_carpetas_que_aparecen_despues_de_arrancar() {
@@ -133,10 +112,10 @@ mod tests {
         let providers: Providers = Arc::new(move || {
             vec![Box::new(ClaudeCode::with_roots(vec![root2.clone()])) as Box<dyn Provider>]
         });
-        let db2 = db.clone();
+        let ingest = IngestThread::spawn(db.clone(), providers(), |_, _| {});
         let providers2 = providers.clone();
         std::thread::spawn(move || {
-            let _ = run(db2, providers2, || {}, Duration::from_millis(100));
+            let _ = run(providers2, ingest, Duration::from_millis(100));
         });
         // La carpeta aún no existe cuando arranca el vigilante.
         std::thread::sleep(Duration::from_millis(250));
@@ -188,18 +167,15 @@ mod tests {
         });
         let calls = Arc::new(AtomicUsize::new(0));
 
-        let db2 = db.clone();
-        let providers2 = providers.clone();
         let calls2 = calls.clone();
+        let ingest = IngestThread::spawn(db.clone(), providers(), move |origen, stats| {
+            if origen == Origen::Vigilante && stats.records > 0 {
+                calls2.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let providers2 = providers.clone();
         std::thread::spawn(move || {
-            let _ = run(
-                db2,
-                providers2,
-                move || {
-                    calls2.fetch_add(1, Ordering::SeqCst);
-                },
-                Duration::from_millis(200),
-            );
+            let _ = run(providers2, ingest, Duration::from_millis(200));
         });
 
         let count = |sql: &str| {

@@ -19,6 +19,7 @@ pub mod watcher;
 
 use alerts::Alerts;
 use commands::AppState;
+use ingest_thread::{IngestThread, Origen};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -73,34 +74,32 @@ pub fn run() {
                 }
             };
 
-            // Escaneo inicial en segundo plano: lee los logs del ordenador a la base en memoria.
+            // Hilo de ingesta: escaneo inicial y relecturas del vigilante, fuera de la interfaz.
             let handle = app.handle().clone();
-            let scan_db = db.clone();
-            let after_scan = refresh_alerts.clone();
-            std::thread::spawn(move || {
-                let result = scan_db
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-                    .and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
-                match result {
-                    Ok(stats) => {
-                        tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
-                            .in_scope(|| handle.emit("ingest://done", stats))
-                            .ok();
-                        after_scan();
-                    }
-                    Err(e) => tracing::error!("agentboard: falló el escaneo inicial: {e:#}"),
-                }
-            });
+            let ingest =
+                IngestThread::spawn(
+                    db.clone(),
+                    providers::all(),
+                    move |origen, stats| match origen {
+                        Origen::EscaneoInicial => {
+                            tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
+                                .in_scope(|| handle.emit("ingest://done", stats))
+                                .ok();
+                            refresh_alerts();
+                        }
+                        Origen::Vigilante if stats.records > 0 => {
+                            tracing::debug_span!("emit.ingest_done", origen = "vigilante")
+                                .in_scope(|| handle.emit("ingest://done", ()))
+                                .ok();
+                            refresh_alerts();
+                        }
+                        Origen::Vigilante => {}
+                    },
+                );
+            ingest.request(Origen::EscaneoInicial);
 
-            // Vigilante en vivo: relee al vuelo cuando los agentes escriben en sus logs.
-            let watch_handle = app.handle().clone();
-            watcher::spawn(db.clone(), Arc::new(providers::all), move || {
-                tracing::debug_span!("emit.ingest_done", origen = "vigilante")
-                    .in_scope(|| watch_handle.emit("ingest://done", ()))
-                    .ok();
-                refresh_alerts();
-            });
+            // Vigilante en vivo: pide relecturas cuando los agentes escriben en sus logs.
+            watcher::spawn(Arc::new(providers::all), ingest);
             Ok(())
         })
         .on_window_event(|window, event| {

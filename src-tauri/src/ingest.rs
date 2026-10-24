@@ -1417,6 +1417,28 @@ mod tests {
     }
 
     #[test]
+    fn la_sesion_acumulada_combina_como_los_upserts() {
+        use crate::providers::SessionRec;
+        let rec = |ts: i64, branch: Option<&str>, is_subagent: bool| SessionRec {
+            id: "s".into(),
+            cwd: None,
+            git_branch: branch.map(str::to_string),
+            ts,
+            is_subagent,
+        };
+        let mut acc = SessionAcc::new(5);
+        assert!(!acc.merged);
+        acc.add(&rec(3, Some("a"), true), None);
+        acc.add(&rec(9, None, false), Some(7));
+        acc.add(&rec(4, Some("b"), false), Some(8));
+        assert_eq!(
+            (acc.started, acc.ended, acc.branch.as_deref(), acc.project),
+            (3, 9, Some("b"), Some(7))
+        );
+        assert!(acc.is_subagent && acc.merged);
+    }
+
+    #[test]
     fn streaming_deja_una_llamada_con_los_ultimos_tokens() {
         let (_d, file, p, mut conn) = setup();
         let body = [

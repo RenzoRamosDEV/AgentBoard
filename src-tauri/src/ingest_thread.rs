@@ -587,6 +587,115 @@ mod tests {
         );
     }
 
+    /// Volcado de los datos importados por un lector del conjunto vigente.
+    fn snapshot(readers: &SharedReaders) -> String {
+        crate::commands::current(readers)
+            .unwrap()
+            .with(|c| {
+                let mut stmt = c.prepare(
+                    "SELECT message_id, session_id, ts, cost_usd, day FROM calls ORDER BY 1",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| {
+                        Ok(format!(
+                            "{}|{}|{}|{}|{}",
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, f64>(3)?,
+                            r.get::<_, i64>(4)?
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows.join("\n"))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn reconstruir_en_memoria_o_en_disco_deja_los_mismos_datos() {
+        let (fx, storage) = fixture(&[("a.log", "m1\nm2\n"), ("b.log", "m3\n")]);
+        let path = match &storage.mode {
+            CacheMode::Disco(p) => p.clone(),
+            CacheMode::Memoria => unreachable!(),
+        };
+        let readers = readers_of(&storage);
+        let (tx, rx) = mpsc::channel();
+        let handle = IngestThread::spawn(
+            storage,
+            readers.clone(),
+            Vec::new,
+            fake(&fx),
+            Default::default(),
+            move |origen, stats| tx.send((origen, stats.records)).unwrap(),
+        );
+        handle.request(Origen::EscaneoInicial);
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 6));
+        let reference = snapshot(&readers);
+
+        // A memoria: la caché en disco desaparece y los datos se vuelven a leer.
+        handle.rebuild(Some(CacheMode::Memoria)).unwrap();
+        assert!(!path.exists(), "caché borrada");
+        for suffix in ["-wal", "-shm"] {
+            assert!(!PathBuf::from(format!("{}{suffix}", path.display())).exists());
+        }
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 6));
+        assert_eq!(snapshot(&readers), reference);
+
+        // De vuelta a disco: se crea y se rellena.
+        handle
+            .rebuild(Some(CacheMode::Disco(path.clone())))
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 6));
+        assert!(path.exists());
+        assert_eq!(snapshot(&readers), reference);
+        assert_eq!(calls(&fx), 3, "en el archivo nuevo");
+    }
+
+    #[test]
+    fn las_consultas_responden_durante_la_reconstruccion() {
+        let files: Vec<(String, String)> = (0..20)
+            .map(|i| (format!("{i}.log"), format!("m{i}\n")))
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let (fx, storage) = fixture(&refs);
+        let readers = readers_of(&storage);
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(Fake {
+            root: fx.root.clone(),
+            gate: None,
+            delay: Duration::from_millis(20),
+        })];
+        let (tx, rx) = mpsc::channel();
+        let handle = IngestThread::spawn(
+            storage,
+            readers.clone(),
+            Vec::new,
+            providers,
+            Default::default(),
+            move |origen, _| tx.send(origen).unwrap(),
+        );
+        handle.request(Origen::EscaneoInicial);
+        rx.recv_timeout(WAIT).unwrap();
+        handle.rebuild(None).unwrap();
+        // Mientras relee los 20 archivos, las consultas responden (con lo releído hasta ahora).
+        let mut answered = 0;
+        while rx.try_recv().is_err() {
+            let n = crate::commands::current(&readers)
+                .unwrap()
+                .with(
+                    |c| Ok(c.query_row("SELECT COUNT(*) FROM calls", [], |r| r.get::<_, i64>(0))?),
+                )
+                .expect("la consulta responde sin error");
+            assert!((0..=20).contains(&n));
+            answered += 1;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(answered > 0);
+    }
+
     #[test]
     fn un_trabajo_fallido_no_detiene_el_hilo() {
         let (fx, writer) = fixture(&[("a.log", "m1\n")]);

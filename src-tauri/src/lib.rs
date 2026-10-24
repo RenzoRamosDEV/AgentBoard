@@ -34,8 +34,7 @@ pub fn run() {
         .setup(|app| {
             db::remove_legacy_db();
             // Caché reconstruible en la carpeta de datos (en memoria si no se puede crear).
-            let mode =
-                db::default_cache_path().map_or(db::CacheMode::Memoria, db::CacheMode::Disco);
+            let mode = db::startup_mode(settings::load().memory_only, db::default_cache_path());
             let storage = db::Storage::open(mode)?;
             // Precios fijados por el usuario en Ajustes, encima de los de por defecto; con una
             // caché existente solo se tocan los que cambiaron.
@@ -151,6 +150,7 @@ pub fn run() {
             commands::list_prices,
             commands::get_settings,
             commands::set_settings,
+            commands::rebuild_cache,
             tray::show_main,
         ])
         .run(tauri::generate_context!())

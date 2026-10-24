@@ -68,6 +68,19 @@ pub enum CacheMode {
     Memoria,
 }
 
+/// Modo de la caché al arrancar. Con «Solo memoria» se borra cualquier caché que haya quedado en
+/// disco (p. ej. si al activarla no se pudo borrar porque un lector la tenía abierta).
+pub fn startup_mode(memory_only: bool, path: Option<PathBuf>) -> CacheMode {
+    match (memory_only, path) {
+        (true, Some(path)) => {
+            delete_cache_files(&path);
+            CacheMode::Memoria
+        }
+        (false, Some(path)) => CacheMode::Disco(path),
+        (_, None) => CacheMode::Memoria,
+    }
+}
+
 /// Marca de la caché en `cache_meta`: una base sin ella no la creó esta app.
 const CACHE_FORMAT: &str = "agentboard-cache";
 
@@ -863,6 +876,23 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(left, vec!["cache.sqlite".to_string()]);
+    }
+
+    #[test]
+    fn con_solo_memoria_al_arrancar_se_borra_la_cache_que_quede() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_in(dir.path());
+        drop(Storage::open(CacheMode::Disco(path.clone())).unwrap());
+        std::fs::write(format!("{}-wal", path.display()), b"x").unwrap();
+        assert_eq!(
+            startup_mode(false, Some(path.clone())),
+            CacheMode::Disco(path.clone())
+        );
+        assert!(path.exists());
+        assert_eq!(startup_mode(true, Some(path.clone())), CacheMode::Memoria);
+        assert!(!path.exists());
+        assert!(!PathBuf::from(format!("{}-wal", path.display())).exists());
+        assert_eq!(startup_mode(false, None), CacheMode::Memoria);
     }
 
     #[test]

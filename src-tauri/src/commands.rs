@@ -274,9 +274,10 @@ pub async fn set_settings(
     state: tauri::State<'_, AppState>,
     settings: Settings,
 ) -> CmdResult<Settings> {
-    let saved = run_blocking(move || {
+    let (previous, saved) = run_blocking(move || {
+        let previous = settings::load();
         settings::save(&settings)?;
-        Ok(settings::load())
+        Ok((previous, settings::load()))
     })
     .await?;
     // Al cambiar el presupuesto se vuelven a permitir los avisos.
@@ -285,7 +286,22 @@ pub async fn set_settings(
     let overrides = saved.price_overrides.clone();
     let ingest = state.ingest.clone();
     run_blocking(move || ingest.apply_prices(overrides).map_err(anyhow::Error::msg)).await?;
+    // «Solo memoria» cambiada: la caché pasa a memoria (y se borra del disco) o vuelve al disco.
+    if saved.memory_only != previous.memory_only {
+        let mode = crate::db::startup_mode(saved.memory_only, crate::db::default_cache_path());
+        let ingest = state.ingest.clone();
+        run_blocking(move || ingest.rebuild(Some(mode)).map_err(anyhow::Error::msg)).await?;
+    }
     Ok(saved)
+}
+
+/// Vacía la caché (en disco o en memoria) y vuelve a leer todos los logs; al terminar llega
+/// `ingest://done`.
+#[tauri::command]
+#[tracing::instrument(name = "cmd.rebuild_cache", level = "info", skip_all)]
+pub async fn rebuild_cache(state: tauri::State<'_, AppState>) -> CmdResult<()> {
+    let ingest = state.ingest.clone();
+    run_blocking(move || ingest.rebuild(None).map_err(anyhow::Error::msg)).await
 }
 
 #[cfg(test)]

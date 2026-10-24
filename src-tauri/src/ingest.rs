@@ -324,11 +324,11 @@ const SELECT_PROJECT: &str = "SELECT id FROM projects WHERE cwd = ?1";
 const BACKFILL_CALLS: &str =
     "UPDATE calls SET turn_id = (SELECT id FROM turns t WHERE t.session_id = calls.session_id
        AND t.ts <= calls.ts ORDER BY t.ts DESC LIMIT 1)
-     WHERE session_id = ?1 AND turn_id IS NULL";
+     WHERE session_id = ?1 AND turn_id IS NULL AND ts >= ?2";
 
 const BACKFILL_TOOL_CALLS: &str = "UPDATE tool_calls SET turn_id = (SELECT id FROM turns t WHERE t.session_id = tool_calls.session_id
        AND t.ts <= tool_calls.ts ORDER BY t.ts DESC LIMIT 1)
-     WHERE session_id = ?1 AND turn_id IS NULL";
+     WHERE session_id = ?1 AND turn_id IS NULL AND ts >= ?2";
 
 const UPSERT_SESSION: &str =
     "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, is_subagent)
@@ -370,7 +370,8 @@ const UPDATE_TOOL_RESULT: &str = "UPDATE tool_calls SET is_error = ?1, duration_
      WHERE call_id = ?4";
 
 const UPSERT_TURN: &str = "INSERT INTO turns (id, session_id, ts, intent) VALUES (?1, ?2, ?3, ?4)
-     ON CONFLICT(id) DO UPDATE SET ts = MIN(ts, excluded.ts), intent = COALESCE(intent, excluded.intent)";
+     ON CONFLICT(id) DO UPDATE SET ts = MIN(ts, excluded.ts), intent = COALESCE(intent, excluded.intent)
+     RETURNING ts";
 
 const INSERT_EVENT: &str =
     "INSERT OR IGNORE INTO events (session_id, ts, kind, payload_json) VALUES (?1, ?2, ?3, ?4)";
@@ -380,7 +381,9 @@ struct Writer<'a> {
     tx: &'a Transaction<'a>,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
-    sessions: std::collections::HashSet<String>,
+    /// Por sesión, el `ts` mínimo de los turnos aplicados: solo las filas sin turno desde ahí
+    /// pueden ganar uno.
+    new_turns: HashMap<String, i64>,
 }
 
 impl<'a> Writer<'a> {
@@ -389,7 +392,7 @@ impl<'a> Writer<'a> {
             tx,
             agent_id,
             projects: HashMap::new(),
-            sessions: Default::default(),
+            new_turns: HashMap::new(),
         }
     }
 
@@ -414,9 +417,9 @@ impl<'a> Writer<'a> {
     /// Asigna turno a llamadas y herramientas que llegaron antes que él (p. ej. el archivo
     /// de un subagente leído antes que el de su sesión).
     fn backfill_turns(&self) -> Result<()> {
-        for sid in &self.sessions {
+        for (sid, since) in &self.new_turns {
             for sql in [BACKFILL_CALLS, BACKFILL_TOOL_CALLS] {
-                self.run(sql, [sid])?;
+                self.run(sql, params![sid, since])?;
             }
         }
         Ok(())
@@ -426,9 +429,6 @@ impl<'a> Writer<'a> {
     fn apply(&mut self, rec: &Record) -> Result<Option<String>> {
         match rec {
             Record::Session(s) => {
-                if !self.sessions.contains(&s.id) {
-                    self.sessions.insert(s.id.clone());
-                }
                 let project = match &s.cwd {
                     Some(cwd) => Some(self.project_id(cwd)?),
                     None => None,
@@ -500,7 +500,14 @@ impl<'a> Writer<'a> {
                 self.run(UPDATE_TOOL_RESULT, params![is_error, ts, agent_id, call_id])?;
             }
             Record::Turn(t) => {
-                self.run(UPSERT_TURN, params![t.id, t.session_id, t.ts, t.intent])?;
+                let ts: i64 = self
+                    .tx
+                    .prepare_cached(UPSERT_TURN)?
+                    .query_row(params![t.id, t.session_id, t.ts, t.intent], |r| r.get(0))?;
+                self.new_turns
+                    .entry(t.session_id.clone())
+                    .and_modify(|min| *min = (*min).min(ts))
+                    .or_insert(ts);
             }
             Record::Event(e) => {
                 self.run(
@@ -583,6 +590,80 @@ mod tests {
             compiles <= distinct,
             "{compiles} compilaciones para {distinct} sentencias distintas"
         );
+    }
+
+    fn prompt_line(prompt_id: &str, ts: &str) -> String {
+        format!(
+            r#"{{"type":"user","sessionId":"s1","promptId":"{prompt_id}","timestamp":"{ts}","cwd":"/h/Proyectos/AgentBoard","message":{{"role":"user","content":"hola"}}}}"#
+        )
+    }
+
+    fn turn_of(conn: &Connection, msg_id: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT turn_id FROM calls WHERE message_id = ?1",
+            [msg_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn releer_sin_turnos_nuevos_no_rellena_turnos() {
+        let (_d, file, p, mut conn) = setup();
+        let body: String = (0..5).map(|i| tool_line(i) + "\n").collect();
+        fs::write(&file, body).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        for i in 5..10 {
+            writeln!(f, "{}", tool_line(i)).unwrap();
+        }
+        let log = db::trace::start(&conn);
+        assert_eq!(ingest_file(&mut conn, &p, &file).unwrap().lines, 5);
+        let backfills: Vec<_> = db::trace::take(log)
+            .into_iter()
+            .filter(|e| e.sql.contains("SET turn_id"))
+            .collect();
+        assert!(backfills.is_empty(), "{backfills:?}");
+    }
+
+    #[test]
+    fn subagente_leido_antes_que_su_turno_queda_asignado() {
+        let (_d, file, p, mut conn) = setup();
+        let dir = file.parent().unwrap();
+        let side = line("ms", 1, "2026-09-25T10:05:00Z").replace(
+            r#""type":"assistant","#,
+            r#""type":"assistant","isSidechain":true,"agentId":"a1","#,
+        );
+        fs::write(dir.join("a-subagente.jsonl"), side + "\n").unwrap();
+        fs::write(
+            dir.join("b-sesion.jsonl"),
+            prompt_line("p1", "2026-09-25T10:00:00Z") + "\n",
+        )
+        .unwrap();
+        scan_all(
+            &mut conn,
+            &[Box::new(ClaudeCode::with_roots(p.log_roots()))],
+        )
+        .unwrap();
+        assert_eq!(turn_of(&conn, "ms").as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn un_turno_nuevo_solo_rellena_las_filas_posteriores() {
+        let (_d, file, p, mut conn) = setup();
+        let body = [
+            line("antes", 1, "2026-09-25T09:00:00Z"),
+            line("despues", 1, "2026-09-25T10:05:00Z"),
+        ]
+        .join("\n")
+            + "\n";
+        fs::write(&file, body).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", prompt_line("p1", "2026-09-25T10:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(turn_of(&conn, "despues").as_deref(), Some("p1"));
+        assert_eq!(turn_of(&conn, "antes"), None);
     }
 
     #[test]

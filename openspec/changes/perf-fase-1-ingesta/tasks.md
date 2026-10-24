@@ -22,9 +22,9 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 3. Relleno de turnos acotado (cuello #3)
 
-- [ ] 3.1 Tests en rojo en `ingest.rs`: (a) releer una sesión con llamadas sin turno añadiendo líneas sin prompts no ejecuta ningún `UPDATE` de relleno (contador de sentencias); (b) un subagente leído antes que el archivo con su turno queda asignado a ese turno; (c) un turno nuevo solo rellena filas con `ts >= ts_turno`; verificar que (a) falla y (b), (c) pasan
-- [ ] 3.2 Registrar en `Writer` el `ts` mínimo de los turnos aplicados por sesión y limitar `backfill_turns` a esas sesiones con `ts >= ?` (D3); verificar 3.1 y 1.3 en verde
-- [ ] 3.3 Medir (M, frío y `live --repeat 200`); comprobar que la mediana de los últimos 20 refrescos ≤ 1,5 × la de los primeros 20; aplicar la regla D9 y anotar las cifras
+- [x] 3.1 Tests en rojo en `ingest.rs`: (a) releer una sesión con llamadas sin turno añadiendo líneas sin prompts no ejecuta ningún `UPDATE` de relleno (contador de sentencias); (b) un subagente leído antes que el archivo con su turno queda asignado a ese turno; (c) un turno nuevo solo rellena filas con `ts >= ts_turno`; verificar que (a) falla y (b), (c) pasan
+- [x] 3.2 Registrar en `Writer` el `ts` mínimo de los turnos aplicados por sesión y limitar `backfill_turns` a esas sesiones con `ts >= ?` (D3); verificar 3.1 y 1.3 en verde
+- [x] 3.3 Medir (M, frío y `live --repeat 200`); comprobar que la mediana de los últimos 20 refrescos ≤ 1,5 × la de los primeros 20; aplicar la regla D9 y anotar las cifras
 
 ## 4. Lectura incremental robusta
 

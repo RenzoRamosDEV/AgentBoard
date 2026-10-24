@@ -245,3 +245,114 @@ marco (inclusivos salvo que se diga «propio»).
 - Comprobaciones de claves foráneas al insertar: `sqlite3FkCheck` 7,7 % + `fkScanChildren` 6,5 %
   en frío; candidatas a revisar junto al punto 1 (pueden explicar parte del crecimiento
   más que lineal del escaneo frío, junto con la profundidad de los B-tree).
+
+## Después de la Fase 1 (ingesta y parseo)
+
+Cambio OpenSpec `perf-fase-1-ingesta`. Mismo portátil y contenedor que la Fase 0 (Ryzen 5 Pro
+7535U, 14 GiB, Bazzite kernel 7.2.9, distrobox `agentburn-dev`, rustc 1.98.1), perfil `release`,
+binario de `1394e5a` (rama `perf/rendimiento-fluido`). Mismos fixtures (`50m`, `200m`, `1g`, semilla 42).
+
+**Carga de la máquina**: muy variable durante la fase por otro trabajo ajeno en paralelo (load
+average entre 4 y 125). Las cifras de la tabla son de una tanda con **load average 5–7** (más
+tranquila que la de la Fase 0, 31–52). La misma tanda completa repetida con load 15–108 dio frío
+200 MB de 2,8 a 9,7 s, refresco con `--repeat 200` de 157 a 239 ms y Resumen 1 GB de 8,5 a 22,7 s:
+con la máquina saturada el presupuesto de 200 ms del refresco **no** se cumple. Las comparaciones
+entre pasos de la fase se hicieron A/B alternando binarios (ver `design.md` del cambio).
+
+Huella de resultados de `200m` (`perf_scan --fingerprint`) idéntica a la grabada antes de
+optimizar (tarea 1.6); los golden de `tests/golden/` (fixture `2m` y `tests/fixtures`) siguen
+iguales.
+
+### Antes y después
+
+| Métrica | Fase 0 | Partida de la Fase 1 (`5bb39eb`) | Después de la Fase 1 | Cambio frente a la Fase 0 |
+|---|---|---|---|---|
+| Escaneo frío 50 MB | 3,23 s (3,05–3,81) | — | **0,59 s** (0,59–0,59) | −82 % |
+| Escaneo frío 200 MB | 15,5 s (15,5–16,9) | 17,6 s (17,0–17,8) | **2,73 s** (2,68–2,78) | −82 % |
+| Escaneo frío 1 GB | 86,9 s (86,9–110,5) | — | **17,9 s** (16,9–23,1) | −79 % |
+| Refresco 1000 líneas, mediana de 20 — 50 MB | 126 ms | — | **25,6 ms** | −80 % |
+| Refresco 1000 líneas, mediana de 20 — 200 MB | 164 ms | — | **55,1 ms** | −66 % |
+| Refresco 1000 líneas, mediana de 20 — 1 GB | 264 ms | — | **155,8 ms** | −41 % |
+| 200 refrescos sobre 200 MB: mediana | 515 ms (`profiling` bajo `perf`) | 548 ms (546–649) | **48,2 ms** (46,1–48,2) | −91 % |
+| 200 refrescos: primeros 20 / últimos 20 | 170 → 1 046 ms (min–max) | 184–242 / 818–874 ms | **44–50 / 49–52 ms** (×1,0–1,1) | ya no crece |
+| RSS pico solo frío 50 / 200 MB / 1 GB | 21,5 / 60,7 / 264,6 MiB | — / 56 (paso 2) / — | 36,8 / 83 / 290 MiB | +71 / +37 / +10 % |
+| RSS pico con `--repeat 20` 50 / 200 MB / 1 GB | 35,6 / 72,6 / 275,5 MiB | — | 52,0 / 97,4 / 306,3 MiB | +46 / +34 / +11 % |
+
+Consultas del Resumen (`--phase queries`, primera / mediana de 5). El código de consultas no
+cambia en esta fase; las diferencias son ruido y el algo más de datos por la caché de sentencias.
+
+| Consulta | 50 MB | 200 MB | 1 GB |
+|---|---|---|---|
+| `summary` | 11,6 / 10,7 ms (F0: 8,1 / 8,2) | 65,1 / 65,2 ms (F0: 61,5 / 59,5) | 499,5 / 394,2 ms (F0: 312,9 / 343,0) |
+| `breakdown(project)` | 37,2 / 32,9 ms (F0: 29,4 / 30,4) | 182,2 / 171,0 ms (F0: 132,1 / 138,9) | 928,7 / 947,5 ms (F0: 973,6 / 1 074,6) |
+| `breakdown(model)` | 29,6 / 28,5 ms (F0: 28,3 / 32,7) | 171,7 / 164,8 ms (F0: 142,8 / 141,5) | 917,4 / 885,3 ms (F0: 1 000,5 / 946,9) |
+| `timeseries(day)` | 7,9 / 7,5 ms (F0: 7,4 / 7,3) | 53,4 / 49,7 ms (F0: 37,3 / 38,4) | 273,1 / 274,5 ms (F0: 273,8 / 284,7) |
+| `activity` | 11,9 / 13,0 ms (F0: 12,1 / 11,4) | 72,3 / 78,0 ms (F0: 65,7 / 58,7) | 450,9 / 448,9 ms (F0: 494,9 / 483,2) |
+| **Resumen completo** (18 llamadas) | 190,2 / 191,6 ms (F0: 169,6 / 148,2) | 1 119 / 1 152 ms (F0: 1 012 / 1 244) | 6 164 / 7 842 ms (F0: 6 740 / 6 798) |
+
+Criterion (fixture `50m`; dos tandas: B con load 6–10 al final de la fase, C con load ~100;
+`parse_file/<agente>` es nuevo en esta fase: parseo del archivo más grande de cada proveedor):
+
+| Bench | Fase 0 (A / B) | Fase 1 (B / C) |
+|---|---|---|
+| `parse_line/claude_code` | 4,62 / 14,47 µs | 6,31 / 3,42 µs |
+| `parse_line/codex` | 3,86 / 3,51 µs | 4,65 / 2,81 µs |
+| `parse_line/copilot` | 1,39 / 1,70 µs | 2,99 / 1,82 µs |
+| `parse_line/cursor` | 2,46 / 12,76 µs | 3,92 / 2,72 µs |
+| `parse_line/gemini` | — / 34,80 µs | 6,66 / 7,94 µs |
+| `parse_file/claude_code` | — | 13,8 ms (346 MiB/s) / 17,0 ms |
+| `parse_file/codex` · `copilot` · `cursor` · `gemini` | — | 2,02 · 1,69 · 1,76 · 2,94 ms / 1,94 · 1,48 · 1,03 · 2,24 ms |
+| `ingest_file/claude_code_5mib` | 232,9 ms (20,5 MiB/s) / 1,704 s | 91,0 ms (52,5 MiB/s) / 51,2 ms (93,2 MiB/s) |
+| `summary_queries/resumen_completo` | 154,3 / 243,4 ms | 319,1 / 189,7 ms |
+
+Las comparaciones fiables de los benches de parseo son las A/B de cada paso (mismo momento,
+binarios alternos): `parse_line` −13 % a −50 % y `parse_file` −18 % a −40 % según el proveedor.
+
+### Frente a los presupuestos
+
+| Presupuesto | Medido | Estado |
+|---|---|---|
+| Escaneo frío 200 MB < 10 s | 2,68–2,78 s (load 6); 2,8–9,7 s con la máquina saturada | **Cumple** |
+| Mediana de 200 refrescos de 1000 líneas < 200 ms | 46–48 ms (load 6); 157–239 ms con load 35–40 | **Cumple** en condiciones normales |
+| Últimos 20 refrescos ≤ 1,5 × primeros 20 | ×0,97–1,10 | **Cumple** |
+| Resumen con ~200 MB < 1,5 s (Fase 0) | 1,12–1,15 s (solo backend) | Cumple justo, sin cambios (Fase 2) |
+| Consulta en frío < 300 ms (Fase 0) | 200 MB: 50–182 ms ✔ · 1 GB: 273–929 ms | Sin cambios (Fase 2) |
+
+### Pasos conservados y revertidos
+
+Todos los pasos se conservaron (regla D9: mejora ≥ 5 % de su métrica o paso estructural que no
+empeora > 5 %); ninguno se revirtió:
+
+1. Sentencias en caché (`prepare_cached`, caché de 64): frío 200 MB 17,6 → 4,8 s.
+2. Relleno de turnos acotado a los turnos nuevos: refresco 548 → 50 ms y deja de crecer.
+3. Estado de archivos cargado una vez + `BufReader::read_until`: frío 4,2 → 3,5 s; vivo −9 %.
+4. Lectura y parseo en paralelo con escritura en orden: frío −12 % (A/B); la primera versión
+   empeoraba el refresco un 23 % y se ajustó (los archivos sin cambios se descartan al planificar).
+5. Hilo de ingesta dedicado y comandos `async` (estructurales): las consultas de la interfaz se
+   completan durante el escaneo inicial (116–172 comandos en la app, mediana 96–165 ms).
+6. Parseo mínimo con sonda por proveedor: `parse_line` −13 % a −50 %; frío −3 % a −6 % (lo marca
+   la escritura).
+7. Un único `UPSERT` por sesión y archivo (opcional D2b): frío −29 %, vivo −11 % (A/B).
+
+### Flamegraph
+
+- [`cold-scan-fase1.svg`](cold-scan-fase1.svg): escaneo frío del fixture 1 GB (`--phase cold`),
+  mismos comandos que en «Reproducción» con `-o target/perf-cold-fase1.data` y
+  `-o ../docs/perf/cold-scan-fase1.svg`.
+  20 374 muestras, todos los hilos (perfil `profiling` compilado con `CARGO_BUILD_JOBS=2` por falta de
+  memoria con la máquina cargada). `sqlite3Prepare` pasa del 57,2 % al **0,08 %**; el escritor
+  (`write_in_order` → `write_file`) es el 71 % de las muestras, casi todo `sqlite3_step` (35,8 %;
+  `sqlite3BtreeInsert` 17,5 %); los lectores en paralelo (`read_jobs` → `read_file`) suman el
+  28,5 % repartido entre núcleos (`parse_line` de Claude Code 9,7 %); `backfill_turns` 4,0 %.
+
+### Seguimientos para la Fase 2
+
+- Comprobaciones de claves foráneas al insertar (`sqlite3FkCheck` + `fkScanChildren`, ~14 % del
+  frío en la Fase 0): ahora que la compilación de SQL desapareció pesan más.
+- Índice parcial `(session_id, ts) WHERE turn_id IS NULL`: el relleno aún recorre la sesión cuando
+  llega un turno nuevo.
+- Memoria: el pipeline paralelo mantiene hasta 4 × núcleos archivos parseados en vuelo; RSS pico
+  +10 % (1 GB) a +71 % (50 MB). Si importa, bajar la ventana o el tamaño de lote.
+- Contención del `Mutex` único entre consultas e ingesta (cuello #4): con 200 MB la interfaz
+  encadena tandas de 18 consultas y una relectura del vigilante puede esperar decenas de segundos.
+- Consultas del Resumen y `call_costs` (cuello #2): sin cambios en esta fase.

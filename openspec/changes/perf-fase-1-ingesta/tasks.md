@@ -69,8 +69,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 10. Resultados y cierre
 
-- [ ] 10.1 Mutación sobre el diff de la fase (`cargo mutants --in-diff` limitado a los archivos cambiados, tiempo máximo 3 min por ejecución): puntuación > 95 % o justificar cada mutante superviviente en design.md
-- [ ] 10.2 Medición final completa con los comandos de «Reproducción» de `docs/perf/BASELINE.md` (frío y vivo en 50 MB/200 MB/1 GB, `--repeat 200` en 200 MB, RSS pico, `cargo bench`); verificar `perf_scan --fingerprint` sobre `200m` igual a la huella de partida (1.6) y los presupuestos del spec: frío 200 MB < 10 s, mediana de 200 refrescos < 200 ms, últimos 20 ≤ 1,5 × primeros 20
+- [x] 10.1 Mutación sobre el diff de la fase (`cargo mutants --in-diff` limitado a los archivos cambiados, tiempo máximo 3 min por ejecución): puntuación > 95 % o justificar cada mutante superviviente en design.md
+- [x] 10.2 Medición final completa con los comandos de «Reproducción» de `docs/perf/BASELINE.md` (frío y vivo en 50 MB/200 MB/1 GB, `--repeat 200` en 200 MB, RSS pico, `cargo bench`); verificar `perf_scan --fingerprint` sobre `200m` igual a la huella de partida (1.6) y los presupuestos del spec: frío 200 MB < 10 s, mediana de 200 refrescos < 200 ms, últimos 20 ≤ 1,5 × primeros 20
 - [ ] 10.3 Añadir a `docs/perf/BASELINE.md` la sección «Después de la Fase 1» (entorno y carga de la máquina, tabla antes/después por métrica, flamegraph `docs/perf/cold-scan-fase1.svg` del frío 1 GB, pasos conservados y revertidos con su motivo, estado frente a los presupuestos y seguimientos para la Fase 2: comprobaciones de clave foránea, índice parcial de turnos); verificar que todos los comandos citados se ejecutan tal cual
 - [ ] 10.4 Comprobaciones finales: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`; verificar que todo pasa
 - [ ] 10.5 Completar «Desviaciones durante la implementación» de design.md con todo lo que cambió respecto a D1–D10; verificar `openspec validate perf-fase-1-ingesta --strict`

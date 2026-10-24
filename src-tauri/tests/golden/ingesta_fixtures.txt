@@ -1,0 +1,13 @@
+archivos 10, líneas 114, registros 179
+agente claude-code: sesiones 1, llamadas 8, herramientas 7, turnos 2, eventos 2, tokens 25/565/65800/14600/14600/30, coste 0.127765000
+agente codex: sesiones 2, llamadas 4, herramientas 4, turnos 2, eventos 2, tokens 7000/1000/21000/0/0/320, coste 0.019975000
+agente copilot: sesiones 1, llamadas 4, herramientas 3, turnos 3, eventos 0, tokens 5500/125/9000/1000/0/10, coste 0.021655000
+agente cursor: sesiones 2, llamadas 5, herramientas 3, turnos 2, eventos 0, tokens 0/43/0/0/0/0, coste 0.000000000
+agente gemini: sesiones 2, llamadas 4, herramientas 4, turnos 2, eventos 0, tokens 4400/320/8000/0/0/40, coste 0.009250000
+agente opencode: sesiones 2, llamadas 3, herramientas 4, turnos 1, eventos 0, tokens 7097/578/10192/100/0/10, coste 0.021295000
+tabla calls: 28 filas, fnv 8ae06deaae5c575a
+tabla tool_calls: 25 filas, fnv ba8367ae0d2a3aa3
+tabla turns: 12 filas, fnv d7c1150887f691dc
+tabla sessions: 10 filas, fnv 0e7e6090e9c2142f
+tabla projects: 1 filas, fnv f2950377d63be36b
+tabla events: 4 filas, fnv 2668e4d928e13b92

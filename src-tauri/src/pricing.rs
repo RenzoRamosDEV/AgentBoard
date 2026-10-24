@@ -17,7 +17,7 @@ use crate::settings::PriceOverride;
 use anyhow::Result;
 use rusqlite::{params, params_from_iter, Connection};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// (modelo, entrada, salida, lectura de caché, escritura 5 min, escritura 1 h)
 pub const DEFAULT_PRICES: &[(&str, f64, f64, f64, f64, f64)] = &[
@@ -117,32 +117,74 @@ pub fn seed_if_empty(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Vuelve a los precios por defecto y aplica encima los del usuario: cada precio del usuario
-/// sustituye a todos los del modelo (para todas las fechas). Los costes se recalculan solos
-/// porque `call_costs` es una vista.
-#[tracing::instrument(level = "debug", skip_all)]
-pub fn apply_overrides(conn: &Connection, overrides: &[PriceOverride]) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM prices", [])?;
-    insert_defaults(&tx)?;
-    {
-        let mut insert = tx.prepare(
-            "INSERT INTO prices (model, valid_from, input, output, cache_read, cache_write, cache_write_1h)
-             VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
-        )?;
-        let mut delete = tx.prepare("DELETE FROM prices WHERE model = ?1")?;
-        for p in overrides {
-            let model = normalize_model(&p.model);
-            delete.execute(params![model])?;
-            insert.execute(params![
-                model,
+/// Precio de un modelo desde una fecha: `[entrada, salida, lectura caché, escritura 5 min, 1 h]`.
+type PriceTable = BTreeMap<(String, i64), [f64; 5]>;
+
+/// Precios por defecto con los del usuario encima: cada precio del usuario sustituye a todos los
+/// del modelo (para todas las fechas).
+fn effective_prices(overrides: &[PriceOverride]) -> PriceTable {
+    let mut table: PriceTable = DEFAULT_PRICES
+        .iter()
+        .map(|(m, i, o, cr, cw, cw1h)| ((m.to_string(), 0), [*i, *o, *cr, *cw, *cw1h]))
+        .chain(DATED_PRICES.iter().map(|(m, from, i, o, cr, cw, cw1h)| {
+            ((m.to_string(), *from), [*i, *o, *cr, *cw, *cw1h])
+        }))
+        .collect();
+    for p in overrides {
+        let model = normalize_model(&p.model);
+        table.retain(|(m, _), _| *m != model);
+        table.insert(
+            (model, 0),
+            [
                 p.input,
                 p.output,
                 p.cache_read,
                 p.cache_write,
-                p.cache_write_1h
-            ])?;
-        }
+                p.cache_write_1h,
+            ],
+        );
+    }
+    table
+}
+
+fn stored_prices(conn: &Connection) -> Result<PriceTable> {
+    let mut stmt = conn.prepare(
+        "SELECT model, valid_from, input, output, cache_read, cache_write, cache_write_1h FROM prices",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (r.get(0)?, r.get(1)?),
+            [r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?],
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Deja en `prices` los precios por defecto con los del usuario encima, tocando solo las filas
+/// que cambian: los disparadores recalculan el coste de las llamadas de esos modelos y nada más.
+#[tracing::instrument(level = "debug", skip_all)]
+pub fn apply_overrides(conn: &Connection, overrides: &[PriceOverride]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let want = effective_prices(overrides);
+    let have = stored_prices(&tx)?;
+    for (model, from) in have.keys().filter(|k| !want.contains_key(*k)) {
+        tx.prepare_cached("DELETE FROM prices WHERE model = ?1 AND valid_from = ?2")?
+            .execute(params![model, from])?;
+    }
+    for ((model, from), p) in &want {
+        let sql = match have.get(&(model.clone(), *from)) {
+            Some(old) if old == p => continue,
+            Some(_) => {
+                "UPDATE prices SET input = ?3, output = ?4, cache_read = ?5, cache_write = ?6,
+                   cache_write_1h = ?7 WHERE model = ?1 AND valid_from = ?2"
+            }
+            None => {
+                "INSERT INTO prices (model, valid_from, input, output, cache_read, cache_write, cache_write_1h)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            }
+        };
+        tx.prepare_cached(sql)?
+            .execute(params![model, from, p[0], p[1], p[2], p[3], p[4]])?;
     }
     tx.commit()?;
     Ok(())
@@ -530,6 +572,202 @@ mod tests {
         // 1M de entrada + 100K de salida: 1.75 + 1.40 = 3.15 USD (más caro que gpt-5, que daría 2.25).
         insert_call(&conn, "c", "gpt-5.3-codex", 1_000_000, 100_000);
         assert!((cost(&conn, "c") - 3.15).abs() < 1e-9);
+    }
+
+    /// Coste según la vista `call_costs` de la migración 0004: la referencia del precalculado.
+    const COSTE_0004: &str = "SELECT c.message_id,
+        (p.model IS NOT NULL OR c.cost_reported IS NOT NULL),
+        CASE WHEN p.model IS NOT NULL THEN (
+          c.input_tokens * p.input +
+          c.output_tokens * p.output +
+          c.cache_read * p.cache_read +
+          (c.cache_write - c.cache_write_1h) * p.cache_write +
+          c.cache_write_1h * p.cache_write_1h
+        ) / 1e6 ELSE COALESCE(c.cost_reported, 0) END,
+        COALESCE(c.cache_read * (p.input - p.cache_read) / 1e6, 0)
+      FROM calls c
+      LEFT JOIN prices p ON p.model = c.model
+       AND p.valid_from = (SELECT MAX(valid_from) FROM prices
+                           WHERE model = c.model AND valid_from <= c.ts)
+      ORDER BY c.message_id";
+
+    type CostRow = (String, bool, f64, f64);
+
+    fn rows(conn: &Connection, sql: &str) -> Vec<CostRow> {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn assert_cost_matches_0004(conn: &Connection) {
+        let stored = rows(
+            conn,
+            "SELECT message_id, has_price, cost_usd, cache_savings_usd FROM calls ORDER BY message_id",
+        );
+        assert_eq!(stored, rows(conn, COSTE_0004));
+    }
+
+    /// Espía: cuenta los recálculos de coste por modelo y las escrituras en `prices`.
+    fn spy(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TEMP TABLE recalc (model TEXT);
+             CREATE TEMP TABLE price_writes (n INTEGER);
+             CREATE TEMP TRIGGER spy_calls AFTER UPDATE OF cost_usd ON main.calls
+               BEGIN INSERT INTO recalc VALUES (NEW.model); END;
+             CREATE TEMP TRIGGER spy_prices_i AFTER INSERT ON main.prices
+               BEGIN INSERT INTO price_writes VALUES (1); END;
+             CREATE TEMP TRIGGER spy_prices_u AFTER UPDATE ON main.prices
+               BEGIN INSERT INTO price_writes VALUES (1); END;
+             CREATE TEMP TRIGGER spy_prices_d AFTER DELETE ON main.prices
+               BEGIN INSERT INTO price_writes VALUES (1); END;",
+        )
+        .unwrap();
+    }
+
+    /// (recálculos por modelo, escrituras en precios) desde la última llamada; vacía el espía.
+    fn spied(conn: &Connection) -> (Vec<(String, i64)>, i64) {
+        let mut stmt = conn
+            .prepare("SELECT model, COUNT(*) FROM recalc GROUP BY 1 ORDER BY 1")
+            .unwrap();
+        let recalc = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let writes = conn
+            .query_row("SELECT COUNT(*) FROM price_writes", [], |r| r.get(0))
+            .unwrap();
+        conn.execute_batch("DELETE FROM recalc; DELETE FROM price_writes;")
+            .unwrap();
+        (recalc, writes)
+    }
+
+    fn varied_calls(conn: &Connection) {
+        insert_call(conn, "a", "claude-sonnet-4-5", 1_000_000, 100_000);
+        insert_call(conn, "b", "claude-sonnet-4-5", 7, 3);
+        insert_call(conn, "c", "claude-haiku-4-5", 1_000_000, 0);
+        insert_call(conn, "d", "modelo-inventado", 1000, 1000);
+        conn.execute_batch(
+            "INSERT INTO calls (message_id, session_id, ts, model, cost_reported)
+               VALUES ('e', 's', 2000, 'big-pickle', 0.0123), ('f', 's', 2000, 'claude-sonnet-4-5', 99);
+             INSERT INTO calls (message_id, session_id, ts, model, input_tokens, cache_read, cache_write, cache_write_1h)
+               VALUES ('g', 's', 3000, 'claude-opus-4-5', 10, 800000, 300000, 100000),
+                      ('h', 's', 1798848000000, 'gemini-3.8-flash', 1000000, 50000, 0, 0),
+                      ('i', 's', 1000, 'gemini-3.8-flash', 1000000, 50000, 0, 0);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn el_coste_guardado_es_el_de_la_formula_de_la_vista_0004() {
+        let conn = db::open_in_memory().unwrap();
+        varied_calls(&conn);
+        assert_cost_matches_0004(&conn);
+        for change in [
+            "UPDATE calls SET input_tokens = 5, cache_read = 99 WHERE message_id = 'a'",
+            "UPDATE calls SET ts = 1798848000001 WHERE message_id = 'i'",
+            "UPDATE calls SET model = 'claude-haiku-4-5' WHERE message_id = 'b'",
+            "UPDATE calls SET cost_reported = 0.5 WHERE message_id = 'd'",
+            "UPDATE calls SET cache_write_1h = 0 WHERE message_id = 'g'",
+            "INSERT INTO calls (message_id, session_id, ts, model, output_tokens) VALUES ('a', 's', 1, 'gpt-5', 10)
+               ON CONFLICT(message_id) DO UPDATE SET output_tokens = excluded.output_tokens, ts = MIN(ts, excluded.ts)",
+        ] {
+            conn.execute(change, []).unwrap();
+            assert_cost_matches_0004(&conn);
+        }
+    }
+
+    #[test]
+    fn cambiar_un_precio_recalcula_solo_las_llamadas_de_ese_modelo() {
+        let conn = db::open_in_memory().unwrap();
+        varied_calls(&conn);
+        spy(&conn);
+        conn.execute(
+            "INSERT INTO prices (model, valid_from, input, output) VALUES ('claude-sonnet-4-5', 1500, 1.0, 1.0)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(spied(&conn).0, vec![("claude-sonnet-4-5".to_string(), 3)]);
+        assert_cost_matches_0004(&conn);
+        conn.execute(
+            "UPDATE prices SET input = 0.5 WHERE model = 'claude-haiku-4-5'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(spied(&conn).0, vec![("claude-haiku-4-5".to_string(), 1)]);
+        assert_cost_matches_0004(&conn);
+        conn.execute(
+            "DELETE FROM prices WHERE model = 'claude-sonnet-4-5' AND valid_from = 1500",
+            [],
+        )
+        .unwrap();
+        assert_eq!(spied(&conn).0, vec![("claude-sonnet-4-5".to_string(), 3)]);
+        assert_cost_matches_0004(&conn);
+        conn.execute(
+            "INSERT INTO prices (model, valid_from, input, output) VALUES ('sin-llamadas', 0, 1.0, 1.0)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(spied(&conn).0, vec![]);
+    }
+
+    #[test]
+    fn aplicar_los_mismos_precios_no_escribe_nada() {
+        let conn = db::open_in_memory().unwrap();
+        varied_calls(&conn);
+        spy(&conn);
+        apply_overrides(&conn, &[]).unwrap();
+        assert_eq!(spied(&conn), (vec![], 0));
+        let overrides = [price("claude-sonnet-4-5", 2.0), price("kimi-k2", 1.0)];
+        apply_overrides(&conn, &overrides).unwrap();
+        assert_eq!(
+            spied(&conn).0,
+            vec![("claude-sonnet-4-5".to_string(), 3)],
+            "solo el modelo cambiado (kimi no tiene llamadas)"
+        );
+        apply_overrides(&conn, &overrides).unwrap();
+        assert_eq!(spied(&conn), (vec![], 0), "los mismos precios del usuario");
+        assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn un_precio_por_defecto_distinto_recalcula_solo_ese_modelo() {
+        let conn = db::open_in_memory().unwrap();
+        varied_calls(&conn);
+        // Caché de una versión con otro precio por defecto de Haiku y sin el de Opus 4.5.
+        conn.execute_batch(
+            "UPDATE prices SET input = 99 WHERE model = 'claude-haiku-4-5';
+             DELETE FROM prices WHERE model = 'claude-opus-4-5';",
+        )
+        .unwrap();
+        spy(&conn);
+        apply_overrides(&conn, &[]).unwrap();
+        let (recalc, writes) = spied(&conn);
+        assert_eq!(
+            recalc,
+            vec![
+                ("claude-haiku-4-5".to_string(), 1),
+                ("claude-opus-4-5".to_string(), 1)
+            ]
+        );
+        assert_eq!(writes, 2);
+        assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn la_vista_de_costes_no_tiene_asterisco_ni_subconsultas() {
+        let conn = db::open_in_memory().unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'call_costs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!sql.contains('*'), "{sql}");
+        assert_eq!(sql.to_uppercase().matches("SELECT").count(), 1, "{sql}");
     }
 
     #[test]

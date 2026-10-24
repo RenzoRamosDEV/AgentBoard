@@ -14,6 +14,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../migrations/0003_turnos_y_subagentes.sql"),
     ),
     (4, include_str!("../migrations/0004_coste_reportado.sql")),
+    (5, include_str!("../migrations/0005_coste_precalculado.sql")),
 ];
 
 /// Sentencias preparadas que la conexión conserva compiladas.

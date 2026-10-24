@@ -162,27 +162,51 @@ type ReadResult = Result<Option<ParsedFile>>;
 
 #[tracing::instrument(name = "scan_all", level = "info", skip_all, fields(files = Empty, lines = Empty, records = Empty, errors = Empty))]
 fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Result<ScanStats> {
+    let mut found: Vec<(usize, PathBuf)> = Vec::new();
+    for (i, p) in providers.iter().enumerate() {
+        for root in p.log_roots().into_iter().filter(|r| r.is_dir()) {
+            found.extend(
+                walk(&root)
+                    .into_iter()
+                    .filter(|path| p.matches(path))
+                    .map(|path| (i, path)),
+            );
+        }
+    }
     let states = {
         let conn = &mut *db.conn;
         register_agents(conn, providers)?;
+        let tracked = load_tracked(conn)?;
+        let states = if forget_stale_files(conn, providers, &found, &tracked)? {
+            load_file_states(conn)?
+        } else {
+            tracked
+                .into_iter()
+                .map(|t| {
+                    (
+                        t.path,
+                        FileState {
+                            file_id: t.file_id,
+                            offset: t.offset,
+                        },
+                    )
+                })
+                .collect()
+        };
         // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
         conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
-        load_file_states(conn)?
+        states
     };
     let mut stats = ScanStats::default();
     let mut jobs = Vec::new();
-    for (i, p) in providers.iter().enumerate() {
-        for root in p.log_roots().into_iter().filter(|r| r.is_dir()) {
-            for path in walk(&root).into_iter().filter(|path| p.matches(path)) {
-                // Los archivos sin cambios se descartan aquí, sin abrirlos ni ocupar un lector.
-                if p.source() == Source::Jsonl
-                    && is_unchanged(&path, states.get(path.to_string_lossy().as_ref()))
-                {
-                    stats.files += 1;
-                } else {
-                    jobs.push(Job { provider: i, path });
-                }
-            }
+    for (i, path) in found {
+        // Los archivos sin cambios se descartan aquí, sin abrirlos ni ocupar un lector.
+        if providers[i].source() == Source::Jsonl
+            && is_unchanged(&path, states.get(path.to_string_lossy().as_ref()))
+        {
+            stats.files += 1;
+        } else {
+            jobs.push(Job { provider: i, path });
         }
     }
     let threads = threads.clamp(1, jobs.len().max(1));
@@ -427,6 +451,107 @@ pub struct FileState {
 }
 
 const SELECT_FILE_STATES: &str = "SELECT path, file_id, offset FROM file_state";
+
+/// Un archivo de `file_state`.
+struct Tracked {
+    id: i64,
+    path: String,
+    agent: String,
+    file_id: String,
+    offset: i64,
+}
+
+fn load_tracked(conn: &Connection) -> Result<Vec<Tracked>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT id, path, agent_id, file_id, offset FROM file_state")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Tracked {
+            id: r.get(0)?,
+            path: r.get(1)?,
+            agent: r.get(2)?,
+            file_id: r.get(3)?,
+            offset: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Archivos leídos antes que ya no están, o que se sustituyeron (otra identidad) o encogieron:
+/// sus datos se retiran y las sesiones a las que aportaban se rehacen leyendo de cero sus otros
+/// archivos, para que la caché diga lo mismo que leer los logs presentes desde cero (D10). Solo
+/// mira los archivos de los proveedores de este escaneo. Devuelve si retiró algo.
+fn forget_stale_files(
+    conn: &mut Connection,
+    providers: &[Box<dyn Provider>],
+    found: &[(usize, PathBuf)],
+    tracked: &[Tracked],
+) -> Result<bool> {
+    let present: HashMap<String, usize> = found
+        .iter()
+        .map(|(i, path)| (path.to_string_lossy().into_owned(), *i))
+        .collect();
+    let agents: Vec<&str> = providers.iter().map(|p| p.id()).collect();
+    let (mut gone, mut changed) = (Vec::new(), Vec::new());
+    for t in tracked {
+        if !agents.contains(&t.agent.as_str()) {
+            continue;
+        }
+        match present.get(&t.path) {
+            None => gone.push(t.id),
+            Some(i) if providers[*i].source() == Source::Jsonl => {
+                let replaced = fs::metadata(&t.path).is_ok_and(|m| {
+                    (!t.file_id.is_empty() && file_identity(&m) != t.file_id)
+                        || (m.len() as i64) < t.offset
+                });
+                if replaced {
+                    changed.push(t.id);
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    if gone.is_empty() && changed.is_empty() {
+        return Ok(false);
+    }
+    let tx = conn.transaction()?;
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS stale_files (id INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS stale_sessions (id TEXT PRIMARY KEY);
+         DELETE FROM stale_files; DELETE FROM stale_sessions;",
+    )?;
+    for id in gone.iter().chain(&changed) {
+        tx.execute("INSERT OR IGNORE INTO stale_files VALUES (?1)", [id])?;
+    }
+    tx.execute_batch(
+        "INSERT INTO stale_sessions
+           SELECT DISTINCT session_id FROM session_files WHERE file IN (SELECT id FROM stale_files);
+         -- Los demás archivos de esas sesiones se releen enteros.
+         UPDATE file_state SET offset = 0, file_id = ''
+           WHERE id IN (SELECT file FROM session_files
+                        WHERE session_id IN (SELECT id FROM stale_sessions))
+              OR id IN (SELECT id FROM stale_files);
+         DELETE FROM calls WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM turns WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM events WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM daily_stats WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM tool_stats WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM session_files WHERE session_id IN (SELECT id FROM stale_sessions);
+         DELETE FROM sessions WHERE id IN (SELECT id FROM stale_sessions);",
+    )?;
+    for id in &gone {
+        tx.execute("DELETE FROM file_state WHERE id = ?1", [id])?;
+    }
+    tx.execute_batch("DELETE FROM stale_files; DELETE FROM stale_sessions;")?;
+    crate::derived::refresh(&tx)?;
+    tx.commit()?;
+    tracing::debug!(
+        desaparecidos = gone.len(),
+        cambiados = changed.len(),
+        "agentboard: datos de logs retirados de la caché"
+    );
+    Ok(true)
+}
 const SELECT_FILE_STATE: &str = "SELECT file_id, offset FROM file_state WHERE path = ?1";
 
 /// Estado de todos los archivos leídos, en una sola consulta.
@@ -618,7 +743,34 @@ pub fn write_file(
         bad_lines: parsed.bad_lines,
         ..Default::default()
     };
-    let mut w = Writer::new(conn, provider.id(), ctx);
+    // El estado del archivo va primero (en la misma transacción): su id enlaza sesiones y archivo.
+    let now = now_ms();
+    let file: i64 = match &parsed.file_id {
+        Some(file_id) => conn.prepare_cached(UPSERT_FILE_STATE)?.query_row(
+            params![
+                parsed.key,
+                provider.id(),
+                file_id,
+                parsed.size,
+                parsed.offset,
+                parsed.mtime,
+                now
+            ],
+            |r| r.get(0),
+        )?,
+        None => conn.prepare_cached(UPSERT_DB_STATE)?.query_row(
+            params![
+                parsed.key,
+                provider.id(),
+                parsed.size,
+                parsed.offset,
+                parsed.mtime,
+                now
+            ],
+            |r| r.get(0),
+        )?,
+    };
+    let mut w = Writer::new(conn, provider.id(), ctx, file);
     for rec in &parsed.records {
         if let Some(id) = w.apply(rec)? {
             result.new_tool_calls.push(id);
@@ -627,26 +779,6 @@ pub fn write_file(
     }
     w.finish()?;
     w.backfill_turns()?;
-    let now = now_ms();
-    match &parsed.file_id {
-        Some(file_id) => conn.prepare_cached(UPSERT_FILE_STATE)?.execute(params![
-            parsed.key,
-            provider.id(),
-            file_id,
-            parsed.size,
-            parsed.offset,
-            parsed.mtime,
-            now
-        ])?,
-        None => conn.prepare_cached(UPSERT_DB_STATE)?.execute(params![
-            parsed.key,
-            provider.id(),
-            parsed.size,
-            parsed.offset,
-            parsed.mtime,
-            now
-        ])?,
-    };
     tracing::Span::current().record("records", result.records);
     Ok(result)
 }
@@ -682,13 +814,15 @@ const UPSERT_FILE_STATE: &str =
     "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
      ON CONFLICT(path) DO UPDATE SET file_id = excluded.file_id, size = excluded.size,
-       offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan";
+       offset = excluded.offset, mtime = excluded.mtime, last_scan = excluded.last_scan
+     RETURNING id";
 
 const UPSERT_DB_STATE: &str =
     "INSERT INTO file_state (path, agent_id, file_id, size, offset, mtime, last_scan)
      VALUES (?1, ?2, 'sqlite', ?3, ?4, ?5, ?6)
      ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset,
-       mtime = excluded.mtime, last_scan = excluded.last_scan";
+       mtime = excluded.mtime, last_scan = excluded.last_scan
+     RETURNING id";
 
 const INSERT_PROJECT: &str =
     "INSERT INTO projects (name, cwd, repo_root) VALUES (?1, ?2, ?3) ON CONFLICT(cwd) DO NOTHING";
@@ -765,6 +899,9 @@ const REFRESH_TOOL_USE: &str = "UPDATE tool_calls SET detail = COALESCE(detail, 
 
 const SELECT_SESSION_EXISTS: &str = "SELECT 1 FROM sessions WHERE id = ?1";
 
+const LINK_SESSION_FILE: &str =
+    "INSERT OR IGNORE INTO session_files (session_id, file) VALUES (?1, ?2)";
+
 /// Sesión y día de una herramienta: su resultado puede cambiar los errores de sus agregados.
 const SELECT_TOOL_KEY: &str = "SELECT session_id, day FROM tool_calls WHERE call_id = ?1";
 
@@ -804,10 +941,13 @@ struct Writer<'a> {
     /// Sesiones que existen: escritas en este archivo o comprobadas una vez en la base. Sin
     /// claves foráneas (D3), el escritor rechaza él los registros de una sesión inexistente.
     known_sessions: HashSet<String>,
+    /// Id de este archivo en `file_state` y sesiones ya enlazadas a él en `session_files`.
+    file: i64,
+    linked: HashSet<String>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(tx: &'a Connection, agent_id: &'static str, ctx: &'a WriteContext) -> Self {
+    fn new(tx: &'a Connection, agent_id: &'static str, ctx: &'a WriteContext, file: i64) -> Self {
         Self {
             tx,
             ctx,
@@ -820,6 +960,8 @@ impl<'a> Writer<'a> {
             dirty: HashSet::new(),
             tool_keys: HashMap::new(),
             known_sessions: HashSet::new(),
+            file,
+            linked: HashSet::new(),
         }
     }
 
@@ -892,14 +1034,30 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    /// Anota que este archivo aporta datos a la sesión (una vez por par).
+    fn link_session(&mut self, session: &str) -> Result<()> {
+        if !self.linked.contains(session) {
+            self.run(LINK_SESSION_FILE, params![session, self.file])?;
+            self.linked.insert(session.to_string());
+        }
+        Ok(())
+    }
+
     /// Devuelve el `call_id` si se insertó una tool call nueva.
     fn apply(&mut self, rec: &Record) -> Result<Option<String>> {
-        match rec {
-            Record::Call(c) => self.require_session(&c.session_id)?,
-            Record::ToolUse(t) => self.require_session(&t.session_id)?,
-            Record::Turn(t) => self.require_session(&t.session_id)?,
-            Record::Event(e) => self.require_session(&e.session_id)?,
-            Record::Session(_) | Record::ToolResult { .. } => {}
+        let session = match rec {
+            Record::Call(c) => Some(&c.session_id),
+            Record::ToolUse(t) => Some(&t.session_id),
+            Record::Turn(t) => Some(&t.session_id),
+            Record::Event(e) => Some(&e.session_id),
+            Record::Session(_) | Record::ToolResult { .. } => None,
+        };
+        if let Some(session) = session {
+            self.require_session(session)?;
+            self.link_session(session)?;
+        }
+        if let Record::Session(s) = rec {
+            self.link_session(&s.id)?;
         }
         match rec {
             Record::Session(s) => {
@@ -1343,6 +1501,190 @@ mod tests {
         assert!(batch_full(5_001, ms(0)));
         assert!(batch_full(1, ms(200)));
         assert!(batch_full(0, ms(201)));
+    }
+
+    // ---------------------------------------------------------------- caché fiel a los logs (D10)
+
+    /// Todo lo importado, sin ids autoincrementales ni marcas de reloj: igual volcado, igual base.
+    fn dump(conn: &Connection) -> String {
+        let mut out = String::new();
+        for sql in [
+            "SELECT message_id, session_id, ts, model, input_tokens, output_tokens, turn_id, cost_usd, day FROM calls ORDER BY 1",
+            "SELECT call_id, session_id, ts, tool, is_error, turn_id, day FROM tool_calls ORDER BY 1",
+            "SELECT id, session_id, ts FROM turns ORDER BY 1",
+            "SELECT id, agent_id, git_branch, started_at, ended_at, model, first_call_id FROM sessions ORDER BY 1",
+            "SELECT day, session_id, model, calls, cost_usd, first_calls FROM daily_stats ORDER BY 1, 2, 3",
+            "SELECT day, session_id, tool, uses, errors FROM tool_stats ORDER BY 1, 2, 3",
+            "SELECT name, cwd FROM projects ORDER BY 2",
+        ] {
+            let mut stmt = conn.prepare(sql).unwrap();
+            let n = stmt.column_count();
+            let rows = stmt
+                .query_map([], |r| {
+                    (0..n)
+                        .map(|i| r.get::<_, rusqlite::types::Value>(i).map(|v| format!("{v:?}")))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap();
+            for row in rows {
+                out.push_str(&row.unwrap().join("|"));
+                out.push('\n');
+            }
+            out.push_str("--\n");
+        }
+        out
+    }
+
+    fn session_line(session: &str, msg_id: &str, ts: &str, cwd: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","sessionId":"{session}","timestamp":"{ts}","cwd":"{cwd}","message":{{"model":"claude-sonnet-4-5","id":"{msg_id}","content":[{{"type":"tool_use","id":"t-{msg_id}","name":"Bash","input":{{"command":"ls"}}}}],"usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#
+        ) + "\n"
+    }
+
+    /// Escanea `dir` (Claude Code) en `conn`.
+    fn scan_dir(conn: &mut Connection, dir: &Path) -> ScanStats {
+        let providers: Vec<Box<dyn Provider>> =
+            vec![Box::new(ClaudeCode::with_roots(vec![dir.to_path_buf()]))];
+        scan_all(conn, &providers).unwrap()
+    }
+
+    /// Lo que daría leer `dir` desde cero en una base nueva.
+    fn from_scratch(dir: &Path) -> String {
+        let mut conn = db::open_in_memory().unwrap();
+        scan_dir(&mut conn, dir);
+        dump(&conn)
+    }
+
+    fn two_files(shared_session: bool) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("p");
+        fs::create_dir_all(&p).unwrap();
+        let (a, b) = (p.join("a.jsonl"), p.join("b.jsonl"));
+        fs::write(
+            &a,
+            session_line("s1", "a1", "2026-09-25T10:00:00Z", "/h/uno")
+                + &session_line("s1", "a2", "2026-09-26T10:00:00Z", "/h/uno"),
+        )
+        .unwrap();
+        let other = if shared_session { "s1" } else { "s2" };
+        fs::write(
+            &b,
+            session_line(other, "b1", "2026-09-20T09:00:00Z", "/h/dos")
+                + &session_line(other, "b2", "2026-09-29T09:00:00Z", "/h/dos"),
+        )
+        .unwrap();
+        (dir, a, b)
+    }
+
+    #[test]
+    fn borrar_un_log_deja_lo_mismo_que_leer_los_que_quedan() {
+        for shared in [false, true] {
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            fs::remove_file(&b).unwrap();
+            scan_dir(&mut conn, dir.path());
+            assert_eq!(
+                dump(&conn),
+                from_scratch(dir.path()),
+                "sesión compartida: {shared}"
+            );
+            let (started, ended): (i64, i64) = conn
+                .query_row(
+                    "SELECT started_at, ended_at FROM sessions WHERE id = 's1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                (started, ended),
+                (1_790_330_400_000, 1_790_416_800_000),
+                "{shared}"
+            );
+        }
+    }
+
+    #[test]
+    fn un_log_rotado_o_truncado_deja_lo_mismo_que_leer_desde_cero() {
+        for shared in [false, true] {
+            // Rotado: otro archivo con la misma ruta y otro contenido.
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            let tmp = b.with_extension("tmp");
+            fs::write(
+                &tmp,
+                session_line("s3", "c1", "2026-09-27T09:00:00Z", "/h/tres"),
+            )
+            .unwrap();
+            fs::rename(&tmp, &b).unwrap();
+            scan_dir(&mut conn, dir.path());
+            assert_eq!(
+                dump(&conn),
+                from_scratch(dir.path()),
+                "rotado, compartida: {shared}"
+            );
+
+            // Truncado en el sitio: queda solo su primera línea.
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            let first = fs::read_to_string(&b)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .to_string()
+                + "\n";
+            fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&b)
+                .unwrap();
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&b)
+                .unwrap()
+                .write_all(first.as_bytes())
+                .unwrap();
+            scan_dir(&mut conn, dir.path());
+            assert_eq!(
+                dump(&conn),
+                from_scratch(dir.path()),
+                "truncado, compartida: {shared}"
+            );
+        }
+    }
+
+    #[test]
+    fn la_limpieza_no_relee_los_archivos_que_no_le_afectan() {
+        let (dir, _a, b) = two_files(false);
+        let mut conn = db::open_in_memory().unwrap();
+        scan_dir(&mut conn, dir.path());
+        fs::remove_file(&b).unwrap();
+        let stats = scan_dir(&mut conn, dir.path());
+        assert_eq!((stats.files, stats.lines), (1, 0), "a.jsonl no se relee");
+        // Con la sesión repartida, a.jsonl sí se relee entero para rehacer la sesión.
+        let (dir, _a, b) = two_files(true);
+        let mut conn = db::open_in_memory().unwrap();
+        scan_dir(&mut conn, dir.path());
+        fs::remove_file(&b).unwrap();
+        let stats = scan_dir(&mut conn, dir.path());
+        assert_eq!((stats.files, stats.lines), (1, 2));
+    }
+
+    #[test]
+    fn la_limpieza_rehace_los_agregados_de_las_sesiones_afectadas() {
+        let (dir, _a, b) = two_files(true);
+        let mut conn = db::open_in_memory().unwrap();
+        scan_dir(&mut conn, dir.path());
+        assert_eq!(count(&conn, "SELECT SUM(calls) FROM daily_stats"), 4);
+        fs::remove_file(&b).unwrap();
+        scan_dir(&mut conn, dir.path());
+        assert_eq!(count(&conn, "SELECT SUM(calls) FROM daily_stats"), 2);
+        assert_eq!(count(&conn, "SELECT SUM(uses) FROM tool_stats"), 2);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM session_files"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM file_state"), 1);
     }
 
     #[test]
@@ -1836,7 +2178,8 @@ mod tests {
         fs::write(&rotated, same_size).unwrap();
         fs::rename(&rotated, &file).unwrap();
         assert_eq!(scan_all(&mut conn, &providers).unwrap().lines, 2);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 4);
+        // Lo del archivo sustituido se retira: quedan las del archivo nuevo, sin duplicar.
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 2);
     }
 
     #[test]
@@ -1940,7 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn borrar_el_original_conserva_las_filas() {
+    fn borrar_el_original_retira_sus_filas() {
         let (_d, file, p, mut conn) = setup();
         fs::write(&file, line("m1", 1, "2026-09-25T10:00:00Z") + "\n").unwrap();
         scan_all(
@@ -1954,7 +2297,8 @@ mod tests {
             &[Box::new(ClaudeCode::with_roots(p.log_roots()))],
         )
         .unwrap();
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 1);
+        // La caché refleja solo los logs presentes (antes, «nada se borra solo»).
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 0);
     }
 
     #[test]

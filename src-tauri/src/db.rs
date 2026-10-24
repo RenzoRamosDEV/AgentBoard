@@ -24,6 +24,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("../migrations/0007_dia_local.sql")),
     (8, include_str!("../migrations/0008_agregados_diarios.sql")),
     (9, include_str!("../migrations/0009_indices.sql")),
+    (10, include_str!("../migrations/0010_cache_fiel.sql")),
 ];
 
 /// Versión de esquema que espera esta versión de la app (la de la última migración).

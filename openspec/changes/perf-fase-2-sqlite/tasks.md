@@ -74,8 +74,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 11. Caché fiel a los logs (D10)
 
-- [ ] 11.1 Tests en rojo en `ingest.rs`: (a) escanear A∪B, borrar B y reescanear da la misma huella (`common::fingerprint`) que escanear solo A en una base nueva; (b) igual con una sesión repartida entre A y B (sus `started_at`/`ended_at` vuelven a los de A); (c) igual con B rotado (otra identidad) y con B truncado; (d) un archivo sin cambios no se relee tras una limpieza que no le afecta; (e) la limpieza rehace los agregados de las sesiones afectadas; verificar que fallan
-- [ ] 11.2 `file_state` con `id` estable, tabla `session_files` y limpieza al planificar (D10); verificar 11.1, 1.2, `equivalencia_ingesta` y los tests de rotación y truncado existentes en verde
+- [x] 11.1 Tests en rojo en `ingest.rs`: (a) escanear A∪B, borrar B y reescanear da la misma huella (`common::fingerprint`) que escanear solo A en una base nueva; (b) igual con una sesión repartida entre A y B (sus `started_at`/`ended_at` vuelven a los de A); (c) igual con B rotado (otra identidad) y con B truncado; (d) un archivo sin cambios no se relee tras una limpieza que no le afecta; (e) la limpieza rehace los agregados de las sesiones afectadas; verificar que fallan
+- [x] 11.2 `file_state` con `id` estable, tabla `session_files` y limpieza al planificar (D10); verificar 11.1, 1.2, `equivalencia_ingesta` y los tests de rotación y truncado existentes en verde
 - [ ] 11.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (estructural) y anotar las cifras
 
 ## 12. Ajustes «Solo memoria» y «Reconstruir caché» (D12)

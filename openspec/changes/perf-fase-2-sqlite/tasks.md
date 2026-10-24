@@ -39,8 +39,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 6. Índices revisados con `EXPLAIN QUERY PLAN` (D9)
 
-- [ ] 6.1 Test en rojo `consultas_usan_indices` en `queries.rs`: para cada consulta del Resumen con filtro de 30 días, con agente y con proyecto, y para el relleno de turnos y el refresco de agregados, el plan no contiene `SCAN calls`/`SCAN tool_calls` sin índice; verificar qué consultas fallan y anotar sus planes en design.md
-- [ ] 6.2 Añadir los índices de D9 que el plan pida (y quitar los que no use ninguna consulta); verificar 6.1, 1.2 y `equivalencia_ingesta` en verde
+- [x] 6.1 Test en rojo `consultas_usan_indices` en `queries.rs`: para cada consulta del Resumen con filtro de 30 días, con agente y con proyecto, y para el relleno de turnos y el refresco de agregados, el plan no contiene `SCAN calls`/`SCAN tool_calls` sin índice; verificar qué consultas fallan y anotar sus planes en design.md
+- [x] 6.2 Añadir los índices de D9 que el plan pida (y quitar los que no use ninguna consulta); verificar 6.1, 1.2 y `equivalencia_ingesta` en verde
 - [ ] 6.3 Medir (MQ en `200m`/`1g` y MF con `--phase live --repeat 200`); aplicar la regla D13 por índice y anotar las cifras
 
 ## 7. Claves foráneas fuera del escritor (D3)

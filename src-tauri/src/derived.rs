@@ -406,6 +406,26 @@ mod tests {
     }
 
     #[test]
+    fn el_refresco_no_recorre_las_tablas_grandes() {
+        let conn = base();
+        let mut scans = Vec::new();
+        for sql in [
+            REFRESH_COSTS,
+            MARK_PENDING_COSTS,
+            FIRST_CALL,
+            DELETE_DAILY,
+            INSERT_DAILY,
+            DELETE_TOOLS,
+            INSERT_TOOLS,
+            "SELECT rowid, session_id, ts FROM calls WHERE day IS NULL",
+            "SELECT rowid, session_id, ts FROM tool_calls WHERE day IS NULL",
+        ] {
+            scans.extend(db::trace::full_scans(&conn, sql));
+        }
+        assert!(scans.is_empty(), "{scans:#?}");
+    }
+
+    #[test]
     fn un_lote_que_toca_una_clave_solo_reescribe_esa_clave() {
         let conn = base();
         for (i, s) in ["s0", "s1", "s2"].iter().enumerate() {

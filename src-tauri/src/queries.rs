@@ -1429,6 +1429,109 @@ mod tests {
         }
     }
 
+    /// Todas las sentencias que lanza el Resumen (`useDashboardData`) con el filtro `f`.
+    fn summary_statements(conn: &Connection, f: &Filter) -> Vec<String> {
+        let tz = "Europe/Madrid";
+        sql_of(conn, || {
+            summary(conn, f, MIDNIGHT).unwrap();
+            for bucket in ["day", "hour"] {
+                timeseries(conn, f, bucket, tz).unwrap();
+            }
+            for by in ["agent", "model", "project", "branch", "tool"] {
+                timeseries_by(conn, f, by, tz).unwrap();
+            }
+            for by in [
+                "agent",
+                "project",
+                "branch",
+                "model",
+                "activity",
+                "tool",
+                "command",
+                "skill",
+                "mcp",
+                "agent_type",
+            ] {
+                breakdown(conn, f, by).unwrap();
+            }
+            crate::insights::activity(conn, f).unwrap();
+            crate::insights::activity_daily(conn, f, tz).unwrap();
+            list_agents(conn, f).unwrap();
+            list_projects(conn, f).unwrap();
+        })
+    }
+
+    #[test]
+    fn consultas_usan_indices() {
+        let conn = db::open_in_memory().unwrap();
+        madrid(&conn);
+        testdata::seed(&conn);
+        let thirty = range(Some(MIDNIGHT - 30 * DAY_MS), Some(MIDNIGHT));
+        assert_eq!(
+            db::trace::full_scans(
+                &conn,
+                "SELECT COUNT(*) FROM call_costs c WHERE c.model = ?1"
+            )
+            .len(),
+            1,
+            "el comprobador detecta un recorrido completo"
+        );
+        if std::env::var_os("PLANES").is_some() {
+            for sql in summary_statements(&conn, &thirty) {
+                let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+                let nulls = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
+                let plan: Vec<String> = stmt
+                    .query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                eprintln!(
+                    "PLAN {} => {}",
+                    &sql.split_whitespace().collect::<Vec<_>>().join(" ")[..90.min(sql.len())],
+                    plan.join(" | ")
+                );
+            }
+        }
+        let mut scans = Vec::new();
+        for (name, f) in [
+            ("30 días", thirty.clone()),
+            (
+                "30 días a mitad de día",
+                range(
+                    Some(MIDNIGHT - 30 * DAY_MS + HOUR_MS),
+                    Some(MIDNIGHT + HOUR_MS),
+                ),
+            ),
+            (
+                "agente",
+                Filter {
+                    agents: Some(vec!["codex".into()]),
+                    ..thirty.clone()
+                },
+            ),
+            (
+                "proyecto",
+                Filter {
+                    projects: Some(vec![1]),
+                    ..thirty.clone()
+                },
+            ),
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for sql in summary_statements(&conn, &f) {
+                if seen.insert(sql.clone()) {
+                    for line in db::trace::full_scans(&conn, &sql) {
+                        scans.push(format!(
+                            "{name}: {line}\n  {}",
+                            sql.split_whitespace().collect::<Vec<_>>().join(" ")
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(scans.is_empty(), "{}", scans.join("\n"));
+    }
+
     #[test]
     fn info_de_datos() {
         let conn = db::open_in_memory().unwrap();

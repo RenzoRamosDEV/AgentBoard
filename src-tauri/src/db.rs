@@ -18,6 +18,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (6, include_str!("../migrations/0006_primera_llamada.sql")),
     (7, include_str!("../migrations/0007_dia_local.sql")),
     (8, include_str!("../migrations/0008_agregados_diarios.sql")),
+    (9, include_str!("../migrations/0009_indices.sql")),
 ];
 
 /// Sentencias preparadas que la conexión conserva compiladas.
@@ -186,6 +187,59 @@ pub mod trace {
 
     pub fn take(log: &Log) -> Vec<Executed> {
         std::mem::take(&mut *log.lock().unwrap())
+    }
+
+    const KEYWORDS: &[&str] = &[
+        "where", "join", "left", "cross", "on", "group", "order", "limit", "set", "as", "inner",
+    ];
+
+    /// Nombres con los que `sql` usa `calls` o `tool_calls` (la tabla, la vista `call_costs` o
+    /// un alias).
+    fn big_table_names(sql: &str) -> Vec<String> {
+        let words: Vec<String> = sql
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| !w.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        let mut names = vec![
+            "calls".to_string(),
+            "tool_calls".to_string(),
+            "call_costs".to_string(),
+        ];
+        for (i, w) in words.iter().enumerate() {
+            if names[..3].contains(w) {
+                let mut j = i + 1;
+                if words.get(j).map(String::as_str) == Some("as") {
+                    j += 1;
+                }
+                if let Some(alias) = words.get(j).filter(|a| !KEYWORDS.contains(&a.as_str())) {
+                    names.push(alias.clone());
+                }
+            }
+        }
+        names
+    }
+
+    /// Líneas del plan de `sql` que recorren `calls` o `tool_calls` enteras (con o sin índice),
+    /// salvo los índices parciales de filas pendientes, que solo tienen lo de un lote.
+    pub fn full_scans(conn: &Connection, sql: &str) -> Vec<String> {
+        let names = big_table_names(sql);
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let nulls = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
+        let detail: Vec<String> = stmt
+            .query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        detail
+            .into_iter()
+            .filter(|d| {
+                let mut w = d.split_whitespace();
+                w.next() == Some("SCAN")
+                    && w.next().is_some_and(|t| names.contains(&t.to_lowercase()))
+                    && !d.contains("_pending")
+            })
+            .collect()
     }
 }
 

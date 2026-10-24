@@ -1252,6 +1252,24 @@ mod tests {
     }
 
     #[test]
+    fn el_relleno_de_turnos_no_recorre_las_tablas_grandes() {
+        let (_d, _file, _p, conn) = setup();
+        for sql in [
+            BACKFILL_CALLS,
+            BACKFILL_TOOL_CALLS,
+            INSERT_CALL,
+            UPDATE_CALL,
+            INSERT_TOOL_USE,
+        ] {
+            assert_eq!(
+                db::trace::full_scans(&conn, sql),
+                Vec::<String>::new(),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
     fn cada_sentencia_se_compila_como_mucho_una_vez_por_archivo() {
         let (_d, file, p, mut conn) = setup();
         let body: String = (0..200).map(|i| tool_line(i) + "\n").collect();

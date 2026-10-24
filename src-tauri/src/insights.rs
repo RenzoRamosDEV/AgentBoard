@@ -194,11 +194,29 @@ pub fn skills_and_agents(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownR
 
 /// Llamadas por servidor MCP (`mcp__<servidor>__<herramienta>`).
 pub fn mcp_servers(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
-    let (w, args) = f.sql("t.ts");
-    let mut stmt = conn.prepare(&format!(
-        r"SELECT t.tool, COUNT(*), SUM(t.is_error) FROM tool_calls t JOIN sessions s ON s.id = t.session_id
-          WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
-    ))?;
+    mcp_servers_from(conn, f, crate::queries::source(conn, f, None)?)
+}
+
+pub(crate) fn mcp_servers_from(
+    conn: &Connection,
+    f: &Filter,
+    src: crate::queries::Source,
+) -> Result<Vec<BreakdownRow>> {
+    let sql = if src == crate::queries::Source::Detail {
+        let (w, _) = f.sql("t.ts");
+        format!(
+            r"SELECT t.tool, COUNT(*), SUM(t.is_error) FROM tool_calls t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
+        )
+    } else {
+        let (w, _) = src.where_sql(f, "t.day");
+        format!(
+            r"SELECT t.tool, SUM(t.uses), SUM(t.errors) FROM tool_stats t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
+        )
+    };
+    let (_, args) = src.where_sql(f, "x");
+    let mut stmt = conn.prepare(&sql)?;
     let mut by_server: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     let mut rows = stmt.query(params_from_iter(args.iter()))?;
     while let Some(r) = rows.next()? {

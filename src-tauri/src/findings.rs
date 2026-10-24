@@ -812,6 +812,7 @@ mod tests {
             )
             .unwrap();
         }
+        crate::derived::refresh(&c).unwrap();
         let v = tool_errors(&c, &Filter::default()).unwrap();
         assert_eq!(v.len(), 1);
         assert!((v[0].params["rate"].as_f64().unwrap() - 0.14).abs() < 1e-9);
@@ -854,6 +855,7 @@ mod tests {
         // Sin el pico, no hay aviso.
         c.execute("DELETE FROM calls WHERE message_id = 'pico'", [])
             .unwrap();
+        crate::derived::refresh(&c).unwrap();
         assert!(spend_spike(&c, &Filter::default(), "UTC")
             .unwrap()
             .is_none());
@@ -959,6 +961,7 @@ mod tests {
             )
             .unwrap();
         }
+        crate::derived::refresh(&c).unwrap();
         let cmd = shell_command_errors(&c, &Filter::default())
             .unwrap()
             .unwrap();

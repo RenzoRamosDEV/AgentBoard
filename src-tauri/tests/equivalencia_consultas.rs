@@ -30,6 +30,9 @@ fn check(name: &str, actual: &str) {
 /// `list_agents` devuelve la raíz de logs de cada agente.
 fn golden_of(providers: &[Box<dyn Provider>], volatile: &[&std::path::Path]) -> String {
     let mut conn = db::open_in_memory().unwrap();
+    // La zona de las consultas: así los filtros de días completos leen de los agregados diarios
+    // sea cual sea la zona del sistema donde corre el test.
+    db::set_cache_tz(&conn, common::TZ).unwrap();
     let stats = ingest::scan_all(&mut conn, providers).unwrap();
     assert_eq!(stats.errors, 0, "{stats:?}");
     let mut out = common::query_golden(&conn).unwrap();

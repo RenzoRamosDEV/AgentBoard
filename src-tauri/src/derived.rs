@@ -35,6 +35,9 @@ const MARK_PENDING_COSTS: &str = "INSERT OR IGNORE INTO dirty_keys
 const FIRST_CALL: &str = "SELECT message_id, day FROM calls
      WHERE session_id = ?1 AND is_sidechain = 0 ORDER BY ts, rowid LIMIT 1";
 
+// Se recorre una vez cada sesión anotada (no una por día) y `CROSS JOIN` fija ese orden: sin
+// estadísticas, el planificador prefiere recorrer `calls` entera y buscar cada fila en
+// `dirty_keys`, en cada lote.
 const DELETE_DAILY: &str = "DELETE FROM daily_stats
      WHERE (day, session_id) IN (SELECT day, session_id FROM dirty_keys)";
 
@@ -45,9 +48,10 @@ const INSERT_DAILY: &str = "INSERT INTO daily_stats
        SUM(CASE WHEN c.message_id IS s.first_call_id
                 THEN c.input_tokens + c.cache_read + c.cache_write ELSE 0 END),
        MIN(c.ts), MAX(c.ts)
-     FROM dirty_keys k
-     JOIN calls c ON c.session_id = k.session_id AND c.day = k.day
+     FROM (SELECT DISTINCT session_id FROM dirty_keys) k
+     CROSS JOIN calls c ON c.session_id = k.session_id
      JOIN sessions s ON s.id = c.session_id
+     WHERE (c.session_id, c.day) IN (SELECT session_id, day FROM dirty_keys)
      GROUP BY c.day, c.session_id, c.model";
 
 const DELETE_TOOLS: &str = "DELETE FROM tool_stats
@@ -55,7 +59,9 @@ const DELETE_TOOLS: &str = "DELETE FROM tool_stats
 
 const INSERT_TOOLS: &str = "INSERT INTO tool_stats
      SELECT t.day, t.session_id, t.tool, COUNT(*), SUM(t.is_error), MIN(t.ts)
-     FROM dirty_keys k JOIN tool_calls t ON t.session_id = k.session_id AND t.day = k.day
+     FROM (SELECT DISTINCT session_id FROM dirty_keys) k
+     CROSS JOIN tool_calls t ON t.session_id = k.session_id
+     WHERE (t.session_id, t.day) IN (SELECT session_id, day FROM dirty_keys)
      GROUP BY t.day, t.session_id, t.tool";
 
 /// Calcula el día local (zona de la caché) de las filas de `table` que no lo tienen y anota sus

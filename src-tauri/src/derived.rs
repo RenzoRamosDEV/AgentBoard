@@ -407,14 +407,15 @@ mod tests {
             input_tokens: tokens,
             output_tokens: tokens / 3,
             cache_read: tokens * 2,
+            cache_write: tokens / 5,
             ..Default::default()
         };
         let cost = crate::pricing::PriceBook::load(conn).unwrap().cost(&c);
         let day = crate::tz::day_number(ts, &db::cache_zone(conn).unwrap());
         conn.execute(
             "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
-               cache_read, has_price, cost_usd, cache_savings_usd, day)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+               cache_read, cache_write, has_price, cost_usd, cache_savings_usd, day)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 c.message_id,
                 c.session_id,
@@ -423,6 +424,7 @@ mod tests {
                 c.input_tokens,
                 c.output_tokens,
                 c.cache_read,
+                c.cache_write,
                 cost.has_price,
                 cost.cost_usd,
                 cost.cache_savings_usd,
@@ -439,7 +441,7 @@ mod tests {
             input: c.input_tokens,
             output: c.output_tokens,
             cache_read: c.cache_read,
-            cache_write: 0,
+            cache_write: c.cache_write,
             has_price: cost.has_price,
             cost: cost.cost_usd,
             savings: cost.cache_savings_usd,

@@ -379,7 +379,7 @@ pub fn classify_turn(t: &TurnStats) -> &'static str {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityRow {
     pub key: String,
@@ -390,7 +390,7 @@ pub struct ActivityRow {
     pub one_shot: Option<f64>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelOneShot {
     pub model: String,
@@ -398,7 +398,7 @@ pub struct ModelOneShot {
     pub one_shot: Option<f64>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityReport {
     pub activities: Vec<ActivityRow>,
@@ -537,7 +537,7 @@ pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
     Ok(ActivityReport { activities, models })
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDay {
     /// Inicio del día local en epoch ms UTC.

@@ -11,6 +11,7 @@ pub mod insights;
 pub mod pricing;
 pub mod providers;
 pub mod queries;
+pub mod result_cache;
 pub mod sessions;
 pub mod settings;
 pub mod telemetry;
@@ -104,6 +105,8 @@ pub fn run() {
             app.manage(AppState {
                 readers,
                 ingest: ingest.clone(),
+                generation,
+                results: Arc::new(result_cache::ResultCache::default()),
                 alerts,
             });
 

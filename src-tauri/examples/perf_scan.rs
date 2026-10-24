@@ -203,11 +203,14 @@ fn queries(conn: &Connection) -> Result<()> {
             format!("{} primera, {} mediana", ms(first), ms(warm)),
         );
     }
-    let (first, repeated) = timed(|| common::full_summary(conn, &f))?;
+    let (first, _) = timed(|| common::full_summary(conn, &f))?;
+    let cache = agentboard_lib::result_cache::ResultCache::default();
+    let generation = agentboard_lib::ingest_thread::DataGeneration::default();
+    let (_, repeated) = timed(|| common::full_summary_cached(conn, &cache, &generation, &f))?;
     row("queries", "resumen completo frío (18 llamadas)", ms(first));
     row(
         "queries",
-        "resumen completo repetido (mediana)",
+        "resumen completo repetido (mediana, caché de resultados)",
         ms(repeated),
     );
     Ok(())

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// Filtro común a todas las vistas. Vacío = vista general.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Filter {
     /// Epoch ms inclusivo.
@@ -113,7 +113,7 @@ fn placeholders(n: usize) -> String {
     vec!["?"; n].join(",")
 }
 
-#[derive(Debug, Default, Serialize, PartialEq)]
+#[derive(Debug, Default, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub cost_usd: f64,
@@ -230,7 +230,7 @@ pub(crate) fn summary_from(
     Ok(out)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Point {
     /// Inicio del cubo en epoch ms UTC (medianoche u hora en punto locales).
@@ -345,7 +345,7 @@ pub(crate) fn timeseries_from(
         .collect())
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesPoint {
     pub ts: i64,
@@ -524,7 +524,7 @@ fn timeseries_by_days(
     Ok(out)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BreakdownRow {
     pub key: String,
@@ -675,7 +675,7 @@ pub(crate) fn breakdown_from(
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRow {
     pub id: String,
@@ -741,7 +741,7 @@ pub(crate) fn list_agents_from(
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRow {
     pub id: i64,

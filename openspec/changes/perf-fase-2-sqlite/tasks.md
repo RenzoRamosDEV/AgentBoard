@@ -59,8 +59,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 ## 9. Caché de resultados (D8)
 
-- [ ] 9.1 Tests en rojo en `result_cache.rs`: (a) la misma clave y generación devuelve el mismo `Arc` sin recalcular (contador); (b) otra generación vacía la caché; (c) un resultado calculado mientras cambió la generación no se guarda; (d) las consultas que dependen de la hora cambian de clave al cambiar el minuto; (e) al pasar de 256 entradas se vacía (valores límite 255/256/257); (f) filtros equivalentes con distinto orden de campos JSON comparten clave; verificar que fallan
-- [ ] 9.2 Implementar `ResultCache` (D8) y usarla en los comandos del Resumen y de los apartados; verificar 9.1, `cargo test --workspace` y `npm test` en verde
+- [x] 9.1 Tests en rojo en `result_cache.rs`: (a) la misma clave y generación devuelve el mismo `Arc` sin recalcular (contador); (b) otra generación vacía la caché; (c) un resultado calculado mientras cambió la generación no se guarda; (d) las consultas que dependen de la hora cambian de clave al cambiar el minuto; (e) al pasar de 256 entradas se vacía (valores límite 255/256/257); (f) filtros equivalentes con distinto orden de campos JSON comparten clave; verificar que fallan
+- [x] 9.2 Implementar `ResultCache` (D8) y usarla en los comandos del Resumen y de los apartados; verificar 9.1, `cargo test --workspace` y `npm test` en verde
 - [ ] 9.3 Medir (MQ en `200m`: Resumen repetido); aplicar la regla D13 y anotar las cifras
 
 ## 10. Caché en disco, validación y reconstrucción (D2)

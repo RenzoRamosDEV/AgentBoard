@@ -126,6 +126,57 @@ pub fn full_summary(conn: &Connection, f: &queries::Filter) -> Result<usize> {
     Ok(18)
 }
 
+/// El Resumen completo a través de la caché de resultados, con las mismas claves que los comandos.
+pub fn full_summary_cached(
+    conn: &Connection,
+    cache: &agentboard_lib::result_cache::ResultCache,
+    generation: &agentboard_lib::ingest_thread::DataGeneration,
+    f: &queries::Filter,
+) -> Result<usize> {
+    use agentboard_lib::result_cache::{key, key_at_minute};
+    let month = queries::Filter {
+        from: Some(MONTH_START_MS),
+        to: None,
+        ..f.clone()
+    };
+    cache.get_or_compute(
+        generation,
+        key_at_minute("summary", f, WINDOW_END_MS),
+        || queries::summary(conn, f, WINDOW_END_MS),
+    )?;
+    let breakdown = |by: &str| {
+        cache.get_or_compute(generation, key("breakdown", &(f, by)), || {
+            queries::breakdown(conn, f, by)
+        })
+    };
+    let series = |f: &queries::Filter, bucket: &str| {
+        cache.get_or_compute(generation, key("timeseries", &(f, bucket, TZ)), || {
+            queries::timeseries(conn, f, bucket, TZ)
+        })
+    };
+    breakdown("agent")?;
+    series(f, "day")?;
+    series(f, "hour")?;
+    for by in ["agent", "model", "project", "tool"] {
+        cache.get_or_compute(generation, key("timeseries_by", &(f, by, TZ)), || {
+            queries::timeseries_by(conn, f, by, TZ)
+        })?;
+    }
+    series(&month, "day")?;
+    breakdown("project")?;
+    breakdown("model")?;
+    cache.get_or_compute(generation, key("activity", f), || {
+        insights::activity(conn, f)
+    })?;
+    cache.get_or_compute(generation, key("activity_daily", &(f, TZ)), || {
+        insights::activity_daily(conn, f, TZ)
+    })?;
+    for by in ["tool", "command", "skill", "mcp", "agent_type"] {
+        breakdown(by)?;
+    }
+    Ok(18)
+}
+
 // ------------------------------------------------------------------ huella
 
 /// Por tabla: columnas comparables (sin ids autoincrementales ni marcas de reloj) y clave natural.

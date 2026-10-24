@@ -2,11 +2,12 @@
 
 use crate::db::ReadPool;
 use crate::ingest::now_ms;
-use crate::ingest_thread::IngestHandle;
+use crate::ingest_thread::{DataGeneration, IngestHandle};
 use crate::insights::{self, ActivityDay, ActivityReport};
 use crate::queries::{
     self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, SeriesPoint, Summary,
 };
+use crate::result_cache::{self, ResultCache};
 use crate::sessions::{self, SessionDetail, SessionList};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
@@ -16,10 +17,13 @@ use std::sync::{Arc, RwLock};
 /// consultas en curso terminan con el anterior.
 pub type Readers = Arc<RwLock<Arc<ReadPool>>>;
 
-/// Estado de la app: lectores de la base, el hilo de ingesta (único escritor) y los avisos.
+/// Estado de la app: lectores de la base, el hilo de ingesta (único escritor), la caché de
+/// resultados con la generación de datos que la invalida, y los avisos.
 pub struct AppState {
     pub readers: Readers,
     pub ingest: IngestHandle,
+    pub generation: Arc<DataGeneration>,
+    pub results: Arc<ResultCache>,
     pub alerts: std::sync::Arc<crate::alerts::Alerts>,
 }
 
@@ -44,6 +48,24 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Como `with_reader`, pero a través de la caché de resultados con la clave `key`.
+async fn cached<T: Clone + Send + Sync + 'static>(
+    state: &AppState,
+    key: String,
+    f: impl FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    let (readers, results, generation) = (
+        state.readers.clone(),
+        state.results.clone(),
+        state.generation.clone(),
+    );
+    run_blocking(move || {
+        let value = results.get_or_compute(&generation, key, || current(&readers)?.with(f))?;
+        Ok(T::clone(&value))
+    })
+    .await
+}
+
 /// Ejecuta `f` con un lector, fuera del hilo llamador.
 async fn with_reader<T: Send + 'static>(
     readers: Readers,
@@ -58,10 +80,9 @@ pub async fn get_summary(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Summary> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::summary(c, &filter.unwrap_or_default(), now_ms())
-    })
-    .await
+    let (filter, now) = (filter.unwrap_or_default(), now_ms());
+    let key = result_cache::key_at_minute("summary", &filter, now);
+    cached(&state, key, move |c| queries::summary(c, &filter, now)).await
 }
 
 #[tauri::command]
@@ -72,8 +93,10 @@ pub async fn get_timeseries(
     bucket: String,
     tz: String,
 ) -> CmdResult<Vec<Point>> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::timeseries(c, &filter.unwrap_or_default(), &bucket, &tz)
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("timeseries", &(&filter, &bucket, &tz));
+    cached(&state, key, move |c| {
+        queries::timeseries(c, &filter, &bucket, &tz)
     })
     .await
 }
@@ -86,8 +109,10 @@ pub async fn get_timeseries_by(
     by: String,
     tz: String,
 ) -> CmdResult<Vec<SeriesPoint>> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::timeseries_by(c, &filter.unwrap_or_default(), &by, &tz)
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("timeseries_by", &(&filter, &by, &tz));
+    cached(&state, key, move |c| {
+        queries::timeseries_by(c, &filter, &by, &tz)
     })
     .await
 }
@@ -99,10 +124,9 @@ pub async fn get_breakdown(
     filter: Option<Filter>,
     by: String,
 ) -> CmdResult<Vec<BreakdownRow>> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::breakdown(c, &filter.unwrap_or_default(), &by)
-    })
-    .await
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("breakdown", &(&filter, &by));
+    cached(&state, key, move |c| queries::breakdown(c, &filter, &by)).await
 }
 
 #[tauri::command]
@@ -111,10 +135,9 @@ pub async fn get_activity(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<ActivityReport> {
-    with_reader(state.readers.clone(), move |c| {
-        insights::activity(c, &filter.unwrap_or_default())
-    })
-    .await
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("activity", &filter);
+    cached(&state, key, move |c| insights::activity(c, &filter)).await
 }
 
 #[tauri::command]
@@ -124,8 +147,10 @@ pub async fn get_activity_daily(
     filter: Option<Filter>,
     tz: String,
 ) -> CmdResult<Vec<ActivityDay>> {
-    with_reader(state.readers.clone(), move |c| {
-        insights::activity_daily(c, &filter.unwrap_or_default(), &tz)
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("activity_daily", &(&filter, &tz));
+    cached(&state, key, move |c| {
+        insights::activity_daily(c, &filter, &tz)
     })
     .await
 }
@@ -136,10 +161,9 @@ pub async fn list_agents(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<AgentRow>> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::list_agents(c, &filter.unwrap_or_default())
-    })
-    .await
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("list_agents", &filter);
+    cached(&state, key, move |c| queries::list_agents(c, &filter)).await
 }
 
 #[tauri::command]
@@ -148,10 +172,9 @@ pub async fn list_projects(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
 ) -> CmdResult<Vec<ProjectRow>> {
-    with_reader(state.readers.clone(), move |c| {
-        queries::list_projects(c, &filter.unwrap_or_default())
-    })
-    .await
+    let filter = filter.unwrap_or_default();
+    let key = result_cache::key("list_projects", &filter);
+    cached(&state, key, move |c| queries::list_projects(c, &filter)).await
 }
 
 #[tauri::command]

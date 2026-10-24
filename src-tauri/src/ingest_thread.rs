@@ -44,6 +44,11 @@ impl DataGeneration {
     fn bump(&self) {
         self.0.fetch_add(1, Ordering::AcqRel);
     }
+
+    #[cfg(test)]
+    pub fn bump_for_tests(&self) {
+        self.bump();
+    }
 }
 
 /// Para pedir trabajos al hilo de ingesta desde cualquier hebra.

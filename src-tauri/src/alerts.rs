@@ -2,6 +2,8 @@
 //! bandeja con el gasto del mes y avisa una vez al llegar al 80 % y al 100 % de cada presupuesto:
 //! mensual, diario y mensuales por proyecto o agente.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use crate::{queries, settings};
 use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};

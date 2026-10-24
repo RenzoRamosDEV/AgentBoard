@@ -3,6 +3,8 @@
 //! `as_bool`), las cadenas sin escapes se leen prestadas de la línea y lo que no se declara se
 //! salta sin copiarlo.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use serde::de::{self, value::MapAccessDeserializer, Deserialize, Deserializer, IgnoredAny};
 use std::borrow::Cow;
 use std::fmt;

@@ -1,6 +1,8 @@
 //! Hilo de ingesta: el único que escanea los logs (escaneo inicial y relecturas del vigilante).
 //! Recibe peticiones por canal y agrupa las que se acumulan en un único escaneo.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use crate::ingest::{self, ScanStats};
 use crate::providers::Provider;
 use rusqlite::Connection;
@@ -79,11 +81,14 @@ mod tests {
 
     const WAIT: Duration = Duration::from_secs(20);
 
+    /// Aviso de «empiezo a parsear» y permiso para seguir.
+    type Gate = (Mutex<mpsc::Sender<()>>, Mutex<mpsc::Receiver<()>>);
+
     /// Proveedor de prueba: cada línea `<id>` es una sesión con una llamada. Si tiene `gate`,
     /// avisa al empezar a parsear y espera permiso para seguir.
     struct Fake {
         root: PathBuf,
-        gate: Option<(Mutex<mpsc::Sender<()>>, Mutex<mpsc::Receiver<()>>)>,
+        gate: Option<Gate>,
     }
 
     impl Provider for Fake {

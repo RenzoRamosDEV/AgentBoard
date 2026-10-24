@@ -4,6 +4,8 @@
 //! Gemini) y actualizaciones `{"$set": {...}}`. Los subagentes van en `chats/<sesión padre>/<id>.jsonl`.
 //! Las versiones antiguas escribían un único `.json` con el mismo contenido.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::json::{Int, List, Obj, Present, Seen, Str};
 use super::{parse_ts, prompt_intent, CallRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
 use anyhow::Result;

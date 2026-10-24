@@ -6,6 +6,8 @@
 //! agregados por modelo en `session.shutdown`, así que al cerrar la sesión se reparten entre
 //! las respuestas de ese modelo desde el cierre anterior (una sesión reanudada cierra varias veces).
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::json::{Bool, Int, IntOrStr, Obj, Str};
 use super::{
     parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,

@@ -1,6 +1,8 @@
 //! Vigilante de archivos: observa las carpetas de logs de los agentes y, al cambiar algo,
 //! pide una relectura al hilo de ingesta (los offsets de `file_state` evitan duplicar).
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use crate::ingest_thread::{IngestHandle, Origen};
 use crate::providers::Provider;
 use anyhow::Result;

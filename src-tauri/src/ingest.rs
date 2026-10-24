@@ -1,5 +1,7 @@
 //! Lectura incremental de logs: offset por archivo, upsert por id y nada se borra solo.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use crate::providers::{Provider, Record, Source};
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};

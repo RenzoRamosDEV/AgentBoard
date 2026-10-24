@@ -5,6 +5,8 @@
 //! A diferencia de Claude Code, el modelo y la carpeta no van en cada línea: se guardan por
 //! archivo en `state` mientras se lee.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::json::{Bool, Int, List, NotNull, Obj, OptInt, Seen, Str};
 use super::{
     parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,

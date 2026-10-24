@@ -1,5 +1,7 @@
 //! Sesiones de Claude Code: `~/.claude/projects/<proyecto>/<sesión>.jsonl`.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::json::{Bool, Int, List, Obj, Str};
 use super::{
     classify_tool, parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec,

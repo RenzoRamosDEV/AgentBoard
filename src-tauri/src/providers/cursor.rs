@@ -7,6 +7,8 @@
 //! (≈4 por token) y el modelo queda como `cursor-auto`, sin precio. Sirve para ver actividad,
 //! herramientas y turnos; el coste real lo da la suscripción de Cursor.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::json::{ListOrLen, ListOrStr, Obj, Str, StrLen};
 use super::{prompt_intent, CallRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
 use anyhow::Result;

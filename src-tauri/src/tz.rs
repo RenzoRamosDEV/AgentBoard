@@ -1,6 +1,8 @@
 //! Días y horas locales con las reglas históricas de la zona (verano/invierno incluidos):
 //! aplicar a todas las fechas el desfase de hoy desplaza las cercanas a un cambio de hora.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use chrono::{Duration, LocalResult, NaiveDateTime, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
 

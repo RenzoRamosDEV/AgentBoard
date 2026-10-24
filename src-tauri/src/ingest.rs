@@ -1322,6 +1322,46 @@ mod tests {
     }
 
     #[test]
+    fn hilos_por_defecto_los_del_procesador() {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        assert_eq!(default_threads(), cores);
+    }
+
+    #[test]
+    fn la_ventana_retiene_a_los_lectores_adelantados() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let window = std::sync::Arc::new(Window::new(2));
+        assert!(
+            window.wait_for(0) && window.wait_for(1),
+            "dentro de la ventana"
+        );
+        let (tx, rx) = channel();
+        let w = window.clone();
+        let reader = std::thread::spawn(move || tx.send(w.wait_for(2)).unwrap());
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "el archivo 2 espera a que se recoja el 0"
+        );
+        window.advance(1);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(true));
+        reader.join().unwrap();
+
+        let (tx, rx) = channel();
+        let w = window.clone();
+        let reader = std::thread::spawn(move || tx.send(w.wait_for(10)).unwrap());
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        window.close();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(false),
+            "cerrada: no se lee más"
+        );
+        reader.join().unwrap();
+        assert!(!window.wait_for(0), "tras cerrar, nada");
+    }
+
+    #[test]
     fn streaming_deja_una_llamada_con_los_ultimos_tokens() {
         let (_d, file, p, mut conn) = setup();
         let body = [

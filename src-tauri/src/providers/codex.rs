@@ -7,7 +7,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
-use super::json::{Bool, Int, List, NotNull, Obj, OptInt, Seen, Str};
+use super::json::{Bool, Int, List, ListOrStr, NotNull, Obj, OptInt, Seen, Str};
 use super::{
     parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec, ToolUseRec, TurnRec,
 };
@@ -110,79 +110,12 @@ struct Args<'a> {
 }
 
 /// `command`: lista de argumentos, cadena u otra cosa.
-#[derive(Debug, Default)]
-enum Command<'a> {
-    Parts(Vec<Str<'a>>),
-    Text(Cow<'a, str>),
-    #[default]
-    Other,
-}
-
-impl<'de: 'a, 'a> Deserialize<'de> for Command<'a> {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        command_from(d)
-    }
-}
-
-fn command_from<'de: 'a, 'a, D: serde::Deserializer<'de>>(
-    d: D,
-) -> std::result::Result<Command<'a>, D::Error> {
-    use serde::de::{self, value::SeqAccessDeserializer, IgnoredAny, Visitor};
-    struct V<'a>(std::marker::PhantomData<&'a ()>);
-    impl<'de: 'a, 'a> Visitor<'de> for V<'a> {
-        type Value = Command<'a>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("cualquier valor JSON")
-        }
-        fn visit_borrowed_str<E: de::Error>(
-            self,
-            v: &'de str,
-        ) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Text(Cow::Borrowed(v)))
-        }
-        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Text(Cow::Owned(v.to_owned())))
-        }
-        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Text(Cow::Owned(v)))
-        }
-        fn visit_seq<A: de::SeqAccess<'de>>(
-            self,
-            seq: A,
-        ) -> std::result::Result<Command<'a>, A::Error> {
-            let List(parts) = List::deserialize(SeqAccessDeserializer::new(seq))?;
-            Ok(Command::Parts(parts))
-        }
-        fn visit_map<A: de::MapAccess<'de>>(
-            self,
-            mut map: A,
-        ) -> std::result::Result<Command<'a>, A::Error> {
-            while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-            Ok(Command::Other)
-        }
-        fn visit_bool<E: de::Error>(self, _: bool) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Other)
-        }
-        fn visit_i64<E: de::Error>(self, _: i64) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Other)
-        }
-        fn visit_u64<E: de::Error>(self, _: u64) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Other)
-        }
-        fn visit_f64<E: de::Error>(self, _: f64) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Other)
-        }
-        fn visit_unit<E: de::Error>(self) -> std::result::Result<Command<'a>, E> {
-            Ok(Command::Other)
-        }
-    }
-    d.deserialize_any(V(std::marker::PhantomData))
-}
+type Command<'a> = ListOrStr<'a, Str<'a>>;
 
 /// Comando de shell legible: `bash -lc "<cmd>"` da el último argumento.
 fn shell_target(command: &Command, cmd: Option<&str>) -> String {
     match command {
-        Command::Parts(parts) => {
+        Command::List(parts) => {
             let parts: Vec<&str> = parts.iter().filter_map(|p| p.as_deref()).collect();
             if parts.len() >= 3 && parts[1].starts_with('-') && parts[1].contains('c') {
                 parts[2].to_string()
@@ -190,7 +123,7 @@ fn shell_target(command: &Command, cmd: Option<&str>) -> String {
                 parts.join(" ")
             }
         }
-        Command::Text(s) => s.to_string(),
+        Command::Str(s) => s.to_string(),
         Command::Other => cmd.unwrap_or("").to_string(),
     }
 }

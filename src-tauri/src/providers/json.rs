@@ -325,10 +325,11 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for List<T> {
 }
 
 /// Lista de `T` o cadena (p. ej. un `content` que puede ser texto suelto o bloques).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ListOrStr<'a, T> {
     List(Vec<T>),
     Str(Cow<'a, str>),
+    #[default]
     Other,
 }
 

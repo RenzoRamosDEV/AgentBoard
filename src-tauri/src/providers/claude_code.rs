@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
-use super::json::{Bool, Int, List, Obj, Str};
+use super::json::{Bool, Int, List, ListOrStr, Obj, Str};
 use super::{
     classify_tool, parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec,
     ToolUseRec, TurnRec,
@@ -282,80 +282,7 @@ struct UserBlock<'a> {
 }
 
 /// `message.content` de un usuario: texto suelto o lista de bloques.
-#[derive(Debug, Default)]
-enum Content<'a> {
-    Text(Cow<'a, str>),
-    Blocks(Vec<Obj<UserBlock<'a>>>),
-    #[default]
-    Other,
-}
-
-impl<'de: 'a, 'a> Deserialize<'de> for Content<'a> {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        // Se reutilizan los tipos tolerantes: primero como lista; si no, como cadena.
-        struct V<'a>(std::marker::PhantomData<&'a ()>);
-        impl<'de: 'a, 'a> serde::de::Visitor<'de> for V<'a> {
-            type Value = Content<'a>;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("cualquier valor JSON")
-            }
-            fn visit_borrowed_str<E: serde::de::Error>(
-                self,
-                v: &'de str,
-            ) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Text(Cow::Borrowed(v)))
-            }
-            fn visit_str<E: serde::de::Error>(
-                self,
-                v: &str,
-            ) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Text(Cow::Owned(v.to_owned())))
-            }
-            fn visit_string<E: serde::de::Error>(
-                self,
-                v: String,
-            ) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Text(Cow::Owned(v)))
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                seq: A,
-            ) -> std::result::Result<Content<'a>, A::Error> {
-                let List(blocks) =
-                    List::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
-                Ok(Content::Blocks(blocks))
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                map: A,
-            ) -> std::result::Result<Content<'a>, A::Error> {
-                serde::de::IgnoredAny::deserialize(serde::de::value::MapAccessDeserializer::new(
-                    map,
-                ))?;
-                Ok(Content::Other)
-            }
-            fn visit_bool<E: serde::de::Error>(
-                self,
-                _: bool,
-            ) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Other)
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Other)
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Other)
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Other)
-            }
-            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Content<'a>, E> {
-                Ok(Content::Other)
-            }
-        }
-        d.deserialize_any(V(std::marker::PhantomData))
-    }
-}
+type Content<'a> = ListOrStr<'a, Obj<UserBlock<'a>>>;
 
 fn parse_assistant(line: &AssistantLine, session_id: &str, ts: i64, out: &mut Vec<Record>) {
     let empty = AssistantMsg::default();
@@ -447,7 +374,7 @@ fn parse_user(line: &UserLine, session_id: &str, ts: i64, out: &mut Vec<Record>)
     // línea salvo que haya que unir varios bloques.
     let mut prompt: Option<Cow<str>> = None;
     match content {
-        Some(Content::Blocks(blocks)) => {
+        Some(Content::List(blocks)) => {
             for b in blocks.iter().filter_map(|b| b.0.as_ref()) {
                 match b.kind.as_deref() {
                     Some("tool_result") => {
@@ -479,10 +406,10 @@ fn parse_user(line: &UserLine, session_id: &str, ts: i64, out: &mut Vec<Record>)
                 }
             }
         }
-        Some(Content::Text(text)) if is_interruption(Some(text)) => {
+        Some(Content::Str(text)) if is_interruption(Some(text)) => {
             out.push(interruption(session_id, ts));
         }
-        Some(Content::Text(text)) => prompt = Some(Cow::Borrowed(text)),
+        Some(Content::Str(text)) => prompt = Some(Cow::Borrowed(text)),
         _ => {}
     }
 
@@ -750,7 +677,7 @@ mod tests {
         let u = r#"{"message":{"role":"user","content":[{"type":"text","text":"hola mundo"}]}}"#;
         let line: UserLine = serde_json::from_str(u).unwrap();
         let blocks = match line.message.0.unwrap().content {
-            Content::Blocks(b) => b,
+            Content::List(b) => b,
             other => panic!("{other:?}"),
         };
         assert!(matches!(

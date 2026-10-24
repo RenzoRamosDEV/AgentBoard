@@ -1400,6 +1400,23 @@ mod tests {
     }
 
     #[test]
+    fn el_estado_guarda_tamano_y_fecha_y_el_resultado_las_lineas_malas() {
+        let (_d, file, p, mut conn) = setup();
+        let body = line("m1", 1, "2026-09-25T10:00:00Z") + "\n{roto\n";
+        fs::write(&file, &body).unwrap();
+        let r = ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!((r.lines, r.bad_lines, r.records), (2, 1, 2));
+        let (size, offset, mtime): (i64, i64, i64) = conn
+            .query_row("SELECT size, offset, mtime FROM file_state", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!((size, offset), (body.len() as i64, body.len() as i64));
+        assert_eq!(mtime, mtime_ms(&fs::metadata(&file).unwrap()));
+        assert!(mtime > 0);
+    }
+
+    #[test]
     fn streaming_deja_una_llamada_con_los_ultimos_tokens() {
         let (_d, file, p, mut conn) = setup();
         let body = [

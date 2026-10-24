@@ -200,6 +200,28 @@ impl<'de: 'a, 'a> Deserialize<'de> for IntOrStr<'a> {
     }
 }
 
+/// Longitud en bytes de una cadena (como `as_str().map(str::len)`), sin copiarla aunque tenga
+/// escapes.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct StrLen(pub Option<usize>);
+
+impl<'de> Deserialize<'de> for StrLen {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = StrLen;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<StrLen, E> {
+                Ok(StrLen(Some(v.len())))
+            }
+            ignore_others!(StrLen, StrLen(None), [bool, i64, u64, f64, unit, seq, map]);
+        }
+        d.deserialize_any(V)
+    }
+}
+
 /// Booleano si el valor es un booleano.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Bool(pub Option<bool>);
@@ -278,6 +300,78 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for List<T> {
                 List<T>,
                 List(Vec::new()),
                 [bool, i64, u64, f64, str, unit, map]
+            );
+        }
+        d.deserialize_any(V(PhantomData))
+    }
+}
+
+/// Lista de `T` o cadena (p. ej. un `content` que puede ser texto suelto o bloques).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListOrStr<'a, T> {
+    List(Vec<T>),
+    Str(Cow<'a, str>),
+    Other,
+}
+
+impl<'de: 'a, 'a, T: Deserialize<'de>> Deserialize<'de> for ListOrStr<'a, T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<'a, T>(PhantomData<(&'a (), T)>);
+        impl<'de: 'a, 'a, T: Deserialize<'de>> de::Visitor<'de> for V<'a, T> {
+            type Value = ListOrStr<'a, T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_borrowed_str<E: de::Error>(self, v: &'de str) -> Result<Self::Value, E> {
+                Ok(ListOrStr::Str(Cow::Borrowed(v)))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(ListOrStr::Str(Cow::Owned(v.to_owned())))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                Ok(ListOrStr::Str(Cow::Owned(v)))
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                let List(items) = List::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+                Ok(ListOrStr::List(items))
+            }
+            ignore_others!(
+                Self::Value,
+                ListOrStr::Other,
+                [bool, i64, u64, f64, unit, map]
+            );
+        }
+        d.deserialize_any(V(PhantomData))
+    }
+}
+
+/// Lista de `T` o la longitud de una cadena, sin copiarla.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListOrLen<T> {
+    List(Vec<T>),
+    Len(usize),
+    Other,
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ListOrLen<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> de::Visitor<'de> for V<T> {
+            type Value = ListOrLen<T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(ListOrLen::Len(v.len()))
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                let List(items) = List::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+                Ok(ListOrLen::List(items))
+            }
+            ignore_others!(
+                Self::Value,
+                ListOrLen::Other,
+                [bool, i64, u64, f64, unit, map]
             );
         }
         d.deserialize_any(V(PhantomData))

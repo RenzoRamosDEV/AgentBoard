@@ -7,9 +7,12 @@
 //! (≈4 por token) y el modelo queda como `cursor-auto`, sin precio. Sirve para ver actividad,
 //! herramientas y turnos; el coste real lo da la suscripción de Cursor.
 
+use super::json::{ListOrLen, ListOrStr, Obj, Str, StrLen};
 use super::{prompt_intent, CallRec, Provider, Record, SessionRec, ToolUseRec, TurnRec};
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -177,7 +180,10 @@ impl Provider for Cursor {
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
-        let v: Value = serde_json::from_str(line)?;
+        // Sonda: solo el rol. Toda línea avanza el reloj del archivo, produzca filas o no.
+        let probe = serde_json::from_str::<Obj<Probe>>(line)?
+            .0
+            .unwrap_or_default();
         let mut states = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let st = states.entry(path.to_path_buf()).or_default();
         if st.session_id.is_empty() {
@@ -212,20 +218,15 @@ impl Provider for Cursor {
         // Sin fechas por línea: se ordenan a partir del mtime, un segundo por línea.
         let mut ts = st.base_ts + st.lines * 1000;
         let mut out = Vec::new();
-        let blocks: Vec<Value> = match &v["message"]["content"] {
-            Value::Array(a) => a.clone(),
-            Value::String(s) => vec![serde_json::json!({ "type": "text", "text": s })],
-            _ => vec![],
-        };
 
-        match v["role"].as_str() {
+        match probe.role.as_deref() {
             Some("user") if !st.is_subagent => {
-                let text: String = blocks
-                    .iter()
-                    .filter(|b| b["type"] == "text")
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let user: Obj<UserLine> = serde_json::from_str(line)?;
+                let text = user
+                    .0
+                    .and_then(|u| u.message.0)
+                    .map(|m| m.content.text())
+                    .unwrap_or_default();
                 let Some(query) = user_query(&text) else {
                     return Ok(vec![]);
                 }; // contexto inyectado, no un prompt
@@ -244,20 +245,34 @@ impl Provider for Cursor {
                 }));
             }
             Some("assistant") => {
+                let assistant: Obj<AssistantLine> = serde_json::from_str(line)?;
+                let content = assistant
+                    .0
+                    .and_then(|a| a.message.0)
+                    .map(|m| m.content)
+                    .unwrap_or_default();
                 let mut chars = 0usize;
                 let message_id = format!("{}:{}", st.session_id, st.lines);
-                for b in &blocks {
-                    match b["type"].as_str() {
-                        Some("text") | Some("reasoning") => {
-                            chars += b["text"].as_str().map(|t| t.len()).unwrap_or(0)
-                        }
+                let blocks = match content {
+                    AssistantContent::Blocks(blocks) => blocks,
+                    AssistantContent::Text(len) => {
+                        chars += len;
+                        Vec::new()
+                    }
+                    AssistantContent::Other => Vec::new(),
+                };
+                for b in blocks.iter().filter_map(|b| b.0.as_ref()) {
+                    match b.kind.as_deref() {
+                        Some("text") | Some("reasoning") => chars += b.text.0.unwrap_or(0),
                         Some("tool_use") | Some("tool-call") => {
-                            let raw = b["name"].as_str().or(b["toolName"].as_str()).unwrap_or("?");
+                            let raw = b.name.as_deref().or(b.tool_name.as_deref()).unwrap_or("?");
                             let tool = canonical_tool(raw).to_string();
-                            let args = if b["input"].is_object() {
-                                &b["input"]
+                            // Los argumentos se leen como `Value`: son pocos datos y su tamaño
+                            // serializado cuenta para la estimación de tokens.
+                            let args = if b.input.is_object() {
+                                &b.input
                             } else {
-                                &b["args"]
+                                &b.args
                             };
                             chars += args.to_string().len();
                             let target = [
@@ -273,11 +288,11 @@ impl Provider for Cursor {
                             .iter()
                             .find_map(|k| args[*k].as_str())
                             .map(|s| s.chars().take(500).collect::<String>());
-                            let call_id = b["id"]
-                                .as_str()
-                                .or(b["toolCallId"].as_str())
-                                .map(str::to_string)
-                                .unwrap_or_else(|| format!("{message_id}:{}", out.len()));
+                            let call_id =
+                                b.id.as_deref()
+                                    .or(b.tool_call_id.as_deref())
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| format!("{message_id}:{}", out.len()));
                             out.push(Record::ToolUse(ToolUseRec {
                                 call_id,
                                 message_id: message_id.clone(),
@@ -334,6 +349,123 @@ impl Provider for Cursor {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Probe<'a> {
+    #[serde(borrow)]
+    role: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserLine<'a> {
+    #[serde(borrow)]
+    message: Obj<UserMessage<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserMessage<'a> {
+    #[serde(borrow)]
+    content: UserContent<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserBlock<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    text: Str<'a>,
+}
+
+/// `message.content` del usuario: lista de bloques o texto suelto (un bloque de texto).
+#[derive(Debug, Default)]
+enum UserContent<'a> {
+    Blocks(Vec<Obj<UserBlock<'a>>>),
+    Text(Cow<'a, str>),
+    #[default]
+    Other,
+}
+
+impl UserContent<'_> {
+    /// Texto de los bloques de texto, unidos por espacios.
+    fn text(&self) -> String {
+        match self {
+            UserContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|b| b.0.as_ref())
+                .filter(|b| b.kind.as_deref() == Some("text"))
+                .filter_map(|b| b.text.as_deref())
+                .collect::<Vec<_>>()
+                .join(" "),
+            UserContent::Text(t) => t.to_string(),
+            UserContent::Other => String::new(),
+        }
+    }
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for UserContent<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        match ListOrStr::<Obj<UserBlock<'a>>>::deserialize(d)? {
+            ListOrStr::List(blocks) => Ok(UserContent::Blocks(blocks)),
+            ListOrStr::Str(text) => Ok(UserContent::Text(text)),
+            ListOrStr::Other => Ok(UserContent::Other),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AssistantLine<'a> {
+    #[serde(borrow)]
+    message: Obj<AssistantMessage<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AssistantMessage<'a> {
+    #[serde(borrow)]
+    content: AssistantContent<'a>,
+}
+
+/// `message.content` del asistente: del texto solo cuenta su longitud.
+#[derive(Debug, Default)]
+enum AssistantContent<'a> {
+    Blocks(Vec<Obj<AssistantBlock<'a>>>),
+    Text(usize),
+    #[default]
+    Other,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for AssistantContent<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        match ListOrLen::<Obj<AssistantBlock<'a>>>::deserialize(d)? {
+            ListOrLen::List(blocks) => Ok(AssistantContent::Blocks(blocks)),
+            ListOrLen::Len(len) => Ok(AssistantContent::Text(len)),
+            ListOrLen::Other => Ok(AssistantContent::Other),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AssistantBlock<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    text: StrLen,
+    #[serde(borrow)]
+    name: Str<'a>,
+    #[serde(rename = "toolName", borrow)]
+    tool_name: Str<'a>,
+    input: Value,
+    args: Value,
+    #[serde(borrow)]
+    id: Str<'a>,
+    #[serde(rename = "toolCallId", borrow)]
+    tool_call_id: Str<'a>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +486,97 @@ mod tests {
             )
         );
         assert_eq!(user_query("<user_info>solo contexto</user_info>"), None);
+    }
+
+    fn output_tokens(recs: &[Record]) -> i64 {
+        recs.iter()
+            .find_map(|r| match r {
+                Record::Call(c) => Some(c.output_tokens),
+                _ => None,
+            })
+            .unwrap_or(-1)
+    }
+
+    #[test]
+    fn los_tokens_estimados_no_cambian_al_no_copiar_el_texto() {
+        let p = Cursor::with_roots(vec![]);
+        let path = Path::new("/h/projects/-h-x/agent-transcripts/a/a.jsonl");
+        let texto = "línea con \\\"escapes\\\" y \\u00e9\\n".repeat(20_000);
+        let l = format!(
+            r#"{{"role":"assistant","message":{{"content":[{{"type":"text","text":"{texto}"}},{{"type":"reasoning","text":"pienso"}},{{"type":"tool_use","name":"shell","input":{{"command":"ls -la","n":1.50,"z":[1,{{"b":null}}]}}}},{{"type":"tool-call","toolName":"read","args":{{"path":"a.rs"}}}},{{"type":"tool_use","name":"grep","input":"no es objeto"}}]}}}}"#
+        );
+        let v: serde_json::Value = serde_json::from_str(&l).unwrap();
+        let blocks = v["message"]["content"].as_array().unwrap();
+        let esperado = blocks[0]["text"].as_str().unwrap().len()
+            + "pienso".len()
+            + blocks[2]["input"].to_string().len()
+            + blocks[3]["args"].to_string().len()
+            + "null".len();
+        let recs = p.parse_line(path, &l).unwrap();
+        assert_eq!(output_tokens(&recs), (esperado / CHARS_PER_TOKEN) as i64);
+        let targets: Vec<_> = recs
+            .iter()
+            .filter_map(|r| match r {
+                Record::ToolUse(t) => Some((t.tool.as_str(), t.target.as_deref())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            vec![
+                ("Bash", Some("ls -la")),
+                ("Read", Some("a.rs")),
+                ("Grep", None)
+            ]
+        );
+    }
+
+    #[test]
+    fn el_contenido_de_texto_suelto_cuenta_como_un_bloque() {
+        let p = Cursor::with_roots(vec![]);
+        let path = Path::new("/h/projects/-h-x/agent-transcripts/a/a.jsonl");
+        let recs = p
+            .parse_line(
+                path,
+                r#"{"role":"assistant","message":{"content":"12345678"}}"#,
+            )
+            .unwrap();
+        assert_eq!(output_tokens(&recs), 2);
+        let u =
+            r#"{"role":"user","message":{"content":"<user_query>arregla el fallo</user_query>"}}"#;
+        assert!(p
+            .parse_line(path, u)
+            .unwrap()
+            .iter()
+            .any(|r| matches!(r, Record::Turn(t) if t.intent == Some("debug"))));
+    }
+
+    #[test]
+    fn cada_linea_avanza_el_reloj_aunque_no_produzca_filas() {
+        let p = Cursor::with_roots(vec![]);
+        let path = Path::new("/h/projects/-h-x/agent-transcripts/a/a.jsonl");
+        let a = r#"{"role":"assistant","message":{"content":"1234"}}"#;
+        let ts = |recs: Vec<Record>| match &recs[0] {
+            Record::Session(s) => s.ts,
+            other => panic!("{other:?}"),
+        };
+        let t1 = ts(p.parse_line(path, a).unwrap());
+        assert!(p
+            .parse_line(path, r#"{"type":"turn_ended","x":[1,2]}"#)
+            .unwrap()
+            .is_empty());
+        assert!(p.parse_line(path, "[1]").unwrap().is_empty());
+        assert_eq!(ts(p.parse_line(path, a).unwrap()), t1 + 3000);
+        assert!(p.parse_line(path, "{roto").is_err());
+    }
+
+    #[test]
+    fn la_sonda_solo_lee_el_rol() {
+        let probe: Obj<Probe> = serde_json::from_str(
+            r#"{"role":"user","message":{"content":[{"type":"text","text":"x"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(probe.0.unwrap().role.as_deref(), Some("user"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ mod common;
 
 use agentboard_lib::{db, ingest, telemetry};
 use anyhow::{bail, Context, Result};
-use common::{LiveFile, Phase};
+use common::{median, LiveFile, Phase};
 use rusqlite::Connection;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -22,12 +22,7 @@ fn ms(d: Duration) -> String {
 }
 
 fn row(phase: &str, metric: &str, value: impl std::fmt::Display) {
-    println!("{phase:<10} | {metric:<32} | {value}");
-}
-
-fn median(mut v: Vec<Duration>) -> Duration {
-    v.sort();
-    v[v.len() / 2]
+    println!("{phase:<10} | {metric:<44} | {value}");
 }
 
 fn cold(
@@ -83,7 +78,7 @@ fn live(
         "refresco (mediana)",
         format!(
             "{} ({} × {} líneas)",
-            ms(median(times.clone())),
+            ms(median(&times)),
             args.repeat,
             args.live_lines
         ),
@@ -97,6 +92,13 @@ fn live(
             ms(*times.iter().max().unwrap_or(&total))
         ),
     );
+    if let Some((first, last)) = common::refresh_segments(&times) {
+        row(
+            "live",
+            "refresco (mediana primeros 20 / últimos 20)",
+            format!("{} / {}", ms(first), ms(last)),
+        );
+    }
     row("live", "registros nuevos", records);
     Ok(())
 }
@@ -111,7 +113,7 @@ fn timed<T>(f: impl Fn() -> Result<T>) -> Result<(Duration, Duration)> {
         f()?;
         warm.push(t.elapsed());
     }
-    Ok((first, median(warm)))
+    Ok((first, median(&warm)))
 }
 
 fn queries(conn: &Connection) -> Result<()> {
@@ -152,6 +154,11 @@ fn main() -> Result<()> {
         &providers,
         matches!(args.phase, Phase::Cold | Phase::All),
     )?;
+    if args.fingerprint {
+        for line in common::fingerprint(&conn)?.lines() {
+            row("huella", "", line);
+        }
+    }
     if matches!(args.phase, Phase::Live | Phase::All) {
         live(&mut conn, &providers, &args)?;
     }

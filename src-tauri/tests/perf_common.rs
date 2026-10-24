@@ -3,7 +3,7 @@
 #[path = "../benches/common/mod.rs"]
 mod common;
 
-use common::{live_lines, parse_args, vm_hwm_kib, Args, LiveFile, Phase};
+use common::{live_lines, parse_args, refresh_segments, vm_hwm_kib, Args, LiveFile, Phase};
 use std::path::PathBuf;
 
 fn args(list: &[&str]) -> Result<Args, String> {
@@ -24,7 +24,8 @@ fn valores_por_defecto() {
             fixtures: PathBuf::from("fx"),
             phase: Phase::All,
             live_lines: 1000,
-            repeat: 1
+            repeat: 1,
+            fingerprint: false,
         }
     );
 }
@@ -53,6 +54,44 @@ fn todas_las_opciones() {
             phase
         );
     }
+}
+
+#[test]
+fn opcion_de_huella() {
+    assert!(
+        args(&["--fixtures", "d", "--fingerprint"])
+            .unwrap()
+            .fingerprint
+    );
+    assert!(!args(&["--fixtures", "d"]).unwrap().fingerprint);
+}
+
+fn ms_list(range: std::ops::RangeInclusive<u64>) -> Vec<std::time::Duration> {
+    range.map(std::time::Duration::from_millis).collect()
+}
+
+fn tramos(range: std::ops::RangeInclusive<u64>) -> Option<(u64, u64)> {
+    refresh_segments(&ms_list(range)).map(|(a, b)| (a.as_millis() as u64, b.as_millis() as u64))
+}
+
+#[test]
+fn medianas_de_los_primeros_y_ultimos_20_refrescos() {
+    assert_eq!(tramos(1..=40), Some((11, 31)));
+    assert_eq!(tramos(1..=200), Some((11, 191)));
+    let mut desordenado = ms_list(1..=40);
+    desordenado.reverse();
+    let (a, b) = refresh_segments(&desordenado).unwrap();
+    assert_eq!((a.as_millis(), b.as_millis()), (31, 11));
+}
+
+#[test]
+fn con_menos_de_40_refrescos_usa_las_mitades() {
+    assert_eq!(tramos(1..=39), Some((10, 30)));
+    assert_eq!(tramos(1..=10), Some((3, 8)));
+    assert_eq!(tramos(1..=11), Some((3, 9)));
+    assert_eq!(tramos(1..=2), Some((1, 2)));
+    assert_eq!(tramos(1..=1), None);
+    assert_eq!(refresh_segments(&[]), None);
 }
 
 #[test]

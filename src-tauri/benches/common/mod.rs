@@ -13,6 +13,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// Fin de la ventana temporal de los fixtures (`WINDOW_END` en `scripts/gen-fixtures.py`).
 pub const WINDOW_END_MS: i64 = 1_788_220_800_000; // 2026-09-01T00:00:00Z
@@ -245,16 +246,18 @@ pub struct Args {
     pub phase: Phase,
     pub live_lines: usize,
     pub repeat: usize,
+    pub fingerprint: bool,
 }
 
 pub const USAGE: &str =
-    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|all] [--live-lines N] [--repeat R]";
+    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|all] [--live-lines N] [--repeat R] [--fingerprint]";
 
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut fixtures = None;
     let mut phase = Phase::All;
     let mut live_lines = 1000;
     let mut repeat = 1;
+    let mut fingerprint = false;
     let mut it = args.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("falta el valor de {flag}"));
@@ -271,6 +274,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
             }
             "--live-lines" => live_lines = positive(&flag, &value()?)?,
             "--repeat" => repeat = positive(&flag, &value()?)?,
+            "--fingerprint" => fingerprint = true,
             other => return Err(format!("argumento desconocido: {other}")),
         }
     }
@@ -279,7 +283,27 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
         phase,
         live_lines,
         repeat,
+        fingerprint,
     })
+}
+
+pub fn median(v: &[Duration]) -> Duration {
+    let mut v = v.to_vec();
+    v.sort();
+    v[v.len() / 2]
+}
+
+/// Refrescos que forman cada tramo de `refresh_segments`.
+pub const REFRESH_SEGMENT: usize = 20;
+
+/// Medianas del primer y del último tramo de refrescos (en el orden en que se midieron): los 20
+/// primeros y los 20 últimos, o las dos mitades si hay menos de 40. `None` con menos de 2.
+pub fn refresh_segments(times: &[Duration]) -> Option<(Duration, Duration)> {
+    let n = (times.len() / 2).min(REFRESH_SEGMENT);
+    if n == 0 {
+        return None;
+    }
+    Some((median(&times[..n]), median(&times[times.len() - n..])))
 }
 
 fn positive(flag: &str, raw: &str) -> Result<usize, String> {

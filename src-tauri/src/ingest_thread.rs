@@ -548,6 +548,45 @@ mod tests {
         assert_eq!(last, 5);
     }
 
+    fn corrupt() -> anyhow::Error {
+        anyhow::Error::new(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            Some("database disk image is malformed".into()),
+        ))
+        .context("falló la consulta")
+    }
+
+    #[test]
+    fn una_base_danada_se_reconstruye_y_la_app_sigue() {
+        assert!(db::is_corruption(&corrupt()));
+        assert!(!db::is_corruption(&anyhow::anyhow!("otro error")));
+        let (fx, storage) = fixture(&[("a.log", "m1\nm2\n")]);
+        let readers = readers_of(&storage);
+        let (tx, rx) = mpsc::channel();
+        let handle = IngestThread::spawn(
+            storage,
+            readers.clone(),
+            Vec::new,
+            fake(&fx),
+            Default::default(),
+            move |origen, stats| tx.send((origen, stats.records)).unwrap(),
+        );
+        handle.request(Origen::EscaneoInicial);
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 4));
+        let before = crate::commands::current(&readers).unwrap();
+        // Un lector se encuentra la base dañada: se pide reconstruir y se relee todo.
+        handle.report(&corrupt());
+        handle.report(&anyhow::anyhow!("un error cualquiera no reconstruye"));
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 4));
+        let after = crate::commands::current(&readers).unwrap();
+        assert!(!Arc::ptr_eq(&before, &after), "lectores nuevos");
+        assert_eq!(calls(&fx), 2);
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "una sola reconstrucción"
+        );
+    }
+
     #[test]
     fn un_trabajo_fallido_no_detiene_el_hilo() {
         let (fx, writer) = fixture(&[("a.log", "m1\n")]);

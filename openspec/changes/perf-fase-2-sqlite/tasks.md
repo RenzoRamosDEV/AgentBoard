@@ -67,7 +67,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 - [x] 10.1 Tests en rojo en `db.rs` (carpetas temporales, nunca la de datos real): (a) `Storage::open(Disco)` crea `cache.sqlite` con WAL y, en Unix, permisos `0600` (también `-wal`/`-shm`) y carpeta `0700`; (b) reabrir conserva datos y `file_state` y un segundo escaneo sin cambios no lee ningún archivo; (c) archivo con bytes basura, base truncada y `user_version` distinta se borran y se recrean vacíos sin error; (d) carpeta sin permiso de escritura → modo memoria con aviso; (e) `remove_legacy_db` borra `agentboard.db`/`agentburn.db` y sus auxiliares pero conserva `cache.sqlite` y la carpeta; verificar que fallan
 - [x] 10.2 Implementar `Storage`, `CacheMode`, validación y `remove_legacy_db` (D2); `lib.rs` abre la caché según `settings.memory_only`; verificar 10.1 y `cargo test --workspace` en verde
-- [ ] 10.3 Test en rojo: un error `SQLITE_CORRUPT` simulado en el escritor o en un lector encola `Job::Reconstruir` y la app sigue; verificar que falla; implementarlo y verificar en verde
+- [x] 10.3 Test en rojo: un error `SQLITE_CORRUPT` simulado en el escritor o en un lector encola `Job::Reconstruir` y la app sigue; verificar que falla; implementarlo y verificar en verde
 - [ ] 10.4 Ejecutar 1.2 también en modo disco (parámetro del test) y verificar que ambos modos dan el golden
 - [ ] 10.5 Medir MF con `--cache` sobre `200m` (presupuesto < 10 s); aplicar la regla D13 (estructural) y anotar las cifras
 - [ ] 10.6 Completar `perf_scan --cache` y `--phase warm` (D13); medir el arranque con 200 MB ya indexados (tres ejecuciones) y verificar < 1,5 s hasta los datos del Resumen; anotar las cifras

@@ -12,6 +12,7 @@
 //! precios por tramos de contexto. Los de Gemini son aproximados. Una fase posterior
 //! los actualizará desde LiteLLM sin reimportar.
 
+use crate::providers::CallRec;
 use crate::queries::Filter;
 use crate::settings::PriceOverride;
 use anyhow::Result;
@@ -117,6 +118,71 @@ pub fn seed_if_empty(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Coste de una llamada tal como lo guarda `calls` (migración 0005).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CallCost {
+    pub has_price: bool,
+    pub cost_usd: f64,
+    pub cache_savings_usd: f64,
+}
+
+/// La tabla `prices` en memoria, para que el escritor calcule el coste de cada llamada sin
+/// consultar la base. Misma fórmula y orden de operaciones que `derived::REFRESH_COSTS` (la de la
+/// vista de 0004), así que el resultado en coma flotante es idéntico.
+#[derive(Debug, Default)]
+pub struct PriceBook {
+    /// Por modelo, `(valid_from, precios)` de menor a mayor fecha.
+    by_model: HashMap<String, Vec<(i64, [f64; 5])>>,
+}
+
+impl PriceBook {
+    pub fn load(conn: &Connection) -> Result<Self> {
+        let mut book = Self::default();
+        let mut stmt = conn.prepare_cached(
+            "SELECT model, valid_from, input, output, cache_read, cache_write, cache_write_1h
+             FROM prices ORDER BY model, valid_from",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            book.by_model.entry(r.get(0)?).or_default().push((
+                r.get(1)?,
+                [r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?],
+            ));
+        }
+        Ok(book)
+    }
+
+    /// Precio vigente en `ts`: el de mayor `valid_from` que no sea posterior.
+    fn price(&self, model: &str, ts: i64) -> Option<&[f64; 5]> {
+        self.by_model
+            .get(model)?
+            .iter()
+            .rev()
+            .find(|(from, _)| *from <= ts)
+            .map(|(_, p)| p)
+    }
+
+    pub fn cost(&self, c: &CallRec) -> CallCost {
+        match self.price(&c.model, c.ts) {
+            Some(p) => CallCost {
+                has_price: true,
+                cost_usd: (c.input_tokens as f64 * p[0]
+                    + c.output_tokens as f64 * p[1]
+                    + c.cache_read as f64 * p[2]
+                    + (c.cache_write - c.cache_write_1h) as f64 * p[3]
+                    + c.cache_write_1h as f64 * p[4])
+                    / 1e6,
+                cache_savings_usd: c.cache_read as f64 * (p[0] - p[2]) / 1e6,
+            },
+            None => CallCost {
+                has_price: c.cost_reported.is_some(),
+                cost_usd: c.cost_reported.unwrap_or(0.0),
+                cache_savings_usd: 0.0,
+            },
+        }
+    }
+}
+
 /// Precio de un modelo desde una fecha: `[entrada, salida, lectura caché, escritura 5 min, 1 h]`.
 type PriceTable = BTreeMap<(String, i64), [f64; 5]>;
 
@@ -161,7 +227,8 @@ fn stored_prices(conn: &Connection) -> Result<PriceTable> {
 }
 
 /// Deja en `prices` los precios por defecto con los del usuario encima, tocando solo las filas
-/// que cambian: los disparadores recalculan el coste de las llamadas de esos modelos y nada más.
+/// que cambian: los disparadores dejan pendiente el coste de las llamadas de esos modelos y
+/// `derived::refresh` lo recalcula en la misma transacción.
 #[tracing::instrument(level = "debug", skip_all)]
 pub fn apply_overrides(conn: &Connection, overrides: &[PriceOverride]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
@@ -186,6 +253,7 @@ pub fn apply_overrides(conn: &Connection, overrides: &[PriceOverride]) -> Result
         tx.prepare_cached(sql)?
             .execute(params![model, from, p[0], p[1], p[2], p[3], p[4]])?;
     }
+    crate::derived::refresh(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -307,7 +375,7 @@ pub fn normalize_model(raw: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::db;
 
@@ -326,6 +394,7 @@ mod tests {
     }
 
     fn cost(conn: &Connection, id: &str) -> f64 {
+        crate::derived::refresh(conn).unwrap();
         conn.query_row(
             "SELECT cost_usd FROM call_costs WHERE message_id = ?1",
             [id],
@@ -601,7 +670,8 @@ mod tests {
             .unwrap()
     }
 
-    fn assert_cost_matches_0004(conn: &Connection) {
+    pub(crate) fn assert_cost_matches_0004(conn: &Connection) {
+        crate::derived::refresh(conn).unwrap();
         let stored = rows(
             conn,
             "SELECT message_id, has_price, cost_usd, cache_savings_usd FROM calls ORDER BY message_id",
@@ -610,7 +680,8 @@ mod tests {
     }
 
     /// Espía: cuenta los recálculos de coste por modelo y las escrituras en `prices`.
-    fn spy(conn: &Connection) {
+    pub(crate) fn spy(conn: &Connection) {
+        crate::derived::refresh(conn).unwrap();
         conn.execute_batch(
             "CREATE TEMP TABLE recalc (model TEXT);
              CREATE TEMP TABLE price_writes (n INTEGER);
@@ -627,7 +698,8 @@ mod tests {
     }
 
     /// (recálculos por modelo, escrituras en precios) desde la última llamada; vacía el espía.
-    fn spied(conn: &Connection) -> (Vec<(String, i64)>, i64) {
+    pub(crate) fn spied(conn: &Connection) -> (Vec<(String, i64)>, i64) {
+        crate::derived::refresh(conn).unwrap();
         let mut stmt = conn
             .prepare("SELECT model, COUNT(*) FROM recalc GROUP BY 1 ORDER BY 1")
             .unwrap();
@@ -754,6 +826,59 @@ mod tests {
         );
         assert_eq!(writes, 2);
         assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn el_libro_de_precios_calcula_lo_mismo_que_la_formula_sql() {
+        let conn = db::open_in_memory().unwrap();
+        varied_calls(&conn);
+        conn.execute_batch(
+            "INSERT INTO prices (model, valid_from, input, output, cache_read, cache_write, cache_write_1h)
+               VALUES ('claude-opus-4-5', 2500, 0.1, 0.7, 0.03, 1.1, 2.3);
+             INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens, cache_read, cache_write, cache_write_1h, cost_reported)
+               VALUES ('j', 's', 2500, 'claude-opus-4-5', 3, 5, 7, 11, 2, 0.25),
+                      ('k', 's', 2499, 'claude-opus-4-5', 123456789, 98765, 4321, 999, 333, NULL);",
+        )
+        .unwrap();
+        let book = PriceBook::load(&conn).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT message_id, ts, model, input_tokens, output_tokens, cache_read, cache_write,
+                        cache_write_1h, cost_reported FROM calls ORDER BY message_id",
+            )
+            .unwrap();
+        let computed: Vec<CostRow> = stmt
+            .query_map([], |r| {
+                let c = crate::providers::CallRec {
+                    message_id: r.get(0)?,
+                    ts: r.get(1)?,
+                    model: r.get(2)?,
+                    input_tokens: r.get(3)?,
+                    output_tokens: r.get(4)?,
+                    cache_read: r.get(5)?,
+                    cache_write: r.get(6)?,
+                    cache_write_1h: r.get(7)?,
+                    cost_reported: r.get(8)?,
+                    ..Default::default()
+                };
+                let cost = book.cost(&c);
+                Ok((
+                    c.message_id,
+                    cost.has_price,
+                    cost.cost_usd,
+                    cost.cache_savings_usd,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let expected = rows(&conn, COSTE_0004);
+        assert_eq!(computed.len(), 11);
+        for (c, e) in computed.iter().zip(&expected) {
+            assert_eq!((&c.0, c.1), (&e.0, e.1));
+            assert_eq!(c.2.to_bits(), e.2.to_bits(), "coste de {}", c.0);
+            assert_eq!(c.3.to_bits(), e.3.to_bits(), "ahorro de {}", c.0);
+        }
     }
 
     #[test]

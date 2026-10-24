@@ -402,6 +402,7 @@ mod tests {
                ('m2', 's2', {ts2}, 'modelo-fantasma', 1000000);"
         ))
         .unwrap();
+        agentboard_lib::derived::refresh(&conn).unwrap();
         conn
     }
 

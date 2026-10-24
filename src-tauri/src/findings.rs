@@ -727,6 +727,7 @@ mod tests {
             params![id, s, ts, model, input, cache_read, turn],
         )
         .unwrap();
+        crate::derived::refresh(c).unwrap();
     }
 
     #[test]
@@ -931,6 +932,7 @@ mod tests {
             [],
         )
         .unwrap();
+        crate::derived::refresh(&c).unwrap();
         let all = compute(&c, &Filter::default(), 100 * DAY, "UTC").unwrap();
         assert_eq!(all.last().unwrap().severity, "good");
         assert!(all.iter().any(|x| x.kind == "cache_savings"));

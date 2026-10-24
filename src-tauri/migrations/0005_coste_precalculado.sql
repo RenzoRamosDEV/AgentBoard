@@ -1,116 +1,36 @@
--- Coste, ahorro por caché y «tiene precio» de cada llamada, guardados al escribirla con el precio
--- vigente en su fecha (misma fórmula y orden de operaciones que la vista de 0004). Los
--- disparadores los mantienen en todos los caminos de escritura; un cambio de precios recalcula
--- solo las llamadas de ese modelo.
+-- Coste, ahorro por caché y «tiene precio» de cada llamada, guardados con el precio vigente en su
+-- fecha (misma fórmula y orden de operaciones que la vista de 0004, en `derived.rs` y en
+-- `pricing::PriceBook`). El escritor de la ingesta los calcula antes de insertar. Una llamada que
+-- cambia de valores o un cambio de precios los deja pendientes (`has_price` nulo) y
+-- `derived::refresh` los recalcula al final de la misma transacción, solo para esas filas. No hay
+-- disparadores de inserción en `calls`: harían que cada inserción del escritor abriera un
+-- subdiario de sentencia. Sin índice por modelo: un cambio de precios (raro) recorre `calls`.
 
-ALTER TABLE calls ADD COLUMN has_price INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calls ADD COLUMN has_price INTEGER;
 ALTER TABLE calls ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;
 ALTER TABLE calls ADD COLUMN cache_savings_usd REAL NOT NULL DEFAULT 0;
-CREATE INDEX calls_model_ts ON calls(model, ts);
+CREATE INDEX calls_cost_pending ON calls(has_price) WHERE has_price IS NULL;
 
--- La fórmula se repite en cada disparador (SQLite no tiene funciones de usuario en SQL); los
--- tests comparan todos los caminos con la fórmula de 0004.
-CREATE TRIGGER calls_cost_insert AFTER INSERT ON calls BEGIN
-  UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-    SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-      CASE WHEN p.model IS NOT NULL THEN (
-        calls.input_tokens * p.input +
-        calls.output_tokens * p.output +
-        calls.cache_read * p.cache_read +
-        (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-        calls.cache_write_1h * p.cache_write_1h
-      ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-      COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-    FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-     AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                         WHERE model = calls.model AND valid_from <= calls.ts))
-  WHERE rowid = NEW.rowid;
-END;
-
-CREATE TRIGGER calls_cost_update
+CREATE TRIGGER calls_cost_stale
 AFTER UPDATE OF ts, model, input_tokens, output_tokens, cache_read, cache_write, cache_write_1h, cost_reported
-ON calls BEGIN
-  UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-    SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-      CASE WHEN p.model IS NOT NULL THEN (
-        calls.input_tokens * p.input +
-        calls.output_tokens * p.output +
-        calls.cache_read * p.cache_read +
-        (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-        calls.cache_write_1h * p.cache_write_1h
-      ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-      COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-    FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-     AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                         WHERE model = calls.model AND valid_from <= calls.ts))
-  WHERE rowid = NEW.rowid;
+ON calls
+WHEN NEW.ts IS NOT OLD.ts OR NEW.model IS NOT OLD.model OR NEW.input_tokens IS NOT OLD.input_tokens
+  OR NEW.output_tokens IS NOT OLD.output_tokens OR NEW.cache_read IS NOT OLD.cache_read
+  OR NEW.cache_write IS NOT OLD.cache_write OR NEW.cache_write_1h IS NOT OLD.cache_write_1h
+  OR NEW.cost_reported IS NOT OLD.cost_reported
+BEGIN
+  UPDATE calls SET has_price = NULL WHERE rowid = NEW.rowid;
 END;
 
 CREATE TRIGGER prices_cost_insert AFTER INSERT ON prices BEGIN
-  UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-    SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-      CASE WHEN p.model IS NOT NULL THEN (
-        calls.input_tokens * p.input +
-        calls.output_tokens * p.output +
-        calls.cache_read * p.cache_read +
-        (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-        calls.cache_write_1h * p.cache_write_1h
-      ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-      COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-    FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-     AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                         WHERE model = calls.model AND valid_from <= calls.ts))
-  WHERE model = NEW.model;
+  UPDATE calls SET has_price = NULL WHERE model = NEW.model;
 END;
-
 CREATE TRIGGER prices_cost_delete AFTER DELETE ON prices BEGIN
-  UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-    SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-      CASE WHEN p.model IS NOT NULL THEN (
-        calls.input_tokens * p.input +
-        calls.output_tokens * p.output +
-        calls.cache_read * p.cache_read +
-        (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-        calls.cache_write_1h * p.cache_write_1h
-      ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-      COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-    FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-     AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                         WHERE model = calls.model AND valid_from <= calls.ts))
-  WHERE model = OLD.model;
+  UPDATE calls SET has_price = NULL WHERE model = OLD.model;
 END;
-
 CREATE TRIGGER prices_cost_update AFTER UPDATE ON prices BEGIN
-  UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-    SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-      CASE WHEN p.model IS NOT NULL THEN (
-        calls.input_tokens * p.input +
-        calls.output_tokens * p.output +
-        calls.cache_read * p.cache_read +
-        (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-        calls.cache_write_1h * p.cache_write_1h
-      ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-      COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-    FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-     AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                         WHERE model = calls.model AND valid_from <= calls.ts))
-  WHERE model IN (OLD.model, NEW.model);
+  UPDATE calls SET has_price = NULL WHERE model IN (OLD.model, NEW.model);
 END;
-
--- Filas ya guardadas (bases en archivo de versiones anteriores).
-UPDATE calls SET (has_price, cost_usd, cache_savings_usd) = (
-  SELECT p.model IS NOT NULL OR calls.cost_reported IS NOT NULL,
-    CASE WHEN p.model IS NOT NULL THEN (
-      calls.input_tokens * p.input +
-      calls.output_tokens * p.output +
-      calls.cache_read * p.cache_read +
-      (calls.cache_write - calls.cache_write_1h) * p.cache_write +
-      calls.cache_write_1h * p.cache_write_1h
-    ) / 1e6 ELSE COALESCE(calls.cost_reported, 0) END,
-    COALESCE(calls.cache_read * (p.input - p.cache_read) / 1e6, 0)
-  FROM (SELECT 1) LEFT JOIN prices p ON p.model = calls.model
-   AND p.valid_from = (SELECT MAX(valid_from) FROM prices
-                       WHERE model = calls.model AND valid_from <= calls.ts));
 
 DROP VIEW call_costs;
 CREATE VIEW call_costs AS

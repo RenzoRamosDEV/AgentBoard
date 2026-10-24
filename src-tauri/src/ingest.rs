@@ -2,7 +2,8 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
-use crate::providers::{Provider, Record, Source};
+use crate::pricing::PriceBook;
+use crate::providers::{CallRec, Provider, Record, Source};
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -319,10 +320,11 @@ fn write_batch<D: DbSink>(
     }
     db.with(|conn| {
         let mut tx = conn.transaction()?;
+        let prices = PriceBook::load(&tx)?;
         for (i, parsed) in batch.drain(..) {
             let job = &jobs[i];
             let sp = tx.savepoint()?;
-            match write_file(&sp, providers[job.provider].as_ref(), &parsed) {
+            match write_file(&sp, providers[job.provider].as_ref(), &parsed, &prices) {
                 Ok(r) => {
                     sp.commit()?;
                     stats.files += 1;
@@ -335,6 +337,7 @@ fn write_batch<D: DbSink>(
                 }
             }
         }
+        crate::derived::refresh(&tx)?;
         tx.commit()?;
         Ok(())
     })
@@ -557,6 +560,7 @@ pub fn write_file(
     conn: &Connection,
     provider: &dyn Provider,
     parsed: &ParsedFile,
+    prices: &PriceBook,
 ) -> Result<FileResult> {
     ensure_agent(conn, provider)?;
     let mut result = FileResult {
@@ -564,7 +568,7 @@ pub fn write_file(
         bad_lines: parsed.bad_lines,
         ..Default::default()
     };
-    let mut w = Writer::new(conn, provider.id());
+    let mut w = Writer::new(conn, provider.id(), prices);
     for rec in &parsed.records {
         if let Some(id) = w.apply(rec)? {
             result.new_tool_calls.push(id);
@@ -616,7 +620,8 @@ pub fn ingest_file(
         return Ok(FileResult::default());
     };
     let tx = conn.transaction()?;
-    let result = write_file(&tx, provider, &parsed)?;
+    let result = write_file(&tx, provider, &parsed, &PriceBook::load(&tx)?)?;
+    crate::derived::refresh(&tx)?;
     tx.commit()?;
     Ok(result)
 }
@@ -671,19 +676,30 @@ const MERGE_SESSION: &str =
        project_id = COALESCE(project_id, excluded.project_id),
        is_subagent = MAX(is_subagent, excluded.is_subagent)";
 
-const UPSERT_CALL: &str = "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
-        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id)
+/// Inserta una llamada nueva con su coste ya calculado por `PriceBook` (sin disparadores de
+/// inserción en `calls`: cada inserción es una sola escritura, sin subdiario de sentencia).
+const INSERT_CALL: &str = "INSERT OR IGNORE INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
+        cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id,
+        has_price, cost_usd, cache_savings_usd)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
-       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
-     ON CONFLICT(message_id) DO UPDATE SET
-       ts = MIN(ts, excluded.ts), model = excluded.model,
-       input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
-       cache_read = excluded.cache_read, cache_write = excluded.cache_write,
-       cache_write_1h = excluded.cache_write_1h, reasoning_tokens = excluded.reasoning_tokens,
-       activity = COALESCE(excluded.activity, activity),
-       is_sidechain = excluded.is_sidechain, agent_id = COALESCE(excluded.agent_id, agent_id),
-       cost_reported = COALESCE(excluded.cost_reported, cost_reported),
-       turn_id = COALESCE(turn_id, excluded.turn_id)";
+       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1), ?15, ?16, ?17)";
+
+/// Una llamada ya guardada que vuelve a llegar (Claude Code repite el mensaje en cada bloque):
+/// se combina como lo haría un `UPSERT`, pero solo se escribe si algo cambia.
+const UPDATE_CALL: &str = "UPDATE calls SET
+       ts = MIN(ts, ?3), model = ?4,
+       input_tokens = ?5, output_tokens = ?6, cache_read = ?7, cache_write = ?8,
+       cache_write_1h = ?9, reasoning_tokens = ?10,
+       activity = COALESCE(?11, activity),
+       is_sidechain = ?12, agent_id = COALESCE(?13, agent_id),
+       cost_reported = COALESCE(?14, cost_reported),
+       turn_id = COALESCE(turn_id, (SELECT id FROM turns WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1))
+     WHERE message_id = ?1 AND (ts > ?3 OR model IS NOT ?4
+       OR input_tokens IS NOT ?5 OR output_tokens IS NOT ?6 OR cache_read IS NOT ?7
+       OR cache_write IS NOT ?8 OR cache_write_1h IS NOT ?9 OR reasoning_tokens IS NOT ?10
+       OR (?11 IS NOT NULL AND activity IS NOT ?11) OR is_sidechain IS NOT ?12
+       OR (?13 IS NOT NULL AND agent_id IS NOT ?13) OR (?14 IS NOT NULL AND cost_reported IS NOT ?14)
+       OR (turn_id IS NULL AND EXISTS (SELECT 1 FROM turns WHERE session_id = ?2 AND ts <= ?3)))";
 
 const UPDATE_SESSION_MODEL: &str = "UPDATE sessions SET model = ?1 WHERE id = ?2";
 
@@ -710,6 +726,7 @@ const INSERT_EVENT: &str =
 /// Aplica registros a la base dentro de una transacción.
 struct Writer<'a> {
     tx: &'a Connection,
+    prices: &'a PriceBook,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
     /// Sesiones ya escritas en este archivo, con lo acumulado de sus registros siguientes.
@@ -719,17 +736,23 @@ struct Writer<'a> {
     /// Por sesión, el `ts` mínimo de los turnos aplicados: solo las filas sin turno desde ahí
     /// pueden ganar uno.
     new_turns: HashMap<String, i64>,
+    /// Llamadas ya escritas en este archivo con sus últimos valores: Claude Code repite el mismo
+    /// mensaje en una línea por bloque de contenido y las repeticiones iguales no se reescriben
+    /// (un turno que llegue entre medias lo asigna `backfill_turns` al terminar el archivo).
+    calls_seen: HashMap<String, CallRec>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(tx: &'a Connection, agent_id: &'static str) -> Self {
+    fn new(tx: &'a Connection, agent_id: &'static str, prices: &'a PriceBook) -> Self {
         Self {
             tx,
+            prices,
             agent_id,
             projects: HashMap::new(),
             sessions: HashMap::new(),
             models: HashMap::new(),
             new_turns: HashMap::new(),
+            calls_seen: HashMap::new(),
         }
     }
 
@@ -810,9 +833,11 @@ impl<'a> Writer<'a> {
                 }
             }
             Record::Call(c) => {
-                self.run(
-                    UPSERT_CALL,
-                    params![
+                let seen = self.calls_seen.get(&c.message_id);
+                if seen != Some(c) {
+                    let written = seen.is_some();
+                    let cost = self.prices.cost(c);
+                    let values = params![
                         c.message_id,
                         c.session_id,
                         c.ts,
@@ -826,9 +851,16 @@ impl<'a> Writer<'a> {
                         c.activity,
                         c.is_sidechain,
                         c.agent_id,
-                        c.cost_reported
-                    ],
-                )?;
+                        c.cost_reported,
+                        cost.has_price,
+                        cost.cost_usd,
+                        cost.cache_savings_usd
+                    ];
+                    if written || self.run(INSERT_CALL, values)? == 0 {
+                        self.run(UPDATE_CALL, &values[..14])?;
+                    }
+                    self.calls_seen.insert(c.message_id.clone(), c.clone());
+                }
                 if !c.is_sidechain {
                     self.models.insert(c.session_id.clone(), c.model.clone());
                 }
@@ -974,6 +1006,81 @@ mod tests {
         let distinct: std::collections::HashSet<&str> =
             log.iter().map(|e| e.sql.as_str()).collect();
         (log.iter().filter(|e| e.compiled).count(), distinct.len())
+    }
+
+    #[test]
+    fn el_escritor_guarda_el_coste_de_la_formula_de_0004() {
+        let (_d, file, p, mut conn) = setup();
+        let haiku =
+            line("h", 7, "2026-09-25T10:01:00Z").replace("claude-sonnet-4-5", "claude-haiku-4-5");
+        let unknown = line("x", 7, "2026-09-25T10:02:00Z").replace("claude-sonnet-4-5", "modelo-x");
+        let body = [line("a", 100, "2026-09-25T10:00:00Z"), haiku, unknown].join("\n") + "\n";
+        fs::write(&file, body).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        crate::pricing::tests::assert_cost_matches_0004(&conn);
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", line("a", 300, "2026-09-25T09:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        crate::pricing::tests::assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn releer_una_llamada_igual_no_recalcula_su_coste() {
+        let (_d, file, p, mut conn) = setup();
+        fs::write(&file, line("a", 100, "2026-09-25T10:00:00Z") + "\n").unwrap();
+        crate::pricing::tests::spy(&conn);
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(
+            crate::pricing::tests::spied(&conn).0,
+            vec![],
+            "la inserción ya trae el coste"
+        );
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", line("a", 100, "2026-09-25T10:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(
+            crate::pricing::tests::spied(&conn).0,
+            vec![],
+            "misma llamada otra vez"
+        );
+        writeln!(f, "{}", line("a", 101, "2026-09-25T10:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(
+            crate::pricing::tests::spied(&conn).0,
+            vec![("claude-sonnet-4-5".to_string(), 1)],
+            "cambian los tokens"
+        );
+        crate::pricing::tests::assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn un_mensaje_repetido_en_el_mismo_archivo_se_escribe_una_vez() {
+        let (_d, file, p, mut conn) = setup();
+        let body = [
+            line("a", 100, "2026-09-25T10:00:00Z"),
+            line("a", 100, "2026-09-25T10:00:00Z"),
+            line("a", 100, "2026-09-25T10:00:00Z"),
+            line("a", 120, "2026-09-25T10:00:00Z"),
+        ]
+        .join("\n")
+            + "\n";
+        fs::write(&file, body).unwrap();
+        let log = db::trace::start(&conn);
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let log = db::trace::take(log);
+        let runs = |prefix: &str| {
+            log.iter()
+                .filter(|e| e.sql.trim_start().starts_with(prefix))
+                .count()
+        };
+        assert_eq!(runs("INSERT OR IGNORE INTO calls"), 1);
+        assert_eq!(
+            runs("UPDATE calls SET\n"),
+            1,
+            "solo cuando cambian los tokens"
+        );
+        assert_eq!(count(&conn, "SELECT output_tokens FROM calls"), 120);
+        crate::pricing::tests::assert_cost_matches_0004(&conn);
     }
 
     #[test]

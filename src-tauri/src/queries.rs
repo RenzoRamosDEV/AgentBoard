@@ -560,6 +560,7 @@ pub(crate) mod testdata {
             )
             .unwrap();
         }
+        crate::derived::refresh(conn).unwrap();
     }
 }
 
@@ -635,6 +636,7 @@ mod tests {
             [],
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let s = summary(
             &conn,
             &Filter {

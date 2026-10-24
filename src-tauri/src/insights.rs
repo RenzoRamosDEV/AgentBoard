@@ -608,6 +608,7 @@ mod tests {
                       ('m2','s',1600,'claude-sonnet-4-5',1000000,0,NULL);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let f = Filter {
             from: Some(1000),
             to: Some(2000),

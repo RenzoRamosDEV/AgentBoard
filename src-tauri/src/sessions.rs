@@ -752,6 +752,7 @@ mod tests {
              INSERT INTO events (session_id, ts, kind) VALUES ('s1', 3000, 'compaction');",
         )
         .unwrap();
+        crate::derived::refresh(conn).unwrap();
     }
 
     #[test]
@@ -787,6 +788,7 @@ mod tests {
                VALUES ('mn','sn',1500,'claude-sonnet-4-5',1000000,0);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let d = project_detail(&conn, "", &Filter::default(), "UTC").unwrap();
         assert!(d.project.cost_usd > 0.0);
         assert!(!d.daily.is_empty(), "la serie diaria no puede venir vacía");
@@ -871,6 +873,7 @@ mod tests {
              INSERT INTO calls (message_id,session_id,ts,model,input_tokens,output_tokens) VALUES ('m6','s4',6000,'claude-haiku-4-5',1000000,0),('m7','s5',8000,'claude-haiku-4-5',10,0);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let ps = list_projects(&conn, &Filter::default()).unwrap();
         let web = ps.iter().find(|p| p.key == "/w").unwrap();
         assert_eq!(web.name, "web", "nombre del repo, no del worktree");

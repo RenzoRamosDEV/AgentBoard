@@ -3,6 +3,7 @@
 pub mod alerts;
 pub mod commands;
 pub mod db;
+pub mod derived;
 pub mod findings;
 pub mod ingest;
 pub mod ingest_thread;

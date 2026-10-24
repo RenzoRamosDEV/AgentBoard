@@ -40,6 +40,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     configure(&conn)?;
     migrate(&conn)?;
     crate::pricing::seed_if_empty(&conn)?;
+    crate::derived::refresh(&conn)?;
     Ok(conn)
 }
 
@@ -49,6 +50,7 @@ pub fn open_in_memory() -> Result<Connection> {
     configure(&conn)?;
     migrate(&conn)?;
     crate::pricing::seed_if_empty(&conn)?;
+    crate::derived::refresh(&conn)?;
     Ok(conn)
 }
 
@@ -84,7 +86,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 pub mod trace {
     use rusqlite::{ffi, Connection};
-    use std::ffi::{c_int, c_uint, c_void, CStr};
+    use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
     use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq)]
@@ -99,8 +101,17 @@ pub mod trace {
         _mask: c_uint,
         ctx: *mut c_void,
         stmt: *mut c_void,
-        _sql: *mut c_void,
+        text: *mut c_void,
     ) -> c_int {
+        // Al entrar en un disparador SQLite avisa con la sentencia de fuera y el texto
+        // «-- TRIGGER nombre»: no es otra ejecución de esa sentencia.
+        if !text.is_null()
+            && CStr::from_ptr(text as *const c_char)
+                .to_bytes()
+                .starts_with(b"--")
+        {
+            return 0;
+        }
         let log = &*(ctx as *const Log);
         let stmt = stmt as *mut ffi::sqlite3_stmt;
         let sql = CStr::from_ptr(ffi::sqlite3_sql(stmt))

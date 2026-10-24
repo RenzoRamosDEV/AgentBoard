@@ -132,4 +132,24 @@ lista ordenada de trabajos  (i, Result<ParsedFile>) por          Writer + backfi
 
 ## Desviaciones durante la implementación
 
-- Partida: pendiente (tarea 1.6: huella de `200m` y cifras de partida).
+- **Partida** (tarea 1.6, commit `5bb39eb`, release, `perf_scan --fixtures target/perf-fixtures/200m --phase live --repeat 200`, tres ejecuciones; load average 4,4 / 5,6 / 3,8, máquina mucho menos cargada que en la Fase 0):
+  - Escaneo frío 200 MB: 17,6 / 17,8 / 17,0 s (mediana **17,6 s**; Fase 0: 15,5–16,9 s).
+  - Refresco en vivo, mediana de 200: 548 / 546 / 649 ms (mediana **548 ms**; Fase 0, perfil `profiling` bajo `perf`: 515 ms); min–max 142–1 314 ms.
+  - Primeros 20 / últimos 20: 242/858, 184/874, 193/818 ms (crece ×3,6–4,7).
+  - RSS pico (con 200 refrescos): 166 MiB.
+  - Las cifras están en el rango de `BASELINE.md` (frío ~5 % por encima de su máximo; vivo coherente con la mediana de 200 de la Fase 0).
+  - Huella de `200m` (debe coincidir al final, tarea 10.2):
+
+    ```
+    agente claude-code: sesiones 152, llamadas 41072, herramientas 32565, turnos 356, eventos 0, tokens 1045609/61749037/3190490692/103223889/103223889/10258935, coste 1970.383507400
+    agente codex: sesiones 100, llamadas 5742, herramientas 5742, turnos 43, eventos 0, tokens 175866400/5782556/174005671/0/0/1440457, coste 299.409268875
+    agente copilot: sesiones 91, llamadas 8555, herramientas 8555, turnos 71, eventos 0, tokens 129964193/6437151/256017807/0/0/0, coste 464.396327350
+    agente cursor: sesiones 138, llamadas 11959, herramientas 8530, turnos 3429, eventos 0, tokens 0/1454384/0/0/0/0, coste 0.000000000
+    agente gemini: sesiones 67, llamadas 6558, herramientas 9767, turnos 6558, eventos 0, tokens 132195308/7586157/133549191/0/0/976828, coste 177.179542175
+    tabla calls: 73886 filas, fnv e7439477c4491878
+    tabla tool_calls: 65159 filas, fnv 8162a27a8efce111
+    tabla turns: 10457 filas, fnv c1c72b8c67a4373b
+    tabla sessions: 548 filas, fnv 77129075c09dce09
+    tabla projects: 40 filas, fnv 6e7d6f2e8f56231b
+    tabla events: 0 filas, fnv cbf29ce484222325
+    ```

@@ -11,7 +11,7 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 - [x] 1.3 Escribir `src-tauri/tests/equivalencia_ingesta.rs` (fixture sintético `2m` semilla 11 con los cinco proveedores JSONL, y `tests/fixtures` con todos los proveedores incluido OpenCode) contra `tests/golden/ingesta_2m.txt` y `tests/golden/ingesta_fixtures.txt`, con `UPDATE_GOLDEN=1` para grabar; verificar que falla sin golden, grabarlos **en el código actual sin optimizaciones** y verificar que pasa en verde
 - [x] 1.4 Test en rojo en `src-tauri/tests/perf_common.rs`: `parse_args` acepta `--fingerprint`, y la función de resumen de refrescos devuelve la mediana de los primeros 20 y de los últimos 20 (y con menos de 40 refrescos usa las mitades); verificar que falla
 - [x] 1.5 Añadir a `perf_scan` la opción `--fingerprint` (imprime la huella tras el frío) y las filas `refresco (mediana primeros 20 / últimos 20)` en la fase `live`; verificar 1.4 en verde y que `perf_scan --fixtures target/perf-fixtures/50m --phase live --repeat 40 --fingerprint` imprime ambas cosas
-- [ ] 1.6 Medición de partida (M) con `--fingerprint` y `--phase live --repeat 200` sobre `200m`; guardar la huella de `200m` en design.md («Desviaciones…» → «Partida») y verificar que las cifras están en el rango de `BASELINE.md`
+- [x] 1.6 Medición de partida (M) con `--fingerprint` y `--phase live --repeat 200` sobre `200m`; guardar la huella de `200m` en design.md («Desviaciones…» → «Partida») y verificar que las cifras están en el rango de `BASELINE.md`
 
 ## 2. Escritor con sentencias en caché (cuello #1)
 

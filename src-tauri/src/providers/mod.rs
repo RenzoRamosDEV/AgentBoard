@@ -5,6 +5,7 @@ pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod gemini;
+pub mod json;
 pub mod opencode;
 
 use anyhow::Result;

@@ -1,11 +1,14 @@
 //! Sesiones de Claude Code: `~/.claude/projects/<proyecto>/<sesión>.jsonl`.
 
+use super::json::{Bool, Int, List, Obj, Str};
 use super::{
     classify_tool, parse_ts, prompt_intent, CallRec, EventRec, Provider, Record, SessionRec,
     ToolUseRec, TurnRec,
 };
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -69,17 +72,19 @@ impl Provider for ClaudeCode {
     }
 
     fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
-        let v: Value = serde_json::from_str(line)?;
-        let Some(session_id) = v["sessionId"].as_str() else {
+        // Sonda: solo la envoltura; `message` y el resto se saltan sin interpretarlos.
+        let Obj(Some(probe)) = serde_json::from_str::<Obj<Probe>>(line)? else {
             return Ok(vec![]);
         };
-        let Some(ts) = v["timestamp"].as_str().and_then(parse_ts) else {
+        let Some(session_id) = probe.session_id.as_deref() else {
             return Ok(vec![]);
         };
-        let session_id = session_id.to_string();
+        let Some(ts) = probe.timestamp.as_deref().and_then(parse_ts) else {
+            return Ok(vec![]);
+        };
         let cwd = {
             let mut map = self.first_cwd.lock().unwrap_or_else(|e| e.into_inner());
-            match (map.get(path), v["cwd"].as_str()) {
+            match (map.get(path), probe.cwd.as_deref()) {
                 (Some(first), _) => Some(first.clone()),
                 (None, Some(c)) => {
                     map.insert(path.to_path_buf(), c.to_string());
@@ -89,22 +94,33 @@ impl Provider for ClaudeCode {
             }
         };
         let mut out = vec![Record::Session(SessionRec {
-            id: session_id.clone(),
+            id: session_id.to_string(),
             cwd,
-            git_branch: v["gitBranch"]
-                .as_str()
+            git_branch: probe
+                .git_branch
+                .as_deref()
                 .filter(|b| !b.is_empty())
                 .map(str::to_string),
             ts,
             is_subagent: false,
         })];
 
-        match v["type"].as_str() {
-            Some("assistant") => parse_assistant(&v, &session_id, ts, &mut out),
-            Some("user") => parse_user(&v, &session_id, ts, &mut out),
-            Some("system") if v["subtype"].as_str() == Some("compact_boundary") => {
+        match probe.kind.as_deref() {
+            Some("assistant") => {
+                if let Obj(Some(a)) = serde_json::from_str(line)? {
+                    parse_assistant(&a, session_id, ts, &mut out);
+                }
+            }
+            Some("user") => {
+                if let Obj(Some(u)) = serde_json::from_str(line)? {
+                    parse_user(&u, session_id, ts, &mut out);
+                }
+            }
+            Some("system") if probe.subtype.as_deref() == Some("compact_boundary") => {
+                // Poco frecuente: se conserva el formato de `Value` para el payload.
+                let v: Value = serde_json::from_str(line)?;
                 out.push(Record::Event(EventRec {
-                    session_id,
+                    session_id: session_id.to_string(),
                     ts,
                     kind: "compaction".into(),
                     payload_json: v.get("compactMetadata").map(|m| m.to_string()),
@@ -116,12 +132,237 @@ impl Provider for ClaudeCode {
     }
 }
 
-fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) {
-    let msg = &v["message"];
-    let model = msg["model"].as_str().unwrap_or("");
-    let message_id = msg["id"]
-        .as_str()
-        .or_else(|| v["uuid"].as_str())
+/// Envoltura común de todas las líneas.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Probe<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    subtype: Str<'a>,
+    #[serde(rename = "sessionId", borrow)]
+    session_id: Str<'a>,
+    #[serde(borrow)]
+    timestamp: Str<'a>,
+    #[serde(borrow)]
+    cwd: Str<'a>,
+    #[serde(rename = "gitBranch", borrow)]
+    git_branch: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AssistantLine<'a> {
+    #[serde(borrow)]
+    message: Obj<AssistantMsg<'a>>,
+    #[serde(borrow)]
+    uuid: Str<'a>,
+    #[serde(rename = "isSidechain")]
+    is_sidechain: Bool,
+    #[serde(rename = "agentId", borrow)]
+    agent_id: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AssistantMsg<'a> {
+    #[serde(borrow)]
+    model: Str<'a>,
+    #[serde(borrow)]
+    id: Str<'a>,
+    /// Solo los campos de los usos de herramientas: el texto de los bloques no se declara.
+    #[serde(borrow)]
+    content: List<Obj<ToolBlock<'a>>>,
+    usage: Obj<Usage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ToolBlock<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    id: Str<'a>,
+    #[serde(borrow)]
+    name: Str<'a>,
+    #[serde(borrow)]
+    input: Obj<ToolInput<'a>>,
+}
+
+/// Campos de la entrada de una herramienta que dan su objetivo, su skill o su subagente.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ToolInput<'a> {
+    #[serde(borrow)]
+    file_path: Str<'a>,
+    #[serde(borrow)]
+    command: Str<'a>,
+    #[serde(borrow)]
+    path: Str<'a>,
+    #[serde(borrow)]
+    notebook_path: Str<'a>,
+    #[serde(borrow)]
+    url: Str<'a>,
+    #[serde(borrow)]
+    pattern: Str<'a>,
+    #[serde(borrow)]
+    query: Str<'a>,
+    #[serde(borrow)]
+    description: Str<'a>,
+    #[serde(borrow)]
+    skill: Str<'a>,
+    #[serde(borrow)]
+    subagent_type: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Usage {
+    input_tokens: Int,
+    output_tokens: Int,
+    cache_read_input_tokens: Int,
+    cache_creation_input_tokens: Int,
+    cache_creation: Obj<CacheCreation>,
+    output_tokens_details: Obj<OutputDetails>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct CacheCreation {
+    ephemeral_1h_input_tokens: Int,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct OutputDetails {
+    thinking_tokens: Int,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserLine<'a> {
+    #[serde(borrow)]
+    message: Obj<UserMsg<'a>>,
+    #[serde(rename = "isSidechain")]
+    is_sidechain: Bool,
+    #[serde(rename = "isMeta")]
+    is_meta: Bool,
+    #[serde(rename = "promptId", borrow)]
+    prompt_id: Str<'a>,
+    #[serde(rename = "toolUseResult", borrow)]
+    tool_use_result: Obj<ToolUseResult<'a>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserMsg<'a> {
+    #[serde(borrow)]
+    content: Content<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ToolUseResult<'a> {
+    #[serde(rename = "agentId", borrow)]
+    agent_id: Str<'a>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UserBlock<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Str<'a>,
+    #[serde(borrow)]
+    tool_use_id: Str<'a>,
+    is_error: Bool,
+    #[serde(borrow)]
+    text: Str<'a>,
+}
+
+/// `message.content` de un usuario: texto suelto o lista de bloques.
+#[derive(Debug, Default)]
+enum Content<'a> {
+    Text(Cow<'a, str>),
+    Blocks(Vec<Obj<UserBlock<'a>>>),
+    #[default]
+    Other,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Content<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        // Se reutilizan los tipos tolerantes: primero como lista; si no, como cadena.
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de: 'a, 'a> serde::de::Visitor<'de> for V<'a> {
+            type Value = Content<'a>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("cualquier valor JSON")
+            }
+            fn visit_borrowed_str<E: serde::de::Error>(
+                self,
+                v: &'de str,
+            ) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Text(Cow::Borrowed(v)))
+            }
+            fn visit_str<E: serde::de::Error>(
+                self,
+                v: &str,
+            ) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Text(Cow::Owned(v.to_owned())))
+            }
+            fn visit_string<E: serde::de::Error>(
+                self,
+                v: String,
+            ) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Text(Cow::Owned(v)))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                seq: A,
+            ) -> std::result::Result<Content<'a>, A::Error> {
+                let List(blocks) =
+                    List::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                Ok(Content::Blocks(blocks))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> std::result::Result<Content<'a>, A::Error> {
+                serde::de::IgnoredAny::deserialize(serde::de::value::MapAccessDeserializer::new(
+                    map,
+                ))?;
+                Ok(Content::Other)
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                _: bool,
+            ) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Other)
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Other)
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Other)
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Other)
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Content<'a>, E> {
+                Ok(Content::Other)
+            }
+        }
+        d.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+fn parse_assistant(line: &AssistantLine, session_id: &str, ts: i64, out: &mut Vec<Record>) {
+    let empty = AssistantMsg::default();
+    let msg = line.message.0.as_ref().unwrap_or(&empty);
+    let model = msg.model.as_deref().unwrap_or("");
+    let message_id = msg
+        .id
+        .as_deref()
+        .or_else(|| line.uuid.as_deref())
         .unwrap_or_default()
         .to_string();
     if message_id.is_empty() {
@@ -129,40 +370,44 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
     }
 
     let mut activity = None;
-    if let Some(blocks) = msg["content"].as_array() {
-        for b in blocks.iter().filter(|b| b["type"] == "tool_use") {
-            let tool = b["name"].as_str().unwrap_or("?").to_string();
-            let input = &b["input"];
-            let target = tool_target(input);
-            let detail = match tool.as_str() {
-                "Skill" => input["skill"].as_str().map(str::to_string),
-                "Agent" | "Task" => Some(
-                    input["subagent_type"]
-                        .as_str()
-                        .unwrap_or("general-purpose")
-                        .to_string(),
-                ),
-                _ => None,
-            };
-            activity = Some(classify_tool(&tool, target.as_deref()).to_string());
-            if let Some(call_id) = b["id"].as_str() {
-                out.push(Record::ToolUse(ToolUseRec {
-                    call_id: call_id.to_string(),
-                    message_id: message_id.clone(),
-                    session_id: session_id.to_string(),
-                    ts,
-                    tool,
-                    target,
-                    detail,
-                }));
-            }
+    let no_input = ToolInput::default();
+    for b in msg.content.0.iter().filter_map(|b| b.0.as_ref()) {
+        if b.kind.as_deref() != Some("tool_use") {
+            continue;
+        }
+        let tool = b.name.as_deref().unwrap_or("?").to_string();
+        let input = b.input.0.as_ref().unwrap_or(&no_input);
+        let target = tool_target(input);
+        let detail = match tool.as_str() {
+            "Skill" => input.skill.as_deref().map(str::to_string),
+            "Agent" | "Task" => Some(
+                input
+                    .subagent_type
+                    .as_deref()
+                    .unwrap_or("general-purpose")
+                    .to_string(),
+            ),
+            _ => None,
+        };
+        activity = Some(classify_tool(&tool, target.as_deref()).to_string());
+        if let Some(call_id) = b.id.as_deref() {
+            out.push(Record::ToolUse(ToolUseRec {
+                call_id: call_id.to_string(),
+                message_id: message_id.clone(),
+                session_id: session_id.to_string(),
+                ts,
+                tool,
+                target,
+                detail,
+            }));
         }
     }
 
     // Mensajes sintéticos (errores locales) no tienen coste real.
-    let usage = &msg["usage"];
-    if usage.is_object() && !model.is_empty() && model != "<synthetic>" {
-        let n = |x: &Value| x.as_i64().unwrap_or(0);
+    if let (Some(usage), false) = (
+        msg.usage.0.as_ref(),
+        model.is_empty() || model == "<synthetic>",
+    ) {
         out.insert(
             1,
             Record::Call(CallRec {
@@ -170,59 +415,78 @@ fn parse_assistant(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) 
                 session_id: session_id.to_string(),
                 ts,
                 model: crate::pricing::normalize_model(model),
-                input_tokens: n(&usage["input_tokens"]),
-                output_tokens: n(&usage["output_tokens"]),
-                cache_read: n(&usage["cache_read_input_tokens"]),
-                cache_write: n(&usage["cache_creation_input_tokens"]),
-                cache_write_1h: n(&usage["cache_creation"]["ephemeral_1h_input_tokens"]),
-                reasoning_tokens: n(&usage["output_tokens_details"]["thinking_tokens"]),
+                input_tokens: usage.input_tokens.0,
+                output_tokens: usage.output_tokens.0,
+                cache_read: usage.cache_read_input_tokens.0,
+                cache_write: usage.cache_creation_input_tokens.0,
+                cache_write_1h: usage
+                    .cache_creation
+                    .0
+                    .as_ref()
+                    .map_or(0, |c| c.ephemeral_1h_input_tokens.0),
+                reasoning_tokens: usage
+                    .output_tokens_details
+                    .0
+                    .as_ref()
+                    .map_or(0, |d| d.thinking_tokens.0),
                 activity,
-                is_sidechain: v["isSidechain"].as_bool().unwrap_or(false),
-                agent_id: v["agentId"].as_str().map(str::to_string),
+                is_sidechain: line.is_sidechain.0.unwrap_or(false),
+                agent_id: line.agent_id.as_deref().map(str::to_string),
                 cost_reported: None,
             }),
         );
     }
 }
 
-fn parse_user(v: &Value, session_id: &str, ts: i64, out: &mut Vec<Record>) {
-    let content = &v["message"]["content"];
-    let sidechain = v["isSidechain"].as_bool().unwrap_or(false);
-    // El texto del prompt humano: se usa para la intención y se descarta.
-    let mut prompt: Option<String> = None;
-    if let Some(blocks) = content.as_array() {
-        for b in blocks {
-            match b["type"].as_str() {
-                Some("tool_result") => {
-                    if let Some(id) = b["tool_use_id"].as_str() {
-                        out.push(Record::ToolResult {
-                            call_id: id.to_string(),
-                            ts,
-                            is_error: b["is_error"].as_bool().unwrap_or(false),
-                            agent_id: v["toolUseResult"]["agentId"].as_str().map(str::to_string),
+fn parse_user(line: &UserLine, session_id: &str, ts: i64, out: &mut Vec<Record>) {
+    let sidechain = line.is_sidechain.0.unwrap_or(false);
+    let content = line.message.0.as_ref().map(|m| &m.content);
+    // El texto del prompt humano: se usa para la intención y se descarta. Prestado de la
+    // línea salvo que haya que unir varios bloques.
+    let mut prompt: Option<Cow<str>> = None;
+    match content {
+        Some(Content::Blocks(blocks)) => {
+            for b in blocks.iter().filter_map(|b| b.0.as_ref()) {
+                match b.kind.as_deref() {
+                    Some("tool_result") => {
+                        if let Some(id) = b.tool_use_id.as_deref() {
+                            out.push(Record::ToolResult {
+                                call_id: id.to_string(),
+                                ts,
+                                is_error: b.is_error.0.unwrap_or(false),
+                                agent_id: line
+                                    .tool_use_result
+                                    .0
+                                    .as_ref()
+                                    .and_then(|r| r.agent_id.as_deref())
+                                    .map(str::to_string),
+                            });
+                        }
+                    }
+                    Some("text") if is_interruption(b.text.as_deref()) => {
+                        out.push(interruption(session_id, ts));
+                    }
+                    Some("text") => {
+                        let text = b.text.as_deref().unwrap_or("");
+                        prompt = Some(match prompt {
+                            None => Cow::Borrowed(text),
+                            Some(prev) => Cow::Owned(prev.into_owned() + text),
                         });
                     }
+                    _ => {}
                 }
-                Some("text") if is_interruption(b["text"].as_str()) => {
-                    out.push(interruption(session_id, ts));
-                }
-                Some("text") => {
-                    prompt
-                        .get_or_insert_with(String::new)
-                        .push_str(b["text"].as_str().unwrap_or(""));
-                }
-                _ => {}
             }
         }
-    } else if is_interruption(content.as_str()) {
-        out.push(interruption(session_id, ts));
-    } else if let Some(text) = content.as_str() {
-        prompt = Some(text.to_string());
+        Some(Content::Text(text)) if is_interruption(Some(text)) => {
+            out.push(interruption(session_id, ts));
+        }
+        Some(Content::Text(text)) => prompt = Some(Cow::Borrowed(text)),
+        _ => {}
     }
 
     // Las líneas de un turno comparten promptId; las de subagentes no abren turno propio.
-    if let (Some(id), false) = (v["promptId"].as_str(), sidechain) {
-        let is_human = !v["isMeta"].as_bool().unwrap_or(false);
+    if let (Some(id), false) = (line.prompt_id.as_deref(), sidechain) {
+        let is_human = !line.is_meta.0.unwrap_or(false);
         out.push(Record::Turn(TurnRec {
             id: id.to_string(),
             session_id: session_id.to_string(),
@@ -249,19 +513,19 @@ fn interruption(session_id: &str, ts: i64) -> Record {
 }
 
 /// Archivo o comando sobre el que actúa una herramienta.
-fn tool_target(input: &Value) -> Option<String> {
+fn tool_target(input: &ToolInput) -> Option<String> {
     [
-        "file_path",
-        "command",
-        "path",
-        "notebook_path",
-        "url",
-        "pattern",
-        "query",
-        "description",
+        &input.file_path,
+        &input.command,
+        &input.path,
+        &input.notebook_path,
+        &input.url,
+        &input.pattern,
+        &input.query,
+        &input.description,
     ]
     .iter()
-    .find_map(|k| input[*k].as_str())
+    .find_map(|k| k.as_deref())
     .map(|s| s.chars().take(500).collect())
 }
 
@@ -409,6 +673,88 @@ mod tests {
             panic!()
         };
         assert_eq!(s.cwd.as_deref(), Some("/h/repo/src"));
+    }
+
+    #[test]
+    fn la_sonda_lee_la_envoltura_prestada_y_descarta_sin_sesion_o_fecha() {
+        use std::borrow::Cow;
+        let line = r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-25T10:00:00Z","message":{"content":7,"usage":"roto"}}"#;
+        let probe: Probe = serde_json::from_str(line).unwrap();
+        assert!(matches!(probe.session_id.0, Some(Cow::Borrowed("s1"))));
+        assert!(matches!(probe.kind.0, Some(Cow::Borrowed("assistant"))));
+        for sin in [
+            r#"{"type":"assistant","timestamp":"2026-09-25T10:00:00Z","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}],"usage":{"input_tokens":1}}}"#,
+            r#"{"type":"user","sessionId":"s1","timestamp":"no es fecha","promptId":"p","message":{"content":"hola"}}"#,
+            r#"{"type":"user","sessionId":"s1","message":{"content":"hola"}}"#,
+        ] {
+            assert!(parse(sin).is_empty(), "{sin}");
+        }
+    }
+
+    #[test]
+    fn tipos_inesperados_se_tratan_como_ausentes() {
+        assert!(parse("[1,2]").is_empty());
+        assert!(parse("\"texto\"").is_empty());
+        let raro = r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-25T10:00:00Z","isSidechain":"si","cwd":7,
+          "message":{"model":"claude-opus-5-5","id":"m","content":"texto suelto","usage":{"input_tokens":"x","output_tokens":2.5,"cache_read_input_tokens":3}}}"#;
+        let recs = parse(raro);
+        let Record::Session(s) = &recs[0] else {
+            panic!("{recs:?}")
+        };
+        assert_eq!(s.cwd, None);
+        let Record::Call(c) = &recs[1] else {
+            panic!("{recs:?}")
+        };
+        assert_eq!(
+            (
+                c.input_tokens,
+                c.output_tokens,
+                c.cache_read,
+                c.is_sidechain
+            ),
+            (0, 0, 3, false)
+        );
+        assert_eq!(recs.len(), 2, "sin herramientas: content no es una lista");
+    }
+
+    #[test]
+    fn prompt_largo_con_escapes_da_la_misma_intencion_sin_guardar_el_texto() {
+        let texto = "Arregla el \\\"bug\\\" de la ingesta\\n".repeat(100_000);
+        let u = format!(
+            r#"{{"type":"user","sessionId":"s1","promptId":"p1","timestamp":"2026-09-25T10:00:00Z","message":{{"role":"user","content":"{texto}"}}}}"#
+        );
+        assert!(u.len() > 3_000_000);
+        let recs = parse(&u);
+        assert!(recs.contains(&Record::Turn(TurnRec {
+            id: "p1".into(),
+            session_id: "s1".into(),
+            ts: parse_ts("2026-09-25T10:00:00Z").unwrap(),
+            intent: Some("debug"),
+        })));
+        let bloques = u.replace(
+            &format!(r#""content":"{texto}""#),
+            &format!(
+                r#""content":[{{"type":"text","text":"{texto}"}},{{"type":"text","text":"y más"}}]"#
+            ),
+        );
+        assert!(parse(&bloques)
+            .iter()
+            .any(|r| matches!(r, Record::Turn(t) if t.intent == Some("debug"))));
+    }
+
+    #[test]
+    fn el_texto_sin_escapes_se_lee_prestado() {
+        use std::borrow::Cow;
+        let u = r#"{"message":{"role":"user","content":[{"type":"text","text":"hola mundo"}]}}"#;
+        let line: UserLine = serde_json::from_str(u).unwrap();
+        let blocks = match line.message.0.unwrap().content {
+            Content::Blocks(b) => b,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(
+            &blocks[0].0.as_ref().unwrap().text.0,
+            Some(Cow::Borrowed("hola mundo"))
+        ));
     }
 
     #[test]

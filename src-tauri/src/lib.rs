@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod findings;
 pub mod ingest;
+pub mod ingest_thread;
 pub mod insights;
 pub mod pricing;
 pub mod providers;

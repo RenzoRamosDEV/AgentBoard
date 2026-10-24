@@ -1,7 +1,7 @@
 //! Base SQLite en memoria (nada se guarda en disco) y migraciones versionadas.
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,6 +16,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, include_str!("../migrations/0004_coste_reportado.sql")),
     (5, include_str!("../migrations/0005_coste_precalculado.sql")),
     (6, include_str!("../migrations/0006_primera_llamada.sql")),
+    (7, include_str!("../migrations/0007_dia_local.sql")),
 ];
 
 /// Sentencias preparadas que la conexión conserva compiladas.
@@ -39,19 +40,24 @@ pub fn open(path: &Path) -> Result<Connection> {
     let conn =
         Connection::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
     configure(&conn)?;
-    migrate(&conn)?;
-    crate::pricing::seed_if_empty(&conn)?;
-    crate::derived::refresh(&conn)?;
+    prepare(&conn)?;
     Ok(conn)
+}
+
+/// Migraciones, precios por defecto, zona de la caché (la del sistema) y derivados pendientes.
+fn prepare(conn: &Connection) -> Result<()> {
+    migrate(conn)?;
+    crate::pricing::seed_if_empty(conn)?;
+    set_cache_tz(conn, &crate::tz::system_name())?;
+    crate::derived::refresh(conn)?;
+    Ok(())
 }
 
 /// Base en memoria: la que usa la app. Se rellena al arrancar leyendo los logs del ordenador.
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     configure(&conn)?;
-    migrate(&conn)?;
-    crate::pricing::seed_if_empty(&conn)?;
-    crate::derived::refresh(&conn)?;
+    prepare(&conn)?;
     Ok(conn)
 }
 
@@ -63,6 +69,36 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     // La ingesta reutiliza ~16 sentencias y las consultas otras tantas (rusqlite trae 16).
     conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
+    Ok(())
+}
+
+/// Zona IANA con la que se guardan los días locales (`calls.day`, `tool_calls.day`).
+pub fn cache_tz(conn: &Connection) -> Result<String> {
+    Ok(conn
+        .prepare_cached("SELECT value FROM cache_meta WHERE key = 'tz'")?
+        .query_row([], |r| r.get(0))
+        .optional()?
+        .unwrap_or_default())
+}
+
+pub fn cache_zone(conn: &Connection) -> Result<chrono_tz::Tz> {
+    Ok(crate::tz::parse(&cache_tz(conn)?))
+}
+
+/// Fija la zona de la caché. Si cambia, todos los días quedan pendientes y se recalculan.
+pub fn set_cache_tz(conn: &Connection, name: &str) -> Result<()> {
+    if cache_tz(conn)? == name {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO cache_meta (key, value) VALUES ('tz', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [name],
+    )?;
+    tx.execute_batch("UPDATE calls SET day = NULL; UPDATE tool_calls SET day = NULL;")?;
+    crate::derived::refresh(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 

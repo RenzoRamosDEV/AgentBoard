@@ -3,7 +3,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
-use chrono::{Duration, LocalResult, NaiveDateTime, Offset, TimeZone, Timelike};
+use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
 
 /// Zona IANA pedida; si no existe, la del sistema; y si tampoco, UTC.
@@ -46,6 +46,16 @@ pub fn day_start(ts: i64, tz: &Tz) -> i64 {
         .and_then(|l| l.date().and_hms_opt(0, 0, 0))
         .map(|midnight| resolve(midnight, tz))
         .unwrap_or(ts)
+}
+
+/// Día local de `ts` como entero `YYYYMMDD` (el de UTC si no tiene hora local; 0 si tampoco).
+pub fn day_number(ts: i64, tz: &Tz) -> i64 {
+    local(ts, tz)
+        .map(|l| l.date())
+        .or_else(|| chrono::DateTime::from_timestamp_millis(ts).map(|d| d.date_naive()))
+        .map_or(0, |d| {
+            i64::from(d.year()) * 10_000 + i64::from(d.month()) * 100 + i64::from(d.day())
+        })
 }
 
 /// Inicio de la hora local de `ts`, en epoch ms UTC (`ts` tal cual si no tiene hora local).
@@ -145,6 +155,44 @@ mod tests {
         assert_eq!(
             day_start(ms(2026, 10, 25, 12, 0), &tz),
             ms(2026, 10, 24, 22, 0)
+        );
+    }
+
+    #[test]
+    fn numero_de_dia_local_en_bordes_y_cambios_de_hora() {
+        let tz = parse("Europe/Madrid");
+        for (ts, day) in [
+            // Medianoche de invierno (UTC+1): un ms antes es el día anterior.
+            (ms(2026, 1, 15, 23, 0) - 1, 20260115),
+            (ms(2026, 1, 15, 23, 0), 20260116),
+            // Medianoche de verano (UTC+2).
+            (ms(2026, 7, 15, 22, 0) - 1, 20260715),
+            (ms(2026, 7, 15, 22, 0), 20260716),
+            // 29 de marzo: la hora que se salta (02:00–03:00 locales, 01:00Z).
+            (ms(2026, 3, 28, 23, 0) - 1, 20260328),
+            (ms(2026, 3, 28, 23, 0), 20260329),
+            (ms(2026, 3, 29, 0, 59), 20260329),
+            (ms(2026, 3, 29, 1, 0), 20260329),
+            (ms(2026, 3, 29, 22, 0) - 1, 20260329),
+            (ms(2026, 3, 29, 22, 0), 20260330),
+            // 25 de octubre: la hora repetida y la medianoche siguiente ya en invierno.
+            (ms(2026, 10, 24, 22, 0) - 1, 20261024),
+            (ms(2026, 10, 24, 22, 0), 20261025),
+            (ms(2026, 10, 25, 0, 30), 20261025),
+            (ms(2026, 10, 25, 1, 30), 20261025),
+            (ms(2026, 10, 25, 23, 0) - 1, 20261025),
+            (ms(2026, 10, 25, 23, 0), 20261026),
+        ] {
+            assert_eq!(day_number(ts, &tz), day, "{ts}");
+            assert_eq!(day_number(day_start(ts, &tz), &tz), day, "{ts}");
+        }
+        assert_eq!(
+            day_number(ms(2026, 1, 15, 23, 0), &chrono_tz::UTC),
+            20260115
+        );
+        assert_eq!(
+            day_number(i64::MAX, &tz),
+            day_number(i64::MAX, &chrono_tz::UTC)
         );
     }
 

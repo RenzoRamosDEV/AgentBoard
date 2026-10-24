@@ -1,7 +1,7 @@
 //! Datos derivados que se recalculan al final de cada transacción de escritura, solo para lo que
 //! quedó pendiente: el coste de las llamadas escritas sin él o con valores o precios cambiados
-//! (`has_price` nulo, migración 0005) y la primera llamada de las sesiones anotadas en
-//! `dirty_sessions` (migración 0006).
+//! (`has_price` nulo, migración 0005), el día local de las filas que no lo tienen (`day` nulo,
+//! migración 0007) y la primera llamada de las sesiones anotadas en `dirty_sessions` (0006).
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -36,10 +36,27 @@ const REFRESH_FIRST_CALLS: &str = "UPDATE sessions SET first_call_id = (
        ORDER BY c.ts, c.rowid LIMIT 1)
      WHERE id IN (SELECT session_id FROM dirty_sessions)";
 
+/// Calcula el día local (zona de la caché) de las filas de `table` que no lo tienen.
+fn fill_days(conn: &Connection, table: &str, zone: &chrono_tz::Tz) -> Result<()> {
+    let pending: Vec<(i64, i64)> = conn
+        .prepare_cached(&format!("SELECT rowid, ts FROM {table} WHERE day IS NULL"))?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut update =
+        conn.prepare_cached(&format!("UPDATE {table} SET day = ?1 WHERE rowid = ?2"))?;
+    for (rowid, ts) in pending {
+        update.execute([crate::tz::day_number(ts, zone), rowid])?;
+    }
+    Ok(())
+}
+
 /// Recalcula lo pendiente. Va dentro de la transacción del llamador, antes de confirmarla.
 pub fn refresh(conn: &Connection) -> Result<()> {
     conn.prepare_cached(MARK_PENDING_SESSIONS)?.execute([])?;
     conn.prepare_cached(REFRESH_COSTS)?.execute([])?;
+    let zone = crate::db::cache_zone(conn)?;
+    fill_days(conn, "calls", &zone)?;
+    fill_days(conn, "tool_calls", &zone)?;
     conn.prepare_cached(REFRESH_FIRST_CALLS)?.execute([])?;
     conn.prepare_cached("DELETE FROM dirty_sessions")?
         .execute([])?;

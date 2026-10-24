@@ -320,11 +320,11 @@ fn write_batch<D: DbSink>(
     }
     db.with(|conn| {
         let mut tx = conn.transaction()?;
-        let prices = PriceBook::load(&tx)?;
+        let ctx = WriteContext::load(&tx)?;
         for (i, parsed) in batch.drain(..) {
             let job = &jobs[i];
             let sp = tx.savepoint()?;
-            match write_file(&sp, providers[job.provider].as_ref(), &parsed, &prices) {
+            match write_file(&sp, providers[job.provider].as_ref(), &parsed, &ctx) {
                 Ok(r) => {
                     sp.commit()?;
                     stats.files += 1;
@@ -554,13 +554,29 @@ fn read_db(provider: &dyn Provider, path: &Path, prev: Option<&FileState>) -> Re
     })
 }
 
+/// Lo que el escritor necesita de la base para calcular columnas derivadas sin consultarla en cada
+/// registro: los precios y la zona de la caché. Se carga una vez por lote.
+pub struct WriteContext {
+    prices: PriceBook,
+    zone: chrono_tz::Tz,
+}
+
+impl WriteContext {
+    pub fn load(conn: &Connection) -> Result<Self> {
+        Ok(Self {
+            prices: PriceBook::load(conn)?,
+            zone: crate::db::cache_zone(conn)?,
+        })
+    }
+}
+
 /// Escribe un archivo parseado y su nuevo estado (dentro de la transacción del llamador).
 #[tracing::instrument(name = "ingest.tx", level = "debug", skip_all, fields(records = Empty))]
 pub fn write_file(
     conn: &Connection,
     provider: &dyn Provider,
     parsed: &ParsedFile,
-    prices: &PriceBook,
+    ctx: &WriteContext,
 ) -> Result<FileResult> {
     ensure_agent(conn, provider)?;
     let mut result = FileResult {
@@ -568,7 +584,7 @@ pub fn write_file(
         bad_lines: parsed.bad_lines,
         ..Default::default()
     };
-    let mut w = Writer::new(conn, provider.id(), prices);
+    let mut w = Writer::new(conn, provider.id(), ctx);
     for rec in &parsed.records {
         if let Some(id) = w.apply(rec)? {
             result.new_tool_calls.push(id);
@@ -620,7 +636,7 @@ pub fn ingest_file(
         return Ok(FileResult::default());
     };
     let tx = conn.transaction()?;
-    let result = write_file(&tx, provider, &parsed, &PriceBook::load(&tx)?)?;
+    let result = write_file(&tx, provider, &parsed, &WriteContext::load(&tx)?)?;
     crate::derived::refresh(&tx)?;
     tx.commit()?;
     Ok(result)
@@ -680,9 +696,9 @@ const MERGE_SESSION: &str =
 /// inserción en `calls`: cada inserción es una sola escritura, sin subdiario de sentencia).
 const INSERT_CALL: &str = "INSERT OR IGNORE INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
         cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id,
-        has_price, cost_usd, cache_savings_usd)
+        has_price, cost_usd, cache_savings_usd, day)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
-       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1), ?15, ?16, ?17)";
+       WHERE session_id = ?2 AND ts <= ?3 ORDER BY ts DESC LIMIT 1), ?15, ?16, ?17, ?18)";
 
 /// Una llamada ya guardada que vuelve a llegar (Claude Code repite el mensaje en cada bloque):
 /// se combina como lo haría un `UPSERT`, pero solo se escribe si algo cambia.
@@ -704,9 +720,9 @@ const UPDATE_CALL: &str = "UPDATE calls SET
 const UPDATE_SESSION_MODEL: &str = "UPDATE sessions SET model = ?1 WHERE id = ?2";
 
 const INSERT_TOOL_USE: &str =
-    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, detail, turn_id)
+    "INSERT INTO tool_calls (call_id, message_id, session_id, ts, tool, target, detail, turn_id, day)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT id FROM turns
-       WHERE session_id = ?3 AND ts <= ?4 ORDER BY ts DESC LIMIT 1))
+       WHERE session_id = ?3 AND ts <= ?4 ORDER BY ts DESC LIMIT 1), ?8)
      ON CONFLICT(call_id) DO NOTHING";
 
 const REFRESH_TOOL_USE: &str = "UPDATE tool_calls SET detail = COALESCE(detail, ?1),
@@ -726,7 +742,7 @@ const INSERT_EVENT: &str =
 /// Aplica registros a la base dentro de una transacción.
 struct Writer<'a> {
     tx: &'a Connection,
-    prices: &'a PriceBook,
+    ctx: &'a WriteContext,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
     /// Sesiones ya escritas en este archivo, con lo acumulado de sus registros siguientes.
@@ -745,10 +761,10 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(tx: &'a Connection, agent_id: &'static str, prices: &'a PriceBook) -> Self {
+    fn new(tx: &'a Connection, agent_id: &'static str, ctx: &'a WriteContext) -> Self {
         Self {
             tx,
-            prices,
+            ctx,
             agent_id,
             projects: HashMap::new(),
             sessions: HashMap::new(),
@@ -841,7 +857,7 @@ impl<'a> Writer<'a> {
                 let seen = self.calls_seen.get(&c.message_id);
                 if seen != Some(c) {
                     let written = seen.is_some();
-                    let cost = self.prices.cost(c);
+                    let cost = self.ctx.prices.cost(c);
                     let values = params![
                         c.message_id,
                         c.session_id,
@@ -859,7 +875,8 @@ impl<'a> Writer<'a> {
                         c.cost_reported,
                         cost.has_price,
                         cost.cost_usd,
-                        cost.cache_savings_usd
+                        cost.cache_savings_usd,
+                        crate::tz::day_number(c.ts, &self.ctx.zone)
                     ];
                     if written || self.run(INSERT_CALL, values)? == 0 {
                         self.run(UPDATE_CALL, &values[..14])?;
@@ -882,7 +899,8 @@ impl<'a> Writer<'a> {
                         t.ts,
                         t.tool,
                         t.target,
-                        t.detail
+                        t.detail,
+                        crate::tz::day_number(t.ts, &self.ctx.zone)
                     ],
                 )?;
                 if n > 0 {
@@ -1118,6 +1136,95 @@ mod tests {
         .unwrap();
         scan_all(&mut conn, &providers).unwrap();
         assert_eq!(first(&conn).as_deref(), Some("pronto"));
+    }
+
+    fn days(conn: &Connection, sql: &str) -> Vec<(String, Option<i64>)> {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn el_escritor_guarda_el_dia_local_de_la_zona_de_la_cache() {
+        let (_d, file, p, mut conn) = setup();
+        crate::db::set_cache_tz(&conn, "Europe/Madrid").unwrap();
+        let body = [
+            line("a", 1, "2026-07-15T21:59:59.999Z"),
+            line("b", 1, "2026-07-15T22:00:00Z"),
+            tool_line(0).replace("2026-09-25T10:00:00Z", "2026-03-28T23:00:00Z"),
+        ]
+        .join("\n")
+            + "\n";
+        fs::write(&file, body).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(
+            days(&conn, "SELECT message_id, day FROM calls ORDER BY 1"),
+            vec![
+                ("a".to_string(), Some(20260715)),
+                ("b".to_string(), Some(20260716)),
+                ("m0".to_string(), Some(20260329))
+            ]
+        );
+        assert_eq!(
+            days(&conn, "SELECT call_id, day FROM tool_calls"),
+            vec![("tu0".to_string(), Some(20260329))]
+        );
+        // La misma llamada llega antes (de otro día): gana la `ts` menor y su día.
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", line("b", 1, "2026-07-14T10:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(
+            days(
+                &conn,
+                "SELECT message_id, day FROM calls WHERE message_id = 'b'"
+            ),
+            vec![("b".to_string(), Some(20260714))]
+        );
+    }
+
+    #[test]
+    fn las_filas_sin_dia_lo_reciben_al_refrescar_y_cambiar_de_zona_los_rehace() {
+        let (_d, _file, _p, conn) = setup();
+        crate::db::set_cache_tz(&conn, "Europe/Madrid").unwrap();
+        conn.execute_batch(
+            "INSERT INTO agents VALUES ('a','A','/',0);
+             INSERT INTO sessions (id, agent_id, started_at, ended_at) VALUES ('s','a',0,0);
+             INSERT INTO calls (message_id, session_id, ts, model) VALUES ('c', 's', 1784152800000, 'x');
+             INSERT INTO tool_calls (call_id, session_id, ts, tool) VALUES ('t', 's', 1784152800000, 'Bash');",
+        )
+        .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        // 2026-07-15T22:00:00Z: el 16 en Madrid, el 15 en Nueva York.
+        assert_eq!(
+            days(&conn, "SELECT message_id, day FROM calls"),
+            vec![("c".to_string(), Some(20260716))]
+        );
+        assert_eq!(
+            days(&conn, "SELECT call_id, day FROM tool_calls"),
+            vec![("t".to_string(), Some(20260716))]
+        );
+        crate::db::set_cache_tz(&conn, "America/New_York").unwrap();
+        assert_eq!(
+            days(&conn, "SELECT message_id, day FROM calls"),
+            vec![("c".to_string(), Some(20260715))]
+        );
+        assert_eq!(
+            days(&conn, "SELECT call_id, day FROM tool_calls"),
+            vec![("t".to_string(), Some(20260715))]
+        );
+        assert_eq!(crate::db::cache_tz(&conn).unwrap(), "America/New_York");
+        conn.execute(
+            "UPDATE tool_calls SET ts = 1784073600000 WHERE call_id = 't'",
+            [],
+        )
+        .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        assert_eq!(
+            days(&conn, "SELECT call_id, day FROM tool_calls"),
+            vec![("t".to_string(), Some(20260714))]
+        );
     }
 
     #[test]

@@ -571,6 +571,7 @@ pub fn write_file(
         }
         result.records += 1;
     }
+    w.finish()?;
     w.backfill_turns()?;
     let now = now_ms();
     match &parsed.file_id {
@@ -658,6 +659,18 @@ const UPSERT_SESSION: &str =
        project_id = COALESCE(project_id, excluded.project_id),
        is_subagent = MAX(is_subagent, excluded.is_subagent)";
 
+/// Lo acumulado de los registros siguientes de una sesión en el mismo archivo (Claude Code
+/// emite un registro de sesión por línea): se escribe con un único `UPSERT` al terminar.
+const MERGE_SESSION: &str =
+    "INSERT INTO sessions (id, agent_id, project_id, git_branch, started_at, ended_at, is_subagent)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(id) DO UPDATE SET
+       started_at = MIN(started_at, excluded.started_at),
+       ended_at   = MAX(ended_at, excluded.ended_at),
+       git_branch = COALESCE(excluded.git_branch, git_branch),
+       project_id = COALESCE(project_id, excluded.project_id),
+       is_subagent = MAX(is_subagent, excluded.is_subagent)";
+
 const UPSERT_CALL: &str = "INSERT INTO calls (message_id, session_id, ts, model, input_tokens, output_tokens,
         cache_read, cache_write, cache_write_1h, reasoning_tokens, activity, is_sidechain, agent_id, cost_reported, turn_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, (SELECT id FROM turns
@@ -699,6 +712,10 @@ struct Writer<'a> {
     tx: &'a Connection,
     agent_id: &'static str,
     projects: HashMap<String, i64>,
+    /// Sesiones ya escritas en este archivo, con lo acumulado de sus registros siguientes.
+    sessions: HashMap<String, SessionAcc>,
+    /// Último modelo (no de subagente) de cada sesión, para un único `UPDATE` al terminar.
+    models: HashMap<String, String>,
     /// Por sesión, el `ts` mínimo de los turnos aplicados: solo las filas sin turno desde ahí
     /// pueden ganar uno.
     new_turns: HashMap<String, i64>,
@@ -710,6 +727,8 @@ impl<'a> Writer<'a> {
             tx,
             agent_id,
             projects: HashMap::new(),
+            sessions: HashMap::new(),
+            models: HashMap::new(),
             new_turns: HashMap::new(),
         }
     }
@@ -732,6 +751,27 @@ impl<'a> Writer<'a> {
         Ok(id)
     }
 
+    /// Escribe lo acumulado de las sesiones y su último modelo.
+    fn finish(&mut self) -> Result<()> {
+        for (id, acc) in self.sessions.drain().filter(|(_, acc)| acc.merged) {
+            self.tx.prepare_cached(MERGE_SESSION)?.execute(params![
+                id,
+                self.agent_id,
+                acc.project,
+                acc.branch,
+                acc.started,
+                acc.ended,
+                acc.is_subagent
+            ])?;
+        }
+        for (id, model) in self.models.drain() {
+            self.tx
+                .prepare_cached(UPDATE_SESSION_MODEL)?
+                .execute(params![model, id])?;
+        }
+        Ok(())
+    }
+
     /// Asigna turno a llamadas y herramientas que llegaron antes que él (p. ej. el archivo
     /// de un subagente leído antes que el de su sesión).
     fn backfill_turns(&self) -> Result<()> {
@@ -751,17 +791,23 @@ impl<'a> Writer<'a> {
                     Some(cwd) => Some(self.project_id(cwd)?),
                     None => None,
                 };
-                self.run(
-                    UPSERT_SESSION,
-                    params![
-                        s.id,
-                        self.agent_id,
-                        project,
-                        s.git_branch,
-                        s.ts,
-                        s.is_subagent
-                    ],
-                )?;
+                match self.sessions.get_mut(&s.id) {
+                    Some(acc) => acc.add(s, project),
+                    None => {
+                        self.run(
+                            UPSERT_SESSION,
+                            params![
+                                s.id,
+                                self.agent_id,
+                                project,
+                                s.git_branch,
+                                s.ts,
+                                s.is_subagent
+                            ],
+                        )?;
+                        self.sessions.insert(s.id.clone(), SessionAcc::new(s.ts));
+                    }
+                }
             }
             Record::Call(c) => {
                 self.run(
@@ -784,7 +830,7 @@ impl<'a> Writer<'a> {
                     ],
                 )?;
                 if !c.is_sidechain {
-                    self.run(UPDATE_SESSION_MODEL, params![c.model, c.session_id])?;
+                    self.models.insert(c.session_id.clone(), c.model.clone());
                 }
             }
             Record::ToolUse(t) => {
@@ -835,6 +881,41 @@ impl<'a> Writer<'a> {
             }
         }
         Ok(None)
+    }
+}
+
+/// Registros de sesión siguientes al primero de un archivo, combinados como lo haría aplicar
+/// cada uno con `UPSERT_SESSION`: fechas extremas, última rama, primer proyecto.
+struct SessionAcc {
+    started: i64,
+    ended: i64,
+    branch: Option<String>,
+    project: Option<i64>,
+    is_subagent: bool,
+    merged: bool,
+}
+
+impl SessionAcc {
+    fn new(ts: i64) -> Self {
+        Self {
+            started: ts,
+            ended: ts,
+            branch: None,
+            project: None,
+            is_subagent: false,
+            merged: false,
+        }
+    }
+
+    fn add(&mut self, s: &crate::providers::SessionRec, project: Option<i64>) {
+        self.started = self.started.min(s.ts);
+        self.ended = self.ended.max(s.ts);
+        if s.git_branch.is_some() {
+            self.branch.clone_from(&s.git_branch);
+        }
+        self.project = self.project.or(project);
+        self.is_subagent |= s.is_subagent;
+        self.merged = true;
     }
 }
 
@@ -1134,6 +1215,110 @@ mod tests {
             .unwrap();
         assert_eq!(ids, ["a1", "c1"]);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM file_state"), 2);
+    }
+
+    #[test]
+    fn una_sesion_larga_se_escribe_con_un_insert_y_un_upsert_final() {
+        let (_d, file, p, mut conn) = setup();
+        let mut body = String::new();
+        for i in 0..1000usize {
+            let secs = (i * 7919) % 1000;
+            let branch = match i % 3 {
+                0 => String::new(),
+                1 => r#""gitBranch":"","#.to_string(),
+                _ => format!(r#""gitBranch":"b{i}","#),
+            };
+            let (model, side) = match i {
+                998 => ("claude-opus-4-1", false),
+                999 => ("claude-haiku-4-5", true),
+                _ => ("claude-sonnet-4-5", false),
+            };
+            body.push_str(&format!(
+                r#"{{"type":"assistant",{branch}"isSidechain":{side},"sessionId":"s1","timestamp":"2026-09-25T10:{:02}:{:02}Z","cwd":"/h/Proyectos/AgentBoard","message":{{"model":"{model}","id":"m{i}","content":[],"usage":{{"input_tokens":1,"output_tokens":1}}}}}}"#,
+                secs / 60,
+                secs % 60
+            ));
+            body.push('\n');
+        }
+        fs::write(&file, body).unwrap();
+        let log = db::trace::start(&conn);
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let log = db::trace::take(log);
+        let runs = |prefix: &str| {
+            log.iter()
+                .filter(|e| e.sql.trim_start().starts_with(prefix))
+                .count()
+        };
+        assert!(
+            runs("INSERT INTO sessions") <= 2,
+            "{}",
+            runs("INSERT INTO sessions")
+        );
+        assert!(runs("UPDATE sessions SET model") <= 1);
+        let row: (i64, i64, Option<String>, String, i64, String) = conn
+            .query_row(
+                "SELECT s.started_at, s.ended_at, s.git_branch, p.cwd, s.is_subagent, s.model
+                 FROM sessions s JOIN projects p ON p.id = s.project_id",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let base = crate::providers::parse_ts("2026-09-25T10:00:00Z").unwrap();
+        assert_eq!(
+            row,
+            (
+                base,
+                base + 999_000,
+                Some("b998".to_string()),
+                "/h/Proyectos/AgentBoard".to_string(),
+                0,
+                crate::pricing::normalize_model("claude-opus-4-1"),
+            )
+        );
+    }
+
+    #[test]
+    fn la_sesion_acumulada_respeta_lo_que_ya_habia_en_la_base() {
+        let (_d, file, p, mut conn) = setup();
+        let with_branch = |id: &str, ts: &str, branch: &str| {
+            line(id, 1, ts).replace(r#""cwd""#, &format!(r#""gitBranch":"{branch}","cwd""#))
+        };
+        fs::write(
+            &file,
+            with_branch("m1", "2026-09-25T10:00:00Z", "main") + "\n",
+        )
+        .unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", line("m2", 1, "2026-09-25T09:00:00Z")).unwrap();
+        writeln!(f, "{}", line("m3", 1, "2026-09-25T11:00:00Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        let row: (i64, i64, Option<String>) = conn
+            .query_row(
+                "SELECT started_at, ended_at, git_branch FROM sessions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        let ts = |s: &str| crate::providers::parse_ts(s).unwrap();
+        assert_eq!(
+            row,
+            (
+                ts("2026-09-25T09:00:00Z"),
+                ts("2026-09-25T11:00:00Z"),
+                Some("main".to_string())
+            ),
+            "una pasada sin rama no borra la que había"
+        );
     }
 
     #[test]

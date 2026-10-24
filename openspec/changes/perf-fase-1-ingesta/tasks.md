@@ -56,10 +56,10 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 
 - [x] 8.1 Claude Code — tests en rojo en `providers/claude_code.rs`: una línea sin `sessionId` o sin `timestamp` se descarta tras la sonda sin interpretar `message`; un prompt de usuario con escapes y de varios MB devuelve la misma intención sin copiar el texto (structs con `Cow` prestado); resultados de todos los tests existentes iguales; verificar que fallan los nuevos
 - [x] 8.2 Claude Code — implementar sonda y structs mínimos (D8); verificar 8.1 y 1.3 en verde; `cargo bench --bench parse_line` (`parse_line/claude_code`) y M (frío); aplicar la regla D9
-- [ ] 8.3 Codex — derivar de su `parse_line` los tipos que no producen registros ni cambian estado; tests en rojo de descarte y de igualdad con los existentes; implementar sonda y structs mínimos; verificar tests y 1.3 en verde; `parse_line/codex` y M (frío); aplicar la regla D9
-- [ ] 8.4 Copilot — igual que 8.3; verificar tests y 1.3 en verde; `parse_line/copilot` y M (frío); aplicar la regla D9
-- [ ] 8.5 Cursor — igual que 8.3 (evitar el `clone` del array de bloques de `message.content`); verificar tests y 1.3 en verde; `parse_line/cursor` y M (frío); aplicar la regla D9
-- [ ] 8.6 Gemini — igual que 8.3; verificar tests y 1.3 en verde; `parse_line/gemini` y M (frío); aplicar la regla D9
+- [x] 8.3 Codex — derivar de su `parse_line` los tipos que no producen registros ni cambian estado; tests en rojo de descarte y de igualdad con los existentes; implementar sonda y structs mínimos; verificar tests y 1.3 en verde; `parse_line/codex` y M (frío); aplicar la regla D9
+- [x] 8.4 Copilot — igual que 8.3; verificar tests y 1.3 en verde; `parse_line/copilot` y M (frío); aplicar la regla D9
+- [x] 8.5 Cursor — igual que 8.3 (evitar el `clone` del array de bloques de `message.content`); verificar tests y 1.3 en verde; `parse_line/cursor` y M (frío); aplicar la regla D9
+- [x] 8.6 Gemini — igual que 8.3; verificar tests y 1.3 en verde; `parse_line/gemini` y M (frío); aplicar la regla D9
 
 ## 9. Sin pánicos en hilos de fondo
 

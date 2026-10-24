@@ -7,7 +7,7 @@ use crate::providers::{CallRec, Provider, Record, Source};
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -740,6 +740,8 @@ struct Writer<'a> {
     /// mensaje en una línea por bloque de contenido y las repeticiones iguales no se reescriben
     /// (un turno que llegue entre medias lo asigna `backfill_turns` al terminar el archivo).
     calls_seen: HashMap<String, CallRec>,
+    /// Sesiones con llamadas insertadas en este archivo, para recalcular sus derivados.
+    new_call_sessions: HashSet<String>,
 }
 
 impl<'a> Writer<'a> {
@@ -753,6 +755,7 @@ impl<'a> Writer<'a> {
             models: HashMap::new(),
             new_turns: HashMap::new(),
             calls_seen: HashMap::new(),
+            new_call_sessions: HashSet::new(),
         }
     }
 
@@ -792,6 +795,8 @@ impl<'a> Writer<'a> {
                 .prepare_cached(UPDATE_SESSION_MODEL)?
                 .execute(params![model, id])?;
         }
+        crate::derived::mark_sessions(self.tx, self.new_call_sessions.iter().map(String::as_str))?;
+        self.new_call_sessions.clear();
         Ok(())
     }
 
@@ -858,6 +863,8 @@ impl<'a> Writer<'a> {
                     ];
                     if written || self.run(INSERT_CALL, values)? == 0 {
                         self.run(UPDATE_CALL, &values[..14])?;
+                    } else if !self.new_call_sessions.contains(&c.session_id) {
+                        self.new_call_sessions.insert(c.session_id.clone());
                     }
                     self.calls_seen.insert(c.message_id.clone(), c.clone());
                 }
@@ -1081,6 +1088,36 @@ mod tests {
         );
         assert_eq!(count(&conn, "SELECT output_tokens FROM calls"), 120);
         crate::pricing::tests::assert_cost_matches_0004(&conn);
+    }
+
+    #[test]
+    fn una_llamada_anterior_de_otro_archivo_pasa_a_ser_la_primera() {
+        let (_d, file, p, mut conn) = setup();
+        let dir = file.parent().unwrap().to_path_buf();
+        let first = |conn: &Connection| -> Option<String> {
+            conn.query_row(
+                "SELECT first_call_id FROM sessions WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        fs::write(
+            dir.join("a.jsonl"),
+            line("tarde", 1, "2026-09-25T10:00:00Z") + "\n",
+        )
+        .unwrap();
+        let providers: Vec<Box<dyn Provider>> =
+            vec![Box::new(ClaudeCode::with_roots(p.log_roots()))];
+        scan_all(&mut conn, &providers).unwrap();
+        assert_eq!(first(&conn).as_deref(), Some("tarde"));
+        fs::write(
+            dir.join("b.jsonl"),
+            line("pronto", 1, "2026-09-25T09:00:00Z") + "\n",
+        )
+        .unwrap();
+        scan_all(&mut conn, &providers).unwrap();
+        assert_eq!(first(&conn).as_deref(), Some("pronto"));
     }
 
     #[test]

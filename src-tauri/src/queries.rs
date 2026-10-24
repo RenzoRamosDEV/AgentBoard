@@ -360,19 +360,14 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
         _ => {}
     }
     let (w, args) = f.sql(if by == "tool" { "t.ts" } else { "c.ts" });
-    // `firsts` = primera llamada principal de cada sesión, para el overhead de contexto.
+    // `s.first_call_id` = primera llamada principal de la sesión, para el overhead de contexto.
     let calls = |key: &str, label: &str, join: &str| {
         format!(
-            "WITH firsts AS (
-               SELECT message_id FROM (
-                 SELECT message_id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts) AS rn
-                 FROM calls WHERE is_sidechain = 0) WHERE rn = 1)
-             SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
+            "SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
                     SUM(c.cache_read), SUM(c.input_tokens + c.cache_read + c.cache_write), MIN(c.has_price),
                     COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
-                    COALESCE(AVG(CASE WHEN f.message_id IS NOT NULL THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
+                    COALESCE(AVG(CASE WHEN c.message_id = s.first_call_id THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
              FROM call_costs c JOIN sessions s ON s.id = c.session_id {join}
-             LEFT JOIN firsts f ON f.message_id = c.message_id
              WHERE {w} GROUP BY 1 ORDER BY 3 DESC, 4 DESC"
         )
     };
@@ -840,6 +835,77 @@ mod tests {
         let rows = breakdown(&conn, &Filter::default(), "project").unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(list_projects(&conn, &Filter::default()).unwrap().len(), 2);
+    }
+
+    fn first_call(conn: &Connection, session: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT first_call_id FROM sessions WHERE id = ?1",
+            [session],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn add_call(conn: &Connection, id: &str, session: &str, ts: i64, sidechain: bool) {
+        conn.execute(
+            "INSERT INTO calls (message_id,session_id,ts,model,input_tokens,is_sidechain) VALUES (?1,?2,?3,'claude-sonnet-4-5',1,?4)",
+            rusqlite::params![id, session, ts, sidechain],
+        )
+        .unwrap();
+        crate::derived::refresh(conn).unwrap();
+    }
+
+    #[test]
+    fn la_primera_llamada_de_la_sesion_es_la_de_menor_ts_y_orden() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("m1"));
+        assert_eq!(first_call(&conn, "s3").as_deref(), Some("m4"));
+        add_call(&conn, "tarde", "s1", 999_999, false);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("m1"));
+        add_call(&conn, "antes", "s1", 500, false);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("antes"));
+        add_call(&conn, "empate", "s1", 500, false);
+        assert_eq!(
+            first_call(&conn, "s1").as_deref(),
+            Some("antes"),
+            "con el mismo ts gana la que se escribió antes"
+        );
+        conn.execute("UPDATE calls SET ts = 100 WHERE message_id = 'tarde'", [])
+            .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("tarde"));
+        conn.execute("DELETE FROM calls WHERE message_id = 'tarde'", [])
+            .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("antes"));
+    }
+
+    #[test]
+    fn una_llamada_de_subagente_nunca_es_la_primera() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        add_call(&conn, "sub", "s2", 1, true);
+        assert_eq!(first_call(&conn, "s2").as_deref(), Some("m3"));
+        conn.execute_batch(
+            "INSERT INTO sessions (id,agent_id,started_at,ended_at) VALUES ('solo-sub','codex',0,0);",
+        )
+        .unwrap();
+        add_call(&conn, "sub2", "solo-sub", 1, true);
+        assert_eq!(first_call(&conn, "solo-sub"), None);
+    }
+
+    #[test]
+    fn el_desglose_no_numera_todas_las_llamadas() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        let log = db::trace::start(&conn);
+        for by in ["agent", "project", "branch", "model", "activity"] {
+            breakdown(&conn, &Filter::default(), by).unwrap();
+        }
+        let sql: Vec<String> = db::trace::take(log).into_iter().map(|e| e.sql).collect();
+        assert_eq!(sql.len(), 5);
+        assert!(sql.iter().all(|s| !s.contains("ROW_NUMBER")), "{sql:?}");
     }
 
     #[test]

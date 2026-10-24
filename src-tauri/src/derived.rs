@@ -1,6 +1,7 @@
-//! Datos derivados que se recalculan al final de cada transacción de escritura, solo para las
-//! filas que quedaron pendientes: el coste de las llamadas nuevas escritas sin él o con valores o
-//! precios cambiados (`has_price` nulo, ver la migración 0005).
+//! Datos derivados que se recalculan al final de cada transacción de escritura, solo para lo que
+//! quedó pendiente: el coste de las llamadas escritas sin él o con valores o precios cambiados
+//! (`has_price` nulo, migración 0005) y la primera llamada de las sesiones anotadas en
+//! `dirty_sessions` (migración 0006).
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -25,8 +26,34 @@ const REFRESH_COSTS: &str = "UPDATE calls SET (has_price, cost_usd, cache_saving
                             WHERE model = calls.model AND valid_from <= calls.ts))
      WHERE has_price IS NULL";
 
+/// Las filas pendientes cambiaron o son nuevas: su sesión también.
+const MARK_PENDING_SESSIONS: &str = "INSERT OR IGNORE INTO dirty_sessions
+     SELECT DISTINCT session_id FROM calls WHERE has_price IS NULL";
+
+/// Primera llamada principal: menor `ts` y, con el mismo `ts`, la que se escribió antes.
+const REFRESH_FIRST_CALLS: &str = "UPDATE sessions SET first_call_id = (
+       SELECT message_id FROM calls c WHERE c.session_id = sessions.id AND c.is_sidechain = 0
+       ORDER BY c.ts, c.rowid LIMIT 1)
+     WHERE id IN (SELECT session_id FROM dirty_sessions)";
+
 /// Recalcula lo pendiente. Va dentro de la transacción del llamador, antes de confirmarla.
 pub fn refresh(conn: &Connection) -> Result<()> {
+    conn.prepare_cached(MARK_PENDING_SESSIONS)?.execute([])?;
     conn.prepare_cached(REFRESH_COSTS)?.execute([])?;
+    conn.prepare_cached(REFRESH_FIRST_CALLS)?.execute([])?;
+    conn.prepare_cached("DELETE FROM dirty_sessions")?
+        .execute([])?;
+    Ok(())
+}
+
+/// Anota sesiones con llamadas nuevas escritas con su coste (el escritor de la ingesta).
+pub fn mark_sessions<'a>(
+    conn: &Connection,
+    sessions: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    let mut stmt = conn.prepare_cached("INSERT OR IGNORE INTO dirty_sessions VALUES (?1)")?;
+    for s in sessions {
+        stmt.execute([s])?;
+    }
     Ok(())
 }

@@ -248,3 +248,113 @@ fn ids_autoincrementales_y_marcas_de_reloj_no_influyen() {
         assert_eq!(huella(&base(false, &[cambio])), original, "{cambio}");
     }
 }
+
+// ------------------------------------------------------------------ golden de consultas (D1)
+
+use common::{canonical_line, compare_golden, compare_json, value_hash};
+use serde_json::json;
+
+#[test]
+fn enteros_cadenas_y_booleanos_se_comparan_exactos() {
+    let base = json!({"n": 3, "s": "x", "b": true, "z": null});
+    assert!(compare_json(&base, &base.clone()).is_ok());
+    for otro in [
+        json!({"n": 4, "s": "x", "b": true, "z": null}),
+        json!({"n": 3, "s": "y", "b": true, "z": null}),
+        json!({"n": 3, "s": "x", "b": false, "z": null}),
+        json!({"n": 3, "s": "x", "b": true, "z": 0}),
+        json!({"n": 3.0, "s": "x", "b": true, "z": null}),
+    ] {
+        assert!(compare_json(&base, &otro).is_err(), "{otro}");
+    }
+}
+
+#[test]
+fn reales_con_tolerancia_de_una_millonesima() {
+    for (a, b) in [
+        (0.5, 0.500001),
+        (1.0, 1.000001),
+        (2.0, 1.999999),
+        (0.0, -0.0),
+    ] {
+        assert!(
+            compare_json(&json!({"c": a}), &json!({"c": b})).is_ok(),
+            "{a} {b}"
+        );
+    }
+    for (a, b) in [(0.5, 0.500002), (1.0, 0.999998), (1e6, 1e6 + 0.01)] {
+        assert!(
+            compare_json(&json!({"c": a}), &json!({"c": b})).is_err(),
+            "{a} {b}"
+        );
+    }
+}
+
+#[test]
+fn claves_y_elementos_de_mas_o_de_menos_fallan() {
+    let base = json!({"a": 1, "l": [1, 2]});
+    for otro in [
+        json!({"a": 1}),
+        json!({"a": 1, "l": [1, 2], "x": 0}),
+        json!({"l": [1, 2], "b": 1}),
+        json!({"a": 1, "l": [1]}),
+        json!({"a": 1, "l": [1, 2, 3]}),
+        json!({"a": 1, "l": [2, 1]}),
+    ] {
+        let err = compare_json(&base, &otro).unwrap_err();
+        assert!(!err.is_empty(), "{otro}");
+    }
+    let anidado = |c: f64| json!([{"k": "a", "v": [{"c": c}]}]);
+    assert!(compare_json(&anidado(1.0), &anidado(1.0000004)).is_ok());
+    assert!(compare_json(&anidado(1.0), &anidado(1.1))
+        .unwrap_err()
+        .contains("[0].v[0].c"));
+}
+
+#[test]
+fn la_linea_canonica_no_depende_del_orden_de_las_claves() {
+    let a: serde_json::Value =
+        serde_json::from_str(r#"{"b":1,"a":{"y":2,"x":[3,{"q":1,"p":2}]}}"#).unwrap();
+    let b: serde_json::Value =
+        serde_json::from_str(r#"{"a":{"x":[3,{"p":2,"q":1}],"y":2},"b":1}"#).unwrap();
+    let la = canonical_line("summary", "todo", &a);
+    assert_eq!(la, canonical_line("summary", "todo", &b));
+    assert_eq!(
+        la,
+        r#"summary	todo	{"a":{"x":[3,{"p":2,"q":1}],"y":2},"b":1}"#
+    );
+    assert!(!la.contains('\n'));
+}
+
+#[test]
+fn el_hash_redondea_los_reales_a_una_millonesima() {
+    let h = |v: serde_json::Value| value_hash(&v);
+    assert_eq!(h(json!({"c": 1.0000001})), h(json!({"c": 1.0000002})));
+    assert_eq!(h(json!({"c": 0.0})), h(json!({"c": -0.0000001})));
+    assert_ne!(h(json!({"c": 1.0})), h(json!({"c": 1.00001})));
+    assert_ne!(h(json!({"c": 1})), h(json!({"c": 2})));
+    assert_ne!(h(json!({"c": "a"})), h(json!({"d": "a"})));
+    assert_eq!(
+        h(serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap()),
+        h(serde_json::from_str(r#"{"b":2,"a":1}"#).unwrap())
+    );
+}
+
+#[test]
+fn el_golden_compara_linea_a_linea_por_nombre() {
+    let esperado = "summary\ttodo\t{\"c\":1.0}\nbreakdown(agent)\ttodo\t[]\n";
+    assert!(compare_golden(
+        esperado,
+        "summary\ttodo\t{\"c\":1.0000001}\nbreakdown(agent)\ttodo\t[]\n"
+    )
+    .is_ok());
+    for actual in [
+        "summary\ttodo\t{\"c\":1.1}\nbreakdown(agent)\ttodo\t[]\n",
+        "summary\ttodo\t{\"c\":1.0}\n",
+        "summary\ttodo\t{\"c\":1.0}\nbreakdown(model)\ttodo\t[]\n",
+        "summary\ttodo\t{\"c\":1.0}\nbreakdown(agent)\ttodo\t[]\nx\ty\t1\n",
+    ] {
+        let err = compare_golden(esperado, actual).unwrap_err();
+        assert!(!err.is_empty(), "{actual}");
+    }
+}

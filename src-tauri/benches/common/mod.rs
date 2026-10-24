@@ -360,3 +360,401 @@ pub fn live_lines(session: &str, start: usize, n: usize) -> String {
     }
     out
 }
+
+// ------------------------------------------------------------------ golden de consultas (D1)
+
+/// Diferencia máxima entre reales del golden de consultas: sumar por agregados cambia el orden de
+/// las sumas en coma flotante.
+pub const REAL_TOLERANCE: f64 = 1e-6;
+
+fn sorted_value(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = serde_json::Map::new();
+            for k in keys {
+                out.insert(k.clone(), sorted_value(&map[k]));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sorted_value).collect()),
+        other => other.clone(),
+    }
+}
+
+fn canonical_json(v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let body: Vec<String> = keys
+                .into_iter()
+                .map(|k| format!("{}:{}", Value::String(k.clone()), canonical_json(&map[k])))
+                .collect();
+            format!("{{{}}}", body.join(","))
+        }
+        Value::Array(items) => {
+            let body: Vec<String> = items.iter().map(canonical_json).collect();
+            format!("[{}]", body.join(","))
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Una línea del golden: consulta, filtro y su salida en JSON con las claves ordenadas.
+pub fn canonical_line(query: &str, filter: &str, value: &serde_json::Value) -> String {
+    format!(
+        "{query}\t{filter}\t{}",
+        canonical_json(&sorted_value(value))
+    )
+}
+
+fn compare_at(
+    path: &str,
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+) -> Result<(), String> {
+    use serde_json::Value;
+    let differ = || Err(format!("{path}: esperado {expected}, obtenido {actual}"));
+    match (expected, actual) {
+        (Value::Object(e), Value::Object(a)) => {
+            for k in e.keys() {
+                if !a.contains_key(k) {
+                    return Err(format!("{path}.{k}: falta la clave"));
+                }
+            }
+            for k in a.keys() {
+                if !e.contains_key(k) {
+                    return Err(format!("{path}.{k}: clave de más"));
+                }
+            }
+            for (k, ev) in e {
+                compare_at(&format!("{path}.{k}"), ev, &a[k])?;
+            }
+            Ok(())
+        }
+        (Value::Array(e), Value::Array(a)) => {
+            if e.len() != a.len() {
+                return Err(format!(
+                    "{path}: {} elementos esperados, {} obtenidos",
+                    e.len(),
+                    a.len()
+                ));
+            }
+            for (i, (ev, av)) in e.iter().zip(a).enumerate() {
+                compare_at(&format!("{path}[{i}]"), ev, av)?;
+            }
+            Ok(())
+        }
+        (Value::Number(e), Value::Number(a)) => {
+            if e.is_f64() != a.is_f64() {
+                return differ();
+            }
+            if !e.is_f64() {
+                return if e == a { Ok(()) } else { differ() };
+            }
+            let (x, y) = (
+                e.as_f64().unwrap_or(f64::NAN),
+                a.as_f64().unwrap_or(f64::NAN),
+            );
+            let slack = f64::EPSILON * x.abs().max(y.abs()).max(1.0);
+            if (x - y).abs() <= REAL_TOLERANCE + slack {
+                Ok(())
+            } else {
+                differ()
+            }
+        }
+        _ if expected == actual => Ok(()),
+        _ => differ(),
+    }
+}
+
+/// Compara dos salidas de consulta: estructura, enteros, cadenas y booleanos exactos; reales con
+/// `|a − b| ≤ 1e-6`. El error indica la ruta de la primera diferencia.
+pub fn compare_json(
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+) -> Result<(), String> {
+    compare_at("", expected, actual)
+}
+
+fn split_line(line: &str) -> Result<(&str, serde_json::Value), String> {
+    let mut parts = line.splitn(3, '\t');
+    let (Some(q), Some(f), Some(json)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("línea mal formada: {line}"));
+    };
+    let name_len = q.len() + 1 + f.len();
+    let value = serde_json::from_str(json).map_err(|e| format!("{q} {f}: {e}"))?;
+    Ok((&line[..name_len], value))
+}
+
+/// Compara un golden de consultas con la salida actual, línea a línea y por nombre.
+pub fn compare_golden(expected: &str, actual: &str) -> Result<(), String> {
+    let (e_lines, a_lines): (Vec<&str>, Vec<&str>) =
+        (expected.lines().collect(), actual.lines().collect());
+    if e_lines.len() != a_lines.len() {
+        return Err(format!(
+            "{} líneas esperadas, {} obtenidas",
+            e_lines.len(),
+            a_lines.len()
+        ));
+    }
+    let mut errors = Vec::new();
+    for (e, a) in e_lines.iter().zip(&a_lines) {
+        let (e_name, e_value) = split_line(e)?;
+        let (a_name, a_value) = split_line(a)?;
+        if e_name != a_name {
+            return Err(format!("se esperaba {e_name:?} y llegó {a_name:?}"));
+        }
+        if let Err(diff) = compare_json(&e_value, &a_value) {
+            errors.push(format!("{e_name}: {diff}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+fn hash_into(hash: u64, v: &serde_json::Value) -> u64 {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let h = keys.into_iter().fold(fnv1a(hash, b"{"), |h, k| {
+                let h = fnv1a(fnv1a(h, k.as_bytes()), b":");
+                fnv1a(hash_into(h, &map[k]), b",")
+            });
+            fnv1a(h, b"}")
+        }
+        Value::Array(items) => {
+            let h = items
+                .iter()
+                .fold(fnv1a(hash, b"["), |h, x| fnv1a(hash_into(h, x), b","));
+            fnv1a(h, b"]")
+        }
+        Value::Number(n) if n.is_f64() => {
+            let rounded = (n.as_f64().unwrap_or(0.0) * 1e6).round() / 1e6;
+            let rounded = if rounded == 0.0 { 0.0 } else { rounded };
+            fnv1a(hash, format!("{rounded:.6}").as_bytes())
+        }
+        other => fnv1a(hash, other.to_string().as_bytes()),
+    }
+}
+
+/// Hash FNV-1a de una salida de consulta con los reales redondeados a 1e-6 y las claves ordenadas.
+pub fn value_hash(v: &serde_json::Value) -> u64 {
+    hash_into(FNV_OFFSET, v)
+}
+
+/// Proveedores sobre los fixtures versionados (`tests/fixtures`); OpenCode necesita su base, que
+/// se crea en `scratch` a partir del SQL versionado.
+pub fn versioned_fixture_providers(scratch: &Path) -> Result<Vec<Box<dyn Provider>>> {
+    use agentboard_lib::providers::opencode::OpenCode;
+    let fx = manifest_dir().join("../tests/fixtures");
+    let oc_root = scratch.join("opencode");
+    std::fs::create_dir_all(&oc_root)?;
+    let sql = std::fs::read_to_string(fx.join("opencode/opencode.sql"))?;
+    Connection::open(oc_root.join("opencode.db"))?.execute_batch(&sql)?;
+    Ok(vec![
+        Box::new(ClaudeCode::with_roots(vec![fx.join("claude_code")])),
+        Box::new(Codex::with_roots(vec![fx.join("codex/sessions")])),
+        Box::new(Copilot::with_roots(vec![fx.join("copilot/session-state")])),
+        Box::new(Cursor::with_roots(vec![fx.join("cursor/projects")])),
+        Box::new(Gemini::with_roots(vec![fx.join("gemini/tmp")])),
+        Box::new(OpenCode::with_roots(vec![oc_root])),
+    ])
+}
+
+/// Genera el fixture sintético `size` con `seed` en `out`; `false` si no hay `python3`.
+pub fn generate_fixture(size: &str, seed: u64, out: &Path) -> bool {
+    let script = manifest_dir().join("../scripts/gen-fixtures.py");
+    match Command::new("python3")
+        .arg(script)
+        .args([size, "--seed", &seed.to_string(), "--out"])
+        .arg(out)
+        .output()
+    {
+        Ok(o) => {
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// «Ahora» fijo (media hora después de la última llamada, para que el `burn rate` no sea 0) y
+/// filtros del golden de consultas relativos al final de los datos (`end`, la medianoche local
+/// siguiente a la última llamada), con nombre para que cada línea diga cuál es.
+pub fn golden_filters(conn: &Connection) -> Result<(i64, Vec<(&'static str, queries::Filter)>)> {
+    use chrono::{Datelike, TimeZone};
+    let zone = agentboard_lib::tz::parse(TZ);
+    let last: Option<i64> = conn.query_row("SELECT MAX(ts) FROM calls", [], |r| r.get(0))?;
+    let last = last.unwrap_or(WINDOW_END_MS);
+    let midnight = |ts: i64| agentboard_lib::tz::day_start(ts, &zone);
+    let end = midnight(last + DAY_MS + 6 * 3_600_000);
+    let days_back = |n: i64| midnight(end - n * DAY_MS + 6 * 3_600_000);
+    let local_last = zone
+        .timestamp_millis_opt(end - 1)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("fecha local inválida"))?;
+    let month_start = zone
+        .with_ymd_and_hms(local_last.year(), local_last.month(), 1, 0, 0, 0)
+        .earliest()
+        .map(|d| d.timestamp_millis())
+        .ok_or_else(|| anyhow::anyhow!("inicio de mes inválido"))?;
+    let project: Option<i64> = conn
+        .query_row(
+            "SELECT p.id FROM projects p JOIN sessions s ON s.project_id = p.id
+             GROUP BY p.id ORDER BY COUNT(*) DESC, p.cwd LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let base = queries::Filter::default();
+    Ok((
+        last + 1_800_000,
+        vec![
+            ("todo", base.clone()),
+            (
+                "30d",
+                queries::Filter {
+                    from: Some(days_back(30)),
+                    to: Some(end),
+                    ..base.clone()
+                },
+            ),
+            (
+                "mes",
+                queries::Filter {
+                    from: Some(month_start),
+                    to: None,
+                    ..base.clone()
+                },
+            ),
+            (
+                "7d+agente",
+                queries::Filter {
+                    from: Some(days_back(7)),
+                    to: Some(end),
+                    agents: Some(vec!["claude-code".into()]),
+                    ..base.clone()
+                },
+            ),
+            (
+                "proyecto",
+                queries::Filter {
+                    projects: Some(project.into_iter().collect()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "sin-proyecto",
+                queries::Filter {
+                    no_project: true,
+                    ..base.clone()
+                },
+            ),
+            (
+                "anterior",
+                queries::Filter {
+                    from: Some(days_back(60)),
+                    to: Some(days_back(30)),
+                    ..base.clone()
+                },
+            ),
+            (
+                "mitad-de-dia",
+                queries::Filter {
+                    from: Some(days_back(10) + 13 * 3_600_000 + 1_234),
+                    to: Some(end),
+                    ..base
+                },
+            ),
+        ],
+    ))
+}
+
+fn json_of<T: serde::Serialize>(v: T) -> Result<serde_json::Value> {
+    Ok(serde_json::to_value(v)?)
+}
+
+/// Salidas de todas las consultas del Resumen y de los apartados para los filtros del golden,
+/// como `(consulta, filtro, salida)` en un orden fijo.
+pub fn query_outputs(conn: &Connection) -> Result<Vec<(String, String, serde_json::Value)>> {
+    use agentboard_lib::{pricing, sessions};
+    let (now, filters) = golden_filters(conn)?;
+    let mut out = Vec::new();
+    for (name, f) in &filters {
+        let mut push =
+            |q: &str, v: serde_json::Value| out.push((q.to_string(), name.to_string(), v));
+        push("summary", json_of(queries::summary(conn, f, now)?)?);
+        for bucket in ["day", "hour"] {
+            push(
+                &format!("timeseries({bucket})"),
+                json_of(queries::timeseries(conn, f, bucket, TZ)?)?,
+            );
+        }
+        for by in ["agent", "model", "project", "branch", "tool"] {
+            push(
+                &format!("timeseries_by({by})"),
+                json_of(queries::timeseries_by(conn, f, by, TZ)?)?,
+            );
+        }
+        for by in [
+            "agent",
+            "project",
+            "branch",
+            "model",
+            "activity",
+            "tool",
+            "command",
+            "skill",
+            "mcp",
+            "agent_type",
+        ] {
+            push(
+                &format!("breakdown({by})"),
+                json_of(queries::breakdown(conn, f, by)?)?,
+            );
+        }
+        push("activity", json_of(insights::activity(conn, f)?)?);
+        push(
+            "activity_daily",
+            json_of(insights::activity_daily(conn, f, TZ)?)?,
+        );
+        push("list_agents", json_of(queries::list_agents(conn, f)?)?);
+        push("list_projects", json_of(queries::list_projects(conn, f)?)?);
+        push("list_prices", json_of(pricing::list_prices(conn, f, &[])?)?);
+        push(
+            "list_sessions",
+            json_of(sessions::list_sessions(conn, f, None)?)?,
+        );
+        push(
+            "sessions::list_projects",
+            json_of(sessions::list_projects(conn, f)?)?,
+        );
+    }
+    Ok(out)
+}
+
+/// Golden de consultas: una línea canónica por (consulta, filtro).
+pub fn query_golden(conn: &Connection) -> Result<String> {
+    Ok(query_outputs(conn)?
+        .iter()
+        .map(|(q, f, v)| canonical_line(q, f, v) + "\n")
+        .collect())
+}
+
+/// Huella de consultas (`perf_scan --query-fingerprint`): un hash por (consulta, filtro).
+pub fn query_fingerprint(conn: &Connection) -> Result<String> {
+    Ok(query_outputs(conn)?
+        .iter()
+        .map(|(q, f, v)| format!("{q} {f}: {:016x}\n", value_hash(v)))
+        .collect())
+}

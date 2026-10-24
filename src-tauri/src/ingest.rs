@@ -1701,6 +1701,42 @@ mod tests {
     }
 
     #[test]
+    fn una_base_de_opencode_sin_cambios_no_se_limpia_ni_se_relee() {
+        use crate::providers::opencode::OpenCode;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("opencode");
+        fs::create_dir_all(&root).unwrap();
+        let sql = fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/fixtures/opencode/opencode.sql"),
+        )
+        .unwrap();
+        Connection::open(root.join("opencode.db"))
+            .unwrap()
+            .execute_batch(&sql)
+            .unwrap();
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(OpenCode::with_roots(vec![root]))];
+        let mut conn = db::open_in_memory().unwrap();
+        let first = scan_all(&mut conn, &providers).unwrap();
+        assert!(first.records > 0);
+        let calls = count(&conn, "SELECT COUNT(*) FROM calls");
+        // Su «offset» es un cursor de fechas, no un tamaño: no cuenta como encogido ni rotado.
+        let again = scan_all(&mut conn, &providers).unwrap();
+        assert!(
+            again.records < first.records,
+            "sin limpiar ni releer entero: {again:?}"
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), calls);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM session_files"),
+            count(
+                &conn,
+                "SELECT COUNT(DISTINCT session_id) FROM session_files"
+            )
+        );
+    }
+
+    #[test]
     fn la_limpieza_no_relee_los_archivos_que_no_le_afectan() {
         let (dir, _a, b) = two_files(false);
         let mut conn = db::open_in_memory().unwrap();

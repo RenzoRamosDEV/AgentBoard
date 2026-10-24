@@ -458,6 +458,12 @@ mod tests {
         });
         handle.request(Origen::EscaneoInicial);
         assert_eq!(started_rx.recv_timeout(WAIT).unwrap(), "espera");
+        // Espera a que a.log esté confirmado: el trabajo llega con el escritor ya esperando a b.log.
+        let deadline = std::time::Instant::now() + WAIT;
+        while calls(&fx) < 1 {
+            assert!(std::time::Instant::now() < deadline, "a.log no se confirmó");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         // El escaneo está parado a mitad (b.log): el cambio de precios no espera a que acabe.
         let (reply_tx, reply_rx) = mpsc::channel();
         let h = handle.clone();

@@ -1056,6 +1056,20 @@ mod tests {
         );
         let a = args(r#"{ "command": ["ls", "-la"] }"#);
         assert_eq!(tool_target("Bash", &a).as_deref(), Some("ls -la"));
+        for (command, target) in [
+            (r#"["git", "commit", "-m"]"#, "git commit -m"),
+            (r#"["sh", "-c"]"#, "sh -c"),
+            (r#"["cmd", "-x", "y"]"#, "cmd -x y"),
+            (r#"["zsh", "-c", "make test"]"#, "make test"),
+        ] {
+            let json = format!(r#"{{ "command": {command} }}"#);
+            let a = args(&json);
+            assert_eq!(
+                tool_target("Bash", &a).as_deref(),
+                Some(target),
+                "{command}"
+            );
+        }
         let a = args(r#"{ "command": "make", "cmd": "otro" }"#);
         assert_eq!(tool_target("Bash", &a).as_deref(), Some("make"));
         let a = args(r#"{ "command": {"x": 1}, "cmd": "otro" }"#);

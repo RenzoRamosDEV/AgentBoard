@@ -1736,6 +1736,42 @@ mod tests {
         );
     }
 
+    fn result_line(tool_id: &str, is_error: bool, ts: &str) -> String {
+        format!(
+            r#"{{"type":"user","sessionId":"s1","timestamp":"{ts}","cwd":"/h/Proyectos/AgentBoard","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"{tool_id}","is_error":{is_error},"content":"x"}}]}}}}"#
+        ) + "\n"
+    }
+
+    #[test]
+    fn los_errores_de_las_herramientas_llegan_a_sus_agregados() {
+        let (_d, file, p, mut conn) = setup();
+        let errors = |conn: &Connection| count(conn, "SELECT SUM(errors) FROM tool_stats");
+        // Uso y resultado con error en el mismo archivo y pasada.
+        fs::write(
+            &file,
+            tool_line(0) + "\n" + &result_line("tu0", true, "2026-09-25T10:00:05Z"),
+        )
+        .unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(errors(&conn), 1);
+        // Otro uso en una pasada y su resultado en la siguiente; luego el primero se corrige.
+        let mut f = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(f, "{}", tool_line(1)).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(errors(&conn), 1);
+        write!(f, "{}", result_line("tu1", true, "2026-09-25T10:00:09Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(errors(&conn), 2);
+        write!(f, "{}", result_line("tu0", false, "2026-09-25T10:00:10Z")).unwrap();
+        ingest_file(&mut conn, &p, &file).unwrap();
+        assert_eq!(errors(&conn), 1);
+        assert_eq!(
+            count(&conn, "SELECT SUM(is_error) FROM tool_calls"),
+            errors(&conn),
+            "igual que contarlos desde las herramientas"
+        );
+    }
+
     #[test]
     fn la_limpieza_no_relee_los_archivos_que_no_le_afectan() {
         let (dir, _a, b) = two_files(false);

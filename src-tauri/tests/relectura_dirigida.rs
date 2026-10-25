@@ -140,7 +140,9 @@ fn releer_solo_lo_tocado_deja_la_misma_huella_que_leer_todo() {
     let fresh = SessionInfo::fresh;
     // Componente a componente, como las rutas de `logs`: en Windows un "/" dentro de un `join`
     // daría otra clave para el mismo archivo y la relectura dirigida no lo reconocería.
-    let new_dir = root.join("claude_code").join("-home-dev-Proyectos-proyecto-00");
+    let new_dir = root
+        .join("claude_code")
+        .join("-home-dev-Proyectos-proyecto-00");
     std::fs::create_dir_all(&new_dir).unwrap();
     // Pasos en los que el escaneo completo incremental (y por tanto la relectura dirigida) deja lo
     // mismo que leer desde cero. Hay secuencias forzadas (sesiones repartidas entre archivos que se

@@ -17,6 +17,7 @@ use anyhow::{bail, Context, Result};
 use common::{median, LiveFile, Phase, Reader};
 use rusqlite::Connection;
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const WARM_RUNS: usize = 5;
@@ -56,10 +57,10 @@ fn refreshes(
     conn: &mut Connection,
     providers: &[Box<dyn agentboard_lib::providers::Provider>],
     args: &common::Args,
-    guard: &LiveFile,
-    session: &str,
+    (guard, session): &(LiveFile, String),
     round: usize,
     after: &dyn Fn(),
+    checkpoint: Option<&db::Target>,
 ) -> Result<(Vec<Duration>, usize)> {
     let mut times = Vec::with_capacity(args.repeat);
     let mut records = 0;
@@ -76,6 +77,14 @@ fn refreshes(
         let stats = ingest::scan_all(conn, providers)?;
         times.push(t.elapsed());
         records += stats.records;
+        // Como el hilo de ingesta: con el escritor libre, el WAL grande se trunca.
+        if let Some(target) = checkpoint {
+            let _ = match db::checkpoint_if_large(conn, target)? {
+                db::Checkpoint::Done => CHECKPOINTS_DONE.fetch_add(1, Ordering::Relaxed),
+                db::Checkpoint::Busy => CHECKPOINTS_BUSY.fetch_add(1, Ordering::Relaxed),
+                db::Checkpoint::NotNeeded => 0,
+            };
+        }
         after();
     }
     Ok((times, records))
@@ -95,8 +104,8 @@ fn live(
     providers: &[Box<dyn agentboard_lib::providers::Provider>],
     args: &common::Args,
 ) -> Result<()> {
-    let (guard, session) = live_file(args)?;
-    let (times, records) = refreshes(conn, providers, args, &guard, &session, 0, &|| {})?;
+    let live = live_file(args)?;
+    let (times, records) = refreshes(conn, providers, args, &live, 0, &|| {}, None)?;
     let total: Duration = times.iter().sum();
     row(
         "live",
@@ -128,6 +137,10 @@ fn live(
     Ok(())
 }
 
+/// Checkpoints del WAL completados y aplazados por un lector en `refreshes`.
+static CHECKPOINTS_DONE: AtomicUsize = AtomicUsize::new(0);
+static CHECKPOINTS_BUSY: AtomicUsize = AtomicUsize::new(0);
+
 /// Resumen completo con un lector recién abierto (sin caché de resultados).
 fn cold_summary(target: &db::Target) -> Result<Duration> {
     let pool = db::ReadPool::open(target, 1)?;
@@ -153,14 +166,24 @@ fn contention(
     providers: &[Box<dyn agentboard_lib::providers::Provider>],
     args: &common::Args,
 ) -> Result<()> {
-    let (guard, session) = live_file(args)?;
-    let (alone, _) = refreshes(conn, providers, args, &guard, &session, 0, &|| {})?;
+    let live = live_file(args)?;
+    let (alone, _) = refreshes(conn, providers, args, &live, 0, &|| {}, Some(target))?;
+    let wal_alone = wal_bytes(target);
+    let ckpt_alone = (
+        CHECKPOINTS_DONE.swap(0, Ordering::Relaxed),
+        CHECKPOINTS_BUSY.swap(0, Ordering::Relaxed),
+    );
     // Tras la tanda sin lecturas, para que antes y después difieran solo en la tanda con lecturas.
     let summary_before = cold_summary(target)?;
     let pool = std::sync::Arc::new(db::ReadPool::open(target, db::ReadPool::SIZE)?);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Avisos como `data:changed`: por el notificador real (como mucho uno por segundo).
     let (notice_tx, notice_rx) = std::sync::mpsc::channel::<()>();
+    let notifier = agentboard_lib::notifier::spawn(move |_| {
+        let _ = notice_tx.send(());
+    });
     let reader_kind = args.reader;
+    let ui_request = last_30_days_request();
     let reader = {
         let (pool, stop) = (pool.clone(), stop.clone());
         std::thread::spawn(move || -> Result<(usize, Vec<Duration>)> {
@@ -182,17 +205,30 @@ fn contention(
                     }
                 }
                 let t = Instant::now();
-                pool.with(|c| common::full_summary(c, &f))?;
+                match reader_kind {
+                    Reader::Loop => pool.with(|c| common::full_summary(c, &f))?,
+                    // La interfaz pide el Resumen en una sola petición.
+                    Reader::Ui => pool.with(|c| {
+                        agentboard_lib::snapshot::dashboard(c, &ui_request, common::WINDOW_END_MS)
+                            .map(|_| 0)
+                    })?,
+                };
                 times.push(t.elapsed());
             }
             Ok((times.len(), times))
         })
     };
-    let notify = move || {
-        let _ = notice_tx.send(());
+    let generation = std::cell::Cell::new(0u64);
+    let notify = || {
+        generation.set(generation.get() + 1);
+        let touched = agentboard_lib::derived::Touched {
+            agents: ["claude-code".to_string()].into(),
+            ..Default::default()
+        };
+        notifier.send(generation.get(), touched);
     };
-    let busy = refreshes(conn, providers, args, &guard, &session, 1, &notify);
-    drop(notify);
+    let busy = refreshes(conn, providers, args, &live, 1, &notify, Some(target));
+    drop(notifier);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let (summaries, summary_times) = reader
         .join()
@@ -226,6 +262,24 @@ fn contention(
                 ms(median(&summary_times))
             }
         ),
+    );
+    row(
+        "contention",
+        "checkpoints hechos / aplazados (sin lecturas · con lecturas)",
+        format!(
+            "{} / {} · {} / {}",
+            ckpt_alone.0,
+            ckpt_alone.1,
+            CHECKPOINTS_DONE.load(Ordering::Relaxed),
+            CHECKPOINTS_BUSY.load(Ordering::Relaxed)
+        ),
+    );
+    row(
+        "contention",
+        "WAL tras la tanda sin lecturas",
+        wal_alone.map_or("n/d".to_string(), |b| {
+            format!("{:.1} MiB", b as f64 / 1048576.0)
+        }),
     );
     row(
         "contention",
@@ -591,15 +645,20 @@ fn payloads(conn: &Connection) -> Result<Vec<(String, usize)>> {
         )?)?,
     ));
     out.push((
-        "list_sessions".to_string(),
-        json_len(&sessions::list_sessions(conn, &f, None)?)?,
+        "list_sessions (página de 50)".to_string(),
+        json_len(&sessions::session_page(
+            conn,
+            &f,
+            None,
+            &sessions::PageRequest::default(),
+        )?)?,
     ));
     let projects = sessions::list_projects(conn, &f)?;
     out.push(("list_project_summaries".to_string(), json_len(&projects)?));
     if let Some(p) = projects.iter().max_by_key(|p| p.sessions) {
         out.push((
             "get_project_detail (el mayor)".to_string(),
-            json_len(&sessions::project_detail(conn, &p.key, &f, common::TZ)?)?,
+            json_len(&sessions::project_overview(conn, &p.key, &f, common::TZ)?)?,
         ));
     }
     let biggest: Option<String> = conn
@@ -612,7 +671,15 @@ fn payloads(conn: &Connection) -> Result<Vec<(String, usize)>> {
     if let Some(id) = biggest {
         out.push((
             "get_session_detail (la mayor)".to_string(),
-            json_len(&sessions::session_detail(conn, &id)?)?,
+            json_len(&sessions::session_overview(conn, &id)?)?,
+        ));
+        out.push((
+            "list_session_turns (la mayor, página de 30)".to_string(),
+            json_len(&sessions::session_turns(
+                conn,
+                &id,
+                &sessions::TurnPage::default(),
+            )?)?,
         ));
     }
     Ok(out)

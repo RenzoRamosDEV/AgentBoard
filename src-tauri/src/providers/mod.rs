@@ -1,10 +1,13 @@
 //! Contrato para soportar un agente: dónde están sus logs y cómo se convierte cada línea en filas.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod claude_code;
 pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod gemini;
+pub mod json;
 pub mod opencode;
 
 use anyhow::Result;

@@ -13,8 +13,10 @@ AgentBoard lo reúne en un único panel, sin enviar nada fuera de la máquina.
 
 - **Local y privado.** No usa proxy, ni claves de API, ni telemetría. Ningún dato sale del equipo.
 - **Solo lectura.** Lee los logs existentes; no modifica el trabajo de los agentes.
-- **Sin persistencia.** Los datos de uso viven en una base SQLite **en memoria** mientras la app
-  está abierta. Lo único que se guarda en disco es el archivo de ajustes.
+- **Caché local reconstruible.** Lo leído de los logs se guarda en una caché SQLite en la carpeta
+  de datos del usuario (solo legible por él) para que el arranque lea solo lo nuevo. Solo contiene
+  lo que ya está en los logs y se puede borrar o reconstruir en cualquier momento; con «Solo
+  memoria» no se guarda en disco.
 - **Multiplataforma.** Se compila y ejecuta en Linux, Windows y macOS (Tauri + Rust + React).
 
 ## Licencia

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type AgentRow, type BreakdownRow, type Filter, type PriceOverride, type PriceRow, type ScopedBudget, type Settings } from "../lib/api";
 import { fmt } from "../lib/format";
+import { filterKey, useQuery } from "../lib/query";
 import { t } from "../lib/i18n";
 import { monthStart, projectMonth } from "../lib/period";
 import { DataTable, type Column } from "../components/DataTable";
@@ -80,19 +81,17 @@ function Progress({ label, spent, limit, hint }: { label: string; spent: number;
 /** Apartado Precios y presupuestos. */
 export function Pricing({
   filter,
-  refresh,
   settings,
   onSave,
   agents,
 }: {
   filter: Filter;
-  refresh: number;
   settings: Settings;
   onSave: (s: Settings) => Promise<void>;
   agents: AgentRow[];
 }) {
-  const [rows, setRows] = useState<PriceRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const pricesQ = useQuery<PriceRow[]>("list_prices", filterKey(filter), () => api.prices(filter));
+  const rows = pricesQ.data ?? null;
   const [draft, setDraft] = useState<Draft>({});
   const [showAll, setShowAll] = useState(false);
   const [newModel, setNewModel] = useState("");
@@ -102,24 +101,15 @@ export function Pricing({
   const [opError, setOpError] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   // Gasto del mes (todos los agentes y proyectos) para las barras de presupuesto.
-  const [month, setMonth] = useState<{ total: number; today: number; projects: BreakdownRow[]; agents: BreakdownRow[] } | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    api.prices(filter).then((r) => alive && (setRows(r), setError(null))).catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [filter, refresh, settings.priceOverrides]);
-
-  useEffect(() => {
-    const m: Filter = { from: monthStart().getTime() };
-    const now = new Date();
-    const today: Filter = { from: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() };
-    Promise.all([api.summary(m), api.summary(today), api.breakdown(m, "project"), api.breakdown(m, "agent")])
-      .then(([sm, st, projects, ags]) => setMonth({ total: sm.costUsd, today: st.costUsd, projects, agents: ags }))
-      .catch((e) => setError(String(e)));
-  }, [refresh, settings]);
+  const now = new Date();
+  const m: Filter = { from: monthStart(now).getTime() };
+  const today: Filter = { from: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() };
+  const monthQ = useQuery("pricing_month", `${m.from}|${today.from}`, async () => {
+    const [sm, st, projects, ags] = await Promise.all([api.summary(m), api.summary(today), api.breakdown(m, "project"), api.breakdown(m, "agent")]);
+    return { total: sm.costUsd, today: st.costUsd, projects, agents: ags };
+  });
+  const month = monthQ.data ?? null;
+  const error = pricesQ.error ?? monthQ.error;
 
   if (error) return <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
   if (!rows) return <div className="main muted">{t("Cargando…")}</div>;

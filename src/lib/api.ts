@@ -96,6 +96,18 @@ export interface ProjectRow {
   calls: number;
 }
 
+/**
+ * Aviso `data:changed` del backend (como mucho uno por segundo): solo la generación de datos y lo
+ * que cambió, nunca filas. Listas vacías: puede haber cambiado todo (precios, limpieza,
+ * reconstrucción). `days` son días `YYYYMMDD` en la zona horaria de la caché (la del sistema), que
+ * puede no ser la de la interfaz; por ahora la interfaz refresca todo con cada aviso.
+ */
+export interface DataChanged {
+  generation: number;
+  agents: string[];
+  days: number[];
+}
+
 export interface DataInfo {
   firstTs: number | null;
   calls: number;
@@ -153,19 +165,34 @@ export interface ProjectSummary {
   lastTs: number;
 }
 
+/** Detalle de proyecto sin sus sesiones (se piden por páginas con `sessions`). */
 export interface ProjectDetail {
   project: ProjectSummary;
   daily: Point[];
   activities: ActivityRow[];
   models: BreakdownRow[];
   branches: BreakdownRow[];
-  sessions: SessionRow[];
   tools: ToolStat[];
+  /** Sesiones del periodo con alguna compactación, sobre todas las del proyecto. */
+  sessionsWithCompactions: number;
 }
 
-export interface SessionList {
-  sessions: SessionRow[];
+/** Columnas por las que el servidor ordena las sesiones. */
+export type SessionSort = "started" | "agent" | "branch" | "model" | "duration" | "turns" | "compactions" | "cost";
+
+/** Página pedida: como mucho 500 filas (50 por defecto), más recientes primero por defecto. */
+export interface PageRequest {
+  limit?: number;
+  offset?: number;
+  sort?: SessionSort;
+  desc?: boolean;
+}
+
+/** Una página de una lista del servidor, con el total de la lista. */
+export interface Page<T> {
+  rows: T[];
   total: number;
+  offset: number;
 }
 
 export interface TurnRow {
@@ -195,11 +222,20 @@ export interface KeyCost {
   calls: number;
 }
 
+/** Coste por turno tras la compactación `k` frente al de antes (`ratio` nulo si antes era 0). */
+export interface AfterCompaction {
+  k: number;
+  ratio: number | null;
+}
+
+/** Detalle de sesión sin sus turnos (se piden por páginas con `sessionTurns`). */
 export interface SessionDetail {
   session: SessionRow;
-  timeline: { ts: number; costUsd: number }[];
+  /** Coste acumulado llamada a llamada, en columnas. */
+  timeline: { ts: number[]; cost: number[] };
   compactions: number[];
-  turns: TurnRow[];
+  turnsTotal: number;
+  afterCompaction: AfterCompaction | null;
   activities: KeyCost[];
   models: KeyCost[];
   tools: ToolStat[];
@@ -236,6 +272,8 @@ export interface Settings {
   alertAt80: boolean;
   alertAt100: boolean;
   trayShowsToday: boolean;
+  /** Sin caché en disco: al abrir la app se vuelven a leer todos los logs. */
+  memoryOnly: boolean;
 }
 
 export type PriceSource = "default" | "edited" | "reported" | "missing";
@@ -270,12 +308,16 @@ export const api = {
   agents: (filter: Filter) => invoke<AgentRow[]>("list_agents", { filter }),
   projects: (filter: Filter) => invoke<ProjectRow[]>("list_projects", { filter }),
   prices: (filter: Filter) => invoke<PriceRow[]>("list_prices", { filter }),
-  sessions: (filter: Filter, limit?: number) => invoke<SessionList>("list_sessions", { filter, limit }),
+  sessions: (filter: Filter, page?: PageRequest, projectKey?: string) =>
+    invoke<Page<SessionRow>>("list_sessions", { filter, page, projectKey }),
+  sessionTurns: (id: string, page?: { limit?: number; offset?: number }) => invoke<Page<TurnRow>>("list_session_turns", { id, page }),
   projectSummaries: (filter: Filter) => invoke<ProjectSummary[]>("list_project_summaries", { filter }),
   projectDetail: (key: string, filter: Filter) => invoke<ProjectDetail>("get_project_detail", { key, filter, tz: tzName() }),
   sessionDetail: (id: string) => invoke<SessionDetail>("get_session_detail", { id }),
   dataInfo: () => invoke<DataInfo>("get_data_info"),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
+  /** Vacía la caché y relee todos los logs; al terminar llega `ingest://done`. */
+  rebuildCache: () => invoke<void>("rebuild_cache"),
   exportData: (filter: Filter, format: "csv" | "json") => invoke<string>("export_data", { filter, format }),
 };

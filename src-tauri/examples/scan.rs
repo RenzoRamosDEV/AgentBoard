@@ -1,10 +1,11 @@
 //! Lee el historial real de esta máquina en memoria e imprime cada apartado.
 //! Uso: `cargo run --example scan`
 
-use agentboard_lib::{db, ingest, insights, providers, queries};
+use agentboard_lib::{db, ingest, insights, providers, queries, telemetry};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
+    telemetry::init();
     let mut conn = db::open_in_memory()?;
     let t = Instant::now();
     let stats = ingest::scan_all(&mut conn, &providers::all())?;

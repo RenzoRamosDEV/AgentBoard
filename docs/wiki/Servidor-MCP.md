@@ -8,8 +8,9 @@ o «¿qué modelo sale más caro?».
 ## Cómo funciona
 
 `agentboard-mcp` es un binario aparte que reutiliza la misma lógica que la app (providers,
-ingesta y consultas). Al arrancar escanea los logs del disco a una base en memoria —no necesita
-que la aplicación esté abierta ni escribe nada en disco— y habla MCP por **stdio** (JSON-RPC 2.0):
+ingesta y consultas). Al arrancar escanea los logs del disco a una base **en memoria** —no necesita
+que la aplicación esté abierta, no usa la caché de la app ni escribe nada en disco— y habla MCP
+por **stdio** (JSON-RPC 2.0):
 responde a `initialize`, `tools/list` y `tools/call`.
 
 Es un servidor MCP estándar, así que **cualquier cliente compatible con MCP** puede usarlo

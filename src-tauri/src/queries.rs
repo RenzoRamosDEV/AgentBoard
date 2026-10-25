@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// Filtro común a todas las vistas. Vacío = vista general.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Filter {
     /// Epoch ms inclusivo.
@@ -25,14 +25,28 @@ pub struct Filter {
 impl Filter {
     /// `WHERE …` sobre `c` (call_costs o tabla con `ts`/`session_id`) unida a `s` (sessions).
     pub fn sql(&self, ts_col: &str) -> (String, Vec<Value>) {
+        self.where_sql(ts_col, self.from, self.to)
+    }
+
+    /// `WHERE …` sobre un agregado diario (`day`) unido a `s`, con los días `[from, to)`.
+    pub(crate) fn days_sql(
+        &self,
+        day_col: &str,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> (String, Vec<Value>) {
+        self.where_sql(day_col, from, to)
+    }
+
+    fn where_sql(&self, col: &str, from: Option<i64>, to: Option<i64>) -> (String, Vec<Value>) {
         let mut conds = vec!["1=1".to_string()];
         let mut args: Vec<Value> = Vec::new();
-        if let Some(from) = self.from {
-            conds.push(format!("{ts_col} >= ?"));
+        if let Some(from) = from {
+            conds.push(format!("{col} >= ?"));
             args.push(from.into());
         }
-        if let Some(to) = self.to {
-            conds.push(format!("{ts_col} < ?"));
+        if let Some(to) = to {
+            conds.push(format!("{col} < ?"));
             args.push(to.into());
         }
         if let Some(agents) = &self.agents {
@@ -55,6 +69,42 @@ impl Filter {
     }
 }
 
+/// De dónde lee una consulta: las llamadas o los agregados diarios de los días `[from, to)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Source {
+    Detail,
+    Days { from: Option<i64>, to: Option<i64> },
+}
+
+impl Source {
+    pub(crate) fn where_sql(&self, f: &Filter, col: &str) -> (String, Vec<Value>) {
+        match *self {
+            Source::Days { from, to } => f.days_sql(col, from, to),
+            Source::Detail => f.sql(col),
+        }
+    }
+}
+
+/// Los agregados diarios sirven si el periodo son días locales completos de la zona de la caché
+/// (sus extremos, si los hay, son medianoches de esa zona) y, en las consultas que agrupan por
+/// días de `tz`, si esa zona es la de la caché. Si no, se responde desde las llamadas.
+pub(crate) fn source(conn: &Connection, f: &Filter, tz: Option<&str>) -> Result<Source> {
+    let cache = crate::db::cache_tz(conn)?;
+    if cache.is_empty() || tz.is_some_and(|tz| tz != cache) {
+        return Ok(Source::Detail);
+    }
+    let zone = crate::tz::parse(&cache);
+    let day =
+        |ts: i64| (crate::tz::day_start(ts, &zone) == ts).then(|| crate::tz::day_number(ts, &zone));
+    match (f.from.map(day), f.to.map(day)) {
+        (Some(None), _) | (_, Some(None)) => Ok(Source::Detail),
+        (from, to) => Ok(Source::Days {
+            from: from.flatten(),
+            to: to.flatten(),
+        }),
+    }
+}
+
 fn placeholders(n: usize) -> String {
     if n == 0 {
         // IN () no es SQL válido; una lista vacía no casa con nada.
@@ -63,7 +113,7 @@ fn placeholders(n: usize) -> String {
     vec!["?"; n].join(",")
 }
 
-#[derive(Debug, Default, Serialize, PartialEq)]
+#[derive(Debug, Default, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub cost_usd: f64,
@@ -94,15 +144,53 @@ fn ratio(num: i64, den: i64) -> f64 {
     }
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn summary(conn: &Connection, f: &Filter, now: i64) -> Result<Summary> {
-    let (w, args) = f.sql("c.ts");
-    let sql = format!(
-        "SELECT COALESCE(SUM(c.cost_usd),0), COUNT(*), COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
-                COALESCE(SUM(c.input_tokens),0), COALESCE(SUM(c.output_tokens),0),
-                COALESCE(SUM(c.cache_read),0), COALESCE(SUM(c.cache_write),0),
-                COALESCE(SUM(c.cache_savings_usd),0), MIN(c.ts), MAX(c.ts)
-         FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"
+    summary_from(conn, f, now, source(conn, f, None)?)
+}
+
+pub(crate) fn summary_from(
+    conn: &Connection,
+    f: &Filter,
+    now: i64,
+    src: Source,
+) -> Result<Summary> {
+    let (w, args) = src.where_sql(
+        f,
+        if src == Source::Detail {
+            "c.ts"
+        } else {
+            "d.day"
+        },
     );
+    let (sql, unpriced) = match src {
+        Source::Detail => (
+            format!(
+                "SELECT COALESCE(SUM(c.cost_usd),0), COUNT(*), COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
+                        COALESCE(SUM(c.input_tokens),0), COALESCE(SUM(c.output_tokens),0),
+                        COALESCE(SUM(c.cache_read),0), COALESCE(SUM(c.cache_write),0),
+                        COALESCE(SUM(c.cache_savings_usd),0), MIN(c.ts), MAX(c.ts)
+                 FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"
+            ),
+            format!(
+                "SELECT DISTINCT c.model FROM call_costs c JOIN sessions s ON s.id = c.session_id
+                 WHERE {w} AND NOT c.has_price ORDER BY 1"
+            ),
+        ),
+        Source::Days { .. } => (
+            format!(
+                "SELECT COALESCE(SUM(d.cost_usd),0), COALESCE(SUM(d.calls),0), COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN d.session_id END),
+                        COALESCE(SUM(d.input_tokens),0), COALESCE(SUM(d.output_tokens),0),
+                        COALESCE(SUM(d.cache_read),0), COALESCE(SUM(d.cache_write),0),
+                        COALESCE(SUM(d.cache_savings_usd),0), MIN(d.min_ts), MAX(d.max_ts)
+                 FROM daily_stats d JOIN sessions s ON s.id = d.session_id WHERE {w}"
+            ),
+            format!(
+                "SELECT DISTINCT d.model FROM daily_stats d JOIN sessions s ON s.id = d.session_id
+                 WHERE {w} AND d.unpriced_calls > 0 ORDER BY 1"
+            ),
+        ),
+    };
     let mut out = conn.query_row(&sql, params_from_iter(args.iter()), |r| {
         Ok(Summary {
             cost_usd: r.get(0)?,
@@ -123,11 +211,7 @@ pub fn summary(conn: &Connection, f: &Filter, now: i64) -> Result<Summary> {
         out.input_tokens + out.cache_read + out.cache_write,
     );
 
-    let sql = format!(
-        "SELECT DISTINCT c.model FROM call_costs c JOIN sessions s ON s.id = c.session_id
-         WHERE {w} AND NOT c.has_price ORDER BY 1"
-    );
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(&unpriced)?;
     out.unpriced_models = stmt
         .query_map(params_from_iter(args.iter()), |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
@@ -146,7 +230,7 @@ pub fn summary(conn: &Connection, f: &Filter, now: i64) -> Result<Summary> {
     Ok(out)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Point {
     /// Inicio del cubo en epoch ms UTC (medianoche u hora en punto locales).
@@ -162,8 +246,51 @@ pub struct Point {
 
 /// Coste por día u hora local. `tz` es la zona IANA: cada fecha se agrupa con las reglas
 /// de horario de SU momento (verano/invierno), no con el desfase de hoy.
+#[tracing::instrument(level = "debug", skip_all, fields(bucket = %bucket))]
 pub fn timeseries(conn: &Connection, f: &Filter, bucket: &str, tz: &str) -> Result<Vec<Point>> {
+    let src = if bucket == "hour" {
+        Source::Detail
+    } else {
+        source(conn, f, Some(tz))?
+    };
+    timeseries_from(conn, f, bucket, tz, src)
+}
+
+pub(crate) fn timeseries_from(
+    conn: &Connection,
+    f: &Filter,
+    bucket: &str,
+    tz: &str,
+    src: Source,
+) -> Result<Vec<Point>> {
     let zone = crate::tz::parse(tz);
+    if let (Source::Days { .. }, false) = (src, bucket == "hour") {
+        // El inicio del cubo es la medianoche local de cualquier llamada del día.
+        let (w, args) = src.where_sql(f, "d.day");
+        let sql = format!(
+            "SELECT MIN(d.min_ts), SUM(d.cost_usd), SUM(d.calls),
+                    COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN d.session_id END),
+                    SUM(d.input_tokens), SUM(d.output_tokens), SUM(d.cache_read), SUM(d.cache_write)
+             FROM daily_stats d JOIN sessions s ON s.id = d.session_id WHERE {w}
+             GROUP BY d.day ORDER BY d.day"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(args.iter()), |r| {
+                Ok(Point {
+                    ts: crate::tz::day_start(r.get(0)?, &zone),
+                    cost_usd: r.get(1)?,
+                    calls: r.get(2)?,
+                    sessions: r.get(3)?,
+                    input_tokens: r.get(4)?,
+                    output_tokens: r.get(5)?,
+                    cache_read: r.get(6)?,
+                    cache_write: r.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        return Ok(rows);
+    }
     let hour = bucket == "hour";
     let key = |ts: i64| {
         if hour {
@@ -218,7 +345,7 @@ pub fn timeseries(conn: &Connection, f: &Filter, bucket: &str, tz: &str) -> Resu
         .collect())
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesPoint {
     pub ts: i64,
@@ -231,12 +358,26 @@ pub struct SeriesPoint {
 
 /// Serie por día local y `agent | model | project | branch | tool` (esta última cuenta usos
 /// de herramienta, sin coste). Misma agrupación con zona histórica que `timeseries`.
+#[tracing::instrument(level = "debug", skip_all, fields(by = %by))]
 pub fn timeseries_by(
     conn: &Connection,
     f: &Filter,
     by: &str,
     tz: &str,
 ) -> Result<Vec<SeriesPoint>> {
+    timeseries_by_from(conn, f, by, tz, source(conn, f, Some(tz))?)
+}
+
+pub(crate) fn timeseries_by_from(
+    conn: &Connection,
+    f: &Filter,
+    by: &str,
+    tz: &str,
+    src: Source,
+) -> Result<Vec<SeriesPoint>> {
+    if let Source::Days { .. } = src {
+        return timeseries_by_days(conn, f, by, tz, src);
+    }
     let zone = crate::tz::parse(tz);
     let mut acc: BTreeMap<(i64, String), SeriesPoint> = BTreeMap::new();
     let mut add = |ts: i64, key: String, label: String, cost: f64, out: i64| {
@@ -301,16 +442,89 @@ pub fn timeseries_by(
     }
     // Como antes: por cubo y, dentro, lo más gastado (o usado) primero.
     let mut out: Vec<SeriesPoint> = acc.into_values().collect();
+    sort_series(&mut out);
+    Ok(out)
+}
+
+/// Clave, etiqueta y uniones de cada agrupación de las llamadas, sobre `c` (llamadas) o `d`
+/// (agregados diarios) unidos a `s` (sesiones).
+fn call_grouping(by: &str, t: &str) -> Option<(String, String, &'static str)> {
+    Some(match by {
+        "agent" => (
+            "s.agent_id".into(),
+            "COALESCE(a.name, s.agent_id)".into(),
+            "LEFT JOIN agents a ON a.id = s.agent_id",
+        ),
+        "model" => (format!("{t}.model"), format!("{t}.model"), ""),
+        "project" => (
+            "COALESCE(p.repo_root, '')".into(),
+            "COALESCE(p.name, '(sin proyecto)')".into(),
+            "LEFT JOIN projects p ON p.id = s.project_id",
+        ),
+        "branch" => (
+            "COALESCE(s.git_branch, '')".into(),
+            "COALESCE(s.git_branch, '(sin rama)')".into(),
+            "",
+        ),
+        _ => return None,
+    })
+}
+
+/// Lo más gastado (o usado) primero dentro de cada cubo, como hace la ruta de detalle.
+fn sort_series(out: &mut [SeriesPoint]) {
     out.sort_by(|a, b| {
         a.ts.cmp(&b.ts)
             .then(b.cost_usd.total_cmp(&a.cost_usd))
             .then(b.calls.cmp(&a.calls))
             .then(a.key.cmp(&b.key))
     });
+}
+
+fn timeseries_by_days(
+    conn: &Connection,
+    f: &Filter,
+    by: &str,
+    tz: &str,
+    src: Source,
+) -> Result<Vec<SeriesPoint>> {
+    let zone = crate::tz::parse(tz);
+    let sql = if by == "tool" {
+        let (w, _) = src.where_sql(f, "t.day");
+        format!(
+            r"SELECT MIN(t.min_ts), t.tool, t.tool, 0.0, SUM(t.uses), 0
+              FROM tool_stats t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool NOT LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY t.day, t.tool"
+        )
+    } else {
+        let Some((key, label, join)) = call_grouping(by, "d") else {
+            anyhow::bail!("serie desconocida: {by}");
+        };
+        let (w, _) = src.where_sql(f, "d.day");
+        format!(
+            "SELECT MIN(d.min_ts), {key}, MIN({label}), SUM(d.cost_usd), SUM(d.calls), SUM(d.output_tokens)
+             FROM daily_stats d JOIN sessions s ON s.id = d.session_id {join} WHERE {w}
+             GROUP BY d.day, {key}"
+        )
+    };
+    let (_, args) = src.where_sql(f, "x");
+    let mut stmt = conn.prepare(&sql)?;
+    let mut out: Vec<SeriesPoint> = stmt
+        .query_map(params_from_iter(args.iter()), |r| {
+            Ok(SeriesPoint {
+                ts: crate::tz::day_start(r.get(0)?, &zone),
+                key: r.get(1)?,
+                label: r.get(2)?,
+                cost_usd: r.get(3)?,
+                calls: r.get(4)?,
+                output_tokens: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    sort_series(&mut out);
     Ok(out)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BreakdownRow {
     pub key: String,
@@ -347,38 +561,72 @@ impl BreakdownRow {
 }
 
 /// Coste y uso agrupado por `agent | project | branch | model | activity | tool | command | skill | mcp | agent_type`.
+#[tracing::instrument(level = "debug", skip_all, fields(by = %by))]
 pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<BreakdownRow>> {
+    let src = match by {
+        "agent" | "project" | "branch" | "model" | "tool" | "mcp" => source(conn, f, None)?,
+        _ => Source::Detail,
+    };
+    breakdown_from(conn, f, by, src)
+}
+
+pub(crate) fn breakdown_from(
+    conn: &Connection,
+    f: &Filter,
+    by: &str,
+    src: Source,
+) -> Result<Vec<BreakdownRow>> {
     match by {
         "command" => return crate::insights::shell_commands(conn, f),
         "skill" => return crate::insights::skills_and_agents(conn, f),
-        "mcp" => return crate::insights::mcp_servers(conn, f),
+        "mcp" => return crate::insights::mcp_servers_from(conn, f, src),
         "agent_type" => return crate::insights::agent_types(conn, f),
         _ => {}
     }
-    let (w, args) = f.sql(if by == "tool" { "t.ts" } else { "c.ts" });
-    // `firsts` = primera llamada principal de cada sesión, para el overhead de contexto.
+    let days = src != Source::Detail && by != "activity";
+    let (w, args) = match (days, by == "tool") {
+        (true, true) => src.where_sql(f, "t.day"),
+        (true, false) => src.where_sql(f, "d.day"),
+        (false, true) => f.sql("t.ts"),
+        (false, false) => f.sql("c.ts"),
+    };
+    let t = if days { "d" } else { "c" };
+    // `s.first_call_id` = primera llamada principal de la sesión, para el overhead de contexto.
     let calls = |key: &str, label: &str, join: &str| {
+        if days {
+            return format!(
+                "SELECT {key}, {label}, SUM(d.cost_usd), SUM(d.calls), 0,
+                        SUM(d.cache_read), SUM(d.input_tokens + d.cache_read + d.cache_write), MIN(d.unpriced_calls = 0),
+                        COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN d.session_id END),
+                        COALESCE(CAST(SUM(d.first_ctx_tokens) AS REAL) / NULLIF(SUM(d.first_calls), 0), 0)
+                 FROM daily_stats d JOIN sessions s ON s.id = d.session_id {join}
+                 WHERE {w} GROUP BY 1 ORDER BY 3 DESC, 4 DESC"
+            );
+        }
         format!(
-            "WITH firsts AS (
-               SELECT message_id FROM (
-                 SELECT message_id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts) AS rn
-                 FROM calls WHERE is_sidechain = 0) WHERE rn = 1)
-             SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
+            "SELECT {key}, {label}, SUM(c.cost_usd), COUNT(*), 0,
                     SUM(c.cache_read), SUM(c.input_tokens + c.cache_read + c.cache_write), MIN(c.has_price),
                     COUNT(DISTINCT CASE WHEN s.is_subagent = 0 THEN c.session_id END),
-                    COALESCE(AVG(CASE WHEN f.message_id IS NOT NULL THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
+                    COALESCE(AVG(CASE WHEN c.message_id = s.first_call_id THEN c.input_tokens + c.cache_read + c.cache_write END), 0)
              FROM call_costs c JOIN sessions s ON s.id = c.session_id {join}
-             LEFT JOIN firsts f ON f.message_id = c.message_id
              WHERE {w} GROUP BY 1 ORDER BY 3 DESC, 4 DESC"
         )
     };
     let tools = |key: &str, extra: &str| {
+        if days {
+            return format!(
+                "SELECT {key}, {key}, 0.0, SUM(t.uses), SUM(t.errors), 0, 0, 1, 0, 0.0
+                 FROM tool_stats t JOIN sessions s ON s.id = t.session_id
+                 WHERE {w} {extra} GROUP BY 1 ORDER BY 4 DESC LIMIT 50"
+            );
+        }
         format!(
             "SELECT {key}, {key}, 0.0, COUNT(*), SUM(t.is_error), 0, 0, 1, 0, 0.0
              FROM tool_calls t JOIN sessions s ON s.id = t.session_id
              WHERE {w} {extra} GROUP BY 1 ORDER BY 4 DESC LIMIT 50"
         )
     };
+    let model = format!("{t}.model");
     let sql = match by {
         "agent" => calls(
             "s.agent_id",
@@ -395,7 +643,7 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
             "COALESCE(s.git_branch, '(sin rama)')",
             "",
         ),
-        "model" => calls("c.model", "c.model", ""),
+        "model" => calls(&model, &model, ""),
         "activity" => calls(
             "COALESCE(c.activity, 'conversation')",
             "COALESCE(c.activity, 'conversation')",
@@ -427,7 +675,7 @@ pub fn breakdown(conn: &Connection, f: &Filter, by: &str) -> Result<Vec<Breakdow
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRow {
     pub id: String,
@@ -438,19 +686,44 @@ pub struct AgentRow {
 }
 
 /// Agentes detectados con su coste en el periodo (sin filtrar por agente ni proyecto).
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_agents(conn: &Connection, f: &Filter) -> Result<Vec<AgentRow>> {
+    list_agents_from(conn, f, source(conn, f, None)?)
+}
+
+/// Coste y llamadas por `group` (columna de `s`) en el filtro, desde las llamadas o los agregados.
+fn cost_by(f: &Filter, src: Source, group: &str) -> (String, Vec<Value>) {
+    let (w, args) = match src {
+        Source::Detail => f.sql("c.ts"),
+        Source::Days { .. } => src.where_sql(f, "c.day"),
+    };
+    let sql = match src {
+        Source::Detail => format!(
+            "SELECT s.{group} AS id, SUM(c.cost_usd) AS cost, COUNT(*) AS n
+             FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w} GROUP BY 1"
+        ),
+        Source::Days { .. } => format!(
+            "SELECT s.{group} AS id, SUM(c.cost_usd) AS cost, SUM(c.calls) AS n
+             FROM daily_stats c JOIN sessions s ON s.id = c.session_id WHERE {w} GROUP BY 1"
+        ),
+    };
+    (sql, args)
+}
+
+pub(crate) fn list_agents_from(
+    conn: &Connection,
+    f: &Filter,
+    src: Source,
+) -> Result<Vec<AgentRow>> {
     let period = Filter {
         from: f.from,
         to: f.to,
         ..Default::default()
     };
-    let (w, args) = period.sql("c.ts");
+    let (inner, args) = cost_by(&period, src, "agent_id");
     let sql = format!(
         "SELECT a.id, a.name, a.log_root, COALESCE(x.cost, 0), COALESCE(x.n, 0)
-         FROM agents a LEFT JOIN (
-           SELECT s.agent_id AS id, SUM(c.cost_usd) AS cost, COUNT(*) AS n
-           FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w} GROUP BY 1
-         ) x ON x.id = a.id
+         FROM agents a LEFT JOIN ({inner}) x ON x.id = a.id
          ORDER BY 4 DESC, 5 DESC, a.name"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -468,7 +741,7 @@ pub fn list_agents(conn: &Connection, f: &Filter) -> Result<Vec<AgentRow>> {
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRow {
     pub id: i64,
@@ -479,19 +752,25 @@ pub struct ProjectRow {
 }
 
 /// Proyectos con su coste en el periodo y agentes filtrados (sin filtrar por proyecto).
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectRow>> {
+    list_projects_from(conn, f, source(conn, f, None)?)
+}
+
+pub(crate) fn list_projects_from(
+    conn: &Connection,
+    f: &Filter,
+    src: Source,
+) -> Result<Vec<ProjectRow>> {
     let scope = Filter {
         projects: None,
         ..f.clone()
     };
-    let (w, args) = scope.sql("c.ts");
+    let (inner, args) = cost_by(&scope, src, "project_id");
     // Varias carpetas (worktrees) pueden compartir repo: se agrupan por repo_root.
     let sql = format!(
         "SELECT MIN(p.id), p.name, p.repo_root, COALESCE(SUM(x.cost), 0), COALESCE(SUM(x.n), 0)
-         FROM projects p LEFT JOIN (
-           SELECT s.project_id AS id, SUM(c.cost_usd) AS cost, COUNT(*) AS n
-           FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w} GROUP BY 1
-         ) x ON x.id = p.id
+         FROM projects p LEFT JOIN ({inner}) x ON x.id = p.id
          WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = p.id)
          GROUP BY p.repo_root ORDER BY 4 DESC, 5 DESC, p.name"
     );
@@ -519,6 +798,7 @@ pub struct DataInfo {
     pub last_scan: Option<i64>,
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn data_info(conn: &Connection) -> Result<DataInfo> {
     conn.query_row(
         "SELECT MIN(ts), COUNT(*), (SELECT COUNT(*) FROM file_state), (SELECT MAX(last_scan) FROM file_state) FROM calls",
@@ -553,6 +833,7 @@ pub(crate) mod testdata {
             )
             .unwrap();
         }
+        crate::derived::refresh(conn).unwrap();
     }
 }
 
@@ -628,6 +909,7 @@ mod tests {
             [],
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let s = summary(
             &conn,
             &Filter {
@@ -727,6 +1009,7 @@ mod tests {
             vec!["web", "api"]
         );
         conn.execute("INSERT INTO tool_calls (call_id,session_id,ts,tool) VALUES ('x1','s1',1000,'Bash'),('x2','s1',1000,'Bash'),('x3','s1',1000,'mcp__srv__t')", []).unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let tools = timeseries_by(&conn, &Filter::default(), "tool", "UTC").unwrap();
         assert_eq!(
             tools
@@ -770,6 +1053,7 @@ mod tests {
             )
             .unwrap();
         }
+        crate::derived::refresh(&conn).unwrap();
         let cmds = breakdown(&conn, &Filter::default(), "command").unwrap();
         assert_eq!(cmds.len(), 2);
         assert_eq!(
@@ -818,6 +1102,7 @@ mod tests {
              INSERT INTO calls (message_id,session_id,ts,model,input_tokens) VALUES ('m5','s4',1,'claude-sonnet-4-5',1000000);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let web = summary(
             &conn,
             &Filter {
@@ -831,6 +1116,420 @@ mod tests {
         let rows = breakdown(&conn, &Filter::default(), "project").unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(list_projects(&conn, &Filter::default()).unwrap().len(), 2);
+    }
+
+    fn first_call(conn: &Connection, session: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT first_call_id FROM sessions WHERE id = ?1",
+            [session],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn add_call(conn: &Connection, id: &str, session: &str, ts: i64, sidechain: bool) {
+        conn.execute(
+            "INSERT INTO calls (message_id,session_id,ts,model,input_tokens,is_sidechain) VALUES (?1,?2,?3,'claude-sonnet-4-5',1,?4)",
+            rusqlite::params![id, session, ts, sidechain],
+        )
+        .unwrap();
+        crate::derived::refresh(conn).unwrap();
+    }
+
+    #[test]
+    fn la_primera_llamada_de_la_sesion_es_la_de_menor_ts_y_orden() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("m1"));
+        assert_eq!(first_call(&conn, "s3").as_deref(), Some("m4"));
+        add_call(&conn, "tarde", "s1", 999_999, false);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("m1"));
+        add_call(&conn, "antes", "s1", 500, false);
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("antes"));
+        add_call(&conn, "empate", "s1", 500, false);
+        assert_eq!(
+            first_call(&conn, "s1").as_deref(),
+            Some("antes"),
+            "con el mismo ts gana la que se escribió antes"
+        );
+        conn.execute("UPDATE calls SET ts = 100 WHERE message_id = 'tarde'", [])
+            .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("tarde"));
+        conn.execute("DELETE FROM calls WHERE message_id = 'tarde'", [])
+            .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        assert_eq!(first_call(&conn, "s1").as_deref(), Some("antes"));
+    }
+
+    #[test]
+    fn una_llamada_de_subagente_nunca_es_la_primera() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        add_call(&conn, "sub", "s2", 1, true);
+        assert_eq!(first_call(&conn, "s2").as_deref(), Some("m3"));
+        conn.execute_batch(
+            "INSERT INTO sessions (id,agent_id,started_at,ended_at) VALUES ('solo-sub','codex',0,0);",
+        )
+        .unwrap();
+        add_call(&conn, "sub2", "solo-sub", 1, true);
+        assert_eq!(first_call(&conn, "solo-sub"), None);
+    }
+
+    #[test]
+    fn el_desglose_no_numera_todas_las_llamadas() {
+        let conn = db::open_in_memory().unwrap();
+        testdata::seed(&conn);
+        let log = db::trace::start(&conn);
+        for by in ["agent", "project", "branch", "model", "activity"] {
+            breakdown(&conn, &Filter::default(), by).unwrap();
+        }
+        let sql: Vec<String> = db::trace::take(log)
+            .into_iter()
+            .map(|e| e.sql)
+            .filter(|s| s.contains("GROUP BY"))
+            .collect();
+        assert_eq!(sql.len(), 5);
+        assert!(sql.iter().all(|s| !s.contains("ROW_NUMBER")), "{sql:?}");
+    }
+
+    // ---------------------------------------------------------------- ruta de agregados (D7)
+
+    /// 2026-10-20T22:00:00Z: medianoche del 21 en Madrid (horario de verano).
+    const MIDNIGHT: i64 = 1_792_533_600_000;
+
+    fn madrid(conn: &Connection) {
+        db::set_cache_tz(conn, "Europe/Madrid").unwrap();
+    }
+
+    fn range(from: Option<i64>, to: Option<i64>) -> Filter {
+        Filter {
+            from,
+            to,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn la_ruta_de_agregados_exige_dias_completos_de_la_zona_de_la_cache() {
+        let conn = db::open_in_memory().unwrap();
+        madrid(&conn);
+        let days = |from, to| Source::Days { from, to };
+        for (f, tz, expected) in [
+            (range(None, None), None, days(None, None)),
+            (
+                range(Some(MIDNIGHT), None),
+                None,
+                days(Some(20261021), None),
+            ),
+            (
+                range(Some(MIDNIGHT), Some(MIDNIGHT + 2 * DAY_MS)),
+                Some("Europe/Madrid"),
+                days(Some(20261021), Some(20261023)),
+            ),
+            (
+                range(Some(MIDNIGHT), Some(MIDNIGHT + 7 * DAY_MS)),
+                None,
+                Source::Detail,
+            ),
+            // Una semana que cruza el cambio de hora: la medianoche del 28 es a las 23:00Z.
+            (
+                range(Some(MIDNIGHT), Some(MIDNIGHT + 7 * DAY_MS + HOUR_MS)),
+                None,
+                days(Some(20261021), Some(20261028)),
+            ),
+            (range(Some(MIDNIGHT + 1), None), None, Source::Detail),
+            (range(Some(MIDNIGHT - HOUR_MS), None), None, Source::Detail),
+            (range(None, Some(MIDNIGHT + HOUR_MS)), None, Source::Detail),
+            (range(Some(MIDNIGHT), None), Some("UTC"), Source::Detail),
+            (range(None, None), Some("America/New_York"), Source::Detail),
+        ] {
+            assert_eq!(source(&conn, &f, tz).unwrap(), expected, "{f:?} {tz:?}");
+        }
+    }
+
+    fn sql_of(conn: &Connection, run: impl FnOnce()) -> Vec<String> {
+        let log = db::trace::start(conn);
+        run();
+        db::trace::take(log).into_iter().map(|e| e.sql).collect()
+    }
+
+    #[test]
+    fn con_dias_completos_las_consultas_no_leen_las_llamadas() {
+        let conn = db::open_in_memory().unwrap();
+        madrid(&conn);
+        testdata::seed(&conn);
+        let f = range(None, Some(MIDNIGHT));
+        let reads_calls = |sql: &[String]| {
+            sql.iter()
+                .filter(|s| s.contains("call_costs") || s.contains("tool_calls t"))
+                .count()
+        };
+        let sql = sql_of(&conn, || {
+            for by in ["agent", "project", "branch", "model", "tool", "mcp"] {
+                breakdown(&conn, &f, by).unwrap();
+            }
+            for by in ["agent", "model", "project", "branch", "tool"] {
+                timeseries_by(&conn, &f, by, "Europe/Madrid").unwrap();
+            }
+            timeseries(&conn, &f, "day", "Europe/Madrid").unwrap();
+            list_agents(&conn, &f).unwrap();
+            list_projects(&conn, &f).unwrap();
+        });
+        assert_eq!(reads_calls(&sql), 0, "{sql:#?}");
+        let sql = sql_of(&conn, || {
+            summary(&conn, &f, 0).unwrap();
+        });
+        assert_eq!(reads_calls(&sql), 1, "solo el burn rate: {sql:#?}");
+        let sql = sql_of(&conn, || {
+            breakdown(&conn, &range(Some(1), Some(MIDNIGHT)), "model").unwrap();
+        });
+        assert_eq!(reads_calls(&sql), 1, "a mitad de día, detalle: {sql:#?}");
+    }
+
+    /// Todas las consultas con ruta de agregados, por la ruta elegida y forzando el detalle.
+    fn both_routes(
+        conn: &Connection,
+        f: &Filter,
+    ) -> Vec<(String, serde_json::Value, serde_json::Value)> {
+        let tz = "Europe/Madrid";
+        let days = source(conn, f, Some(tz)).unwrap();
+        let json = |v: anyhow::Result<serde_json::Value>| v.unwrap();
+        let mut out = vec![(
+            "summary".to_string(),
+            json(summary_from(conn, f, MIDNIGHT, days).map(|v| serde_json::to_value(v).unwrap())),
+            json(
+                summary_from(conn, f, MIDNIGHT, Source::Detail)
+                    .map(|v| serde_json::to_value(v).unwrap()),
+            ),
+        )];
+        out.push((
+            "timeseries".into(),
+            serde_json::to_value(timeseries_from(conn, f, "day", tz, days).unwrap()).unwrap(),
+            serde_json::to_value(timeseries_from(conn, f, "day", tz, Source::Detail).unwrap())
+                .unwrap(),
+        ));
+        for by in ["agent", "model", "project", "branch", "tool"] {
+            out.push((
+                format!("timeseries_by({by})"),
+                serde_json::to_value(timeseries_by_from(conn, f, by, tz, days).unwrap()).unwrap(),
+                serde_json::to_value(timeseries_by_from(conn, f, by, tz, Source::Detail).unwrap())
+                    .unwrap(),
+            ));
+        }
+        for by in ["agent", "project", "branch", "model", "tool", "mcp"] {
+            out.push((
+                format!("breakdown({by})"),
+                serde_json::to_value(breakdown_from(conn, f, by, days).unwrap()).unwrap(),
+                serde_json::to_value(breakdown_from(conn, f, by, Source::Detail).unwrap()).unwrap(),
+            ));
+        }
+        out.push((
+            "list_agents".into(),
+            serde_json::to_value(list_agents_from(conn, f, days).unwrap()).unwrap(),
+            serde_json::to_value(list_agents_from(conn, f, Source::Detail).unwrap()).unwrap(),
+        ));
+        out.push((
+            "list_projects".into(),
+            serde_json::to_value(list_projects_from(conn, f, days).unwrap()).unwrap(),
+            serde_json::to_value(list_projects_from(conn, f, Source::Detail).unwrap()).unwrap(),
+        ));
+        out
+    }
+
+    fn assert_close(a: &serde_json::Value, b: &serde_json::Value, path: &str) {
+        use serde_json::Value;
+        match (a, b) {
+            (Value::Array(x), Value::Array(y)) => {
+                assert_eq!(x.len(), y.len(), "{path}: {a} / {b}");
+                for (i, (x, y)) in x.iter().zip(y).enumerate() {
+                    assert_close(x, y, &format!("{path}[{i}]"));
+                }
+            }
+            (Value::Object(x), Value::Object(y)) => {
+                assert_eq!(x.len(), y.len(), "{path}");
+                for (k, v) in x {
+                    assert_close(v, &y[k], &format!("{path}.{k}"));
+                }
+            }
+            (Value::Number(x), Value::Number(y)) if x.is_f64() || y.is_f64() => {
+                let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
+                assert!(
+                    (x - y).abs() <= 1e-9 * x.abs().max(1.0),
+                    "{path}: {x} / {y}"
+                );
+            }
+            _ => assert_eq!(a, b, "{path}"),
+        }
+    }
+
+    #[test]
+    fn las_dos_rutas_dan_lo_mismo_en_cada_particion_del_filtro() {
+        let conn = db::open_in_memory().unwrap();
+        madrid(&conn);
+        testdata::seed(&conn);
+        // Llamadas y herramientas en varios días alrededor del cambio de hora del 25 de octubre.
+        for i in 0..40i64 {
+            let ts = MIDNIGHT + i * 7 * HOUR_MS + 1234;
+            let (s, model) = [
+                ("s1", "claude-sonnet-4-5"),
+                ("s2", "claude-haiku-4-5"),
+                ("s3", "modelo-x"),
+            ][(i % 3) as usize];
+            conn.execute(
+                "INSERT INTO calls (message_id,session_id,ts,model,input_tokens,output_tokens,cache_read,is_sidechain)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                rusqlite::params![format!("r{i}"), s, ts, model, 1000 + i, 10 * i, 500 * i, i % 7 == 0],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tool_calls (call_id,session_id,ts,tool,is_error) VALUES (?1,?2,?3,?4,?5)",
+                rusqlite::params![format!("u{i}"), s, ts, ["Bash", "Read", "mcp__srv__x"][(i % 3) as usize], i % 4 == 0],
+            )
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO sessions (id,agent_id,project_id,started_at,ended_at,is_subagent) VALUES ('sub','codex',NULL,0,0,1);
+             INSERT INTO calls (message_id,session_id,ts,model,input_tokens) VALUES ('x1','sub',1792540800000,'claude-sonnet-4-5',9);",
+        )
+        .unwrap();
+        crate::derived::refresh(&conn).unwrap();
+        let week = MIDNIGHT + 7 * DAY_MS + HOUR_MS;
+        for (name, f) in [
+            ("todo", Filter::default()),
+            ("dias completos", range(Some(MIDNIGHT + DAY_MS), Some(week))),
+            (
+                "mitad de dia",
+                range(Some(MIDNIGHT + 13 * HOUR_MS), Some(week)),
+            ),
+            (
+                "to en el futuro",
+                range(Some(MIDNIGHT), Some(week + 400 * DAY_MS)),
+            ),
+            ("vacio", range(Some(week + 400 * DAY_MS), None)),
+            (
+                "agente y proyecto",
+                Filter {
+                    agents: Some(vec!["claude-code".into()]),
+                    projects: Some(vec![1]),
+                    ..range(Some(MIDNIGHT), None)
+                },
+            ),
+            (
+                "sin proyecto",
+                Filter {
+                    no_project: true,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            for (query, by_route, detail) in both_routes(&conn, &f) {
+                assert_close(&by_route, &detail, &format!("{name} {query}"));
+            }
+        }
+    }
+
+    /// Todas las sentencias que lanza el Resumen (`useDashboardData`) con el filtro `f`.
+    fn summary_statements(conn: &Connection, f: &Filter) -> Vec<String> {
+        let tz = "Europe/Madrid";
+        sql_of(conn, || {
+            summary(conn, f, MIDNIGHT).unwrap();
+            for bucket in ["day", "hour"] {
+                timeseries(conn, f, bucket, tz).unwrap();
+            }
+            for by in ["agent", "model", "project", "branch", "tool"] {
+                timeseries_by(conn, f, by, tz).unwrap();
+            }
+            for by in [
+                "agent",
+                "project",
+                "branch",
+                "model",
+                "activity",
+                "tool",
+                "command",
+                "skill",
+                "mcp",
+                "agent_type",
+            ] {
+                breakdown(conn, f, by).unwrap();
+            }
+            crate::insights::activity(conn, f).unwrap();
+            crate::insights::activity_daily(conn, f, tz).unwrap();
+            list_agents(conn, f).unwrap();
+            list_projects(conn, f).unwrap();
+        })
+    }
+
+    #[test]
+    fn consultas_usan_indices() {
+        let conn = db::open_in_memory().unwrap();
+        madrid(&conn);
+        testdata::seed(&conn);
+        let thirty = range(Some(MIDNIGHT - 30 * DAY_MS), Some(MIDNIGHT));
+        assert_eq!(
+            db::trace::full_scans(
+                &conn,
+                "SELECT COUNT(*) FROM call_costs c WHERE c.model = ?1"
+            )
+            .len(),
+            1,
+            "el comprobador detecta un recorrido completo"
+        );
+        if std::env::var_os("PLANES").is_some() {
+            for sql in summary_statements(&conn, &thirty) {
+                let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+                let nulls = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
+                let plan: Vec<String> = stmt
+                    .query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                eprintln!(
+                    "PLAN {} => {}",
+                    &sql.split_whitespace().collect::<Vec<_>>().join(" ")[..90.min(sql.len())],
+                    plan.join(" | ")
+                );
+            }
+        }
+        let mut scans = Vec::new();
+        for (name, f) in [
+            ("30 días", thirty.clone()),
+            (
+                "30 días a mitad de día",
+                range(
+                    Some(MIDNIGHT - 30 * DAY_MS + HOUR_MS),
+                    Some(MIDNIGHT + HOUR_MS),
+                ),
+            ),
+            (
+                "agente",
+                Filter {
+                    agents: Some(vec!["codex".into()]),
+                    ..thirty.clone()
+                },
+            ),
+            (
+                "proyecto",
+                Filter {
+                    projects: Some(vec![1]),
+                    ..thirty.clone()
+                },
+            ),
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for sql in summary_statements(&conn, &f) {
+                if seen.insert(sql.clone()) {
+                    for line in db::trace::full_scans(&conn, &sql) {
+                        scans.push(format!(
+                            "{name}: {line}\n  {}",
+                            sql.split_whitespace().collect::<Vec<_>>().join(" ")
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(scans.is_empty(), "{}", scans.join("\n"));
     }
 
     #[test]
@@ -851,6 +1550,7 @@ mod tests {
 }
 
 /// Una fila por llamada, con proyecto/agente resueltos, para exportar.
+#[tracing::instrument(level = "debug", skip_all, fields(format = %format))]
 pub fn export(conn: &Connection, f: &Filter, format: &str) -> Result<String> {
     let (w, args) = f.sql("c.ts");
     let sql = format!(
@@ -986,4 +1686,46 @@ pub fn month_progress(conn: &Connection, f: &Filter) -> Result<(f64, f64)> {
         |r| r.get(0),
     )?;
     Ok((spent, spent * factor))
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    use crate::providers::{claude_code::ClaudeCode, Provider};
+    use crate::{db, ingest, insights, sessions};
+
+    #[test]
+    fn cada_consulta_de_los_comandos_abre_su_span() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/claude_code");
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![root]))];
+        let mut conn = db::open_in_memory().unwrap();
+        ingest::scan_all(&mut conn, &providers).unwrap();
+        let f = Filter::default();
+        let spans = crate::telemetry::tests::closed_spans(|| {
+            summary(&conn, &f, 0).unwrap();
+            breakdown(&conn, &f, "model").unwrap();
+            timeseries(&conn, &f, "day", "UTC").unwrap();
+            timeseries_by(&conn, &f, "agent", "UTC").unwrap();
+            insights::activity(&conn, &f).unwrap();
+            insights::activity_daily(&conn, &f, "UTC").unwrap();
+            sessions::list_sessions(&conn, &f, None).unwrap();
+        });
+        let names: Vec<&str> = spans.iter().map(|s| s.name).collect();
+        for expected in [
+            "summary",
+            "breakdown",
+            "timeseries",
+            "timeseries_by",
+            "activity",
+            "activity_daily",
+            "list_sessions",
+        ] {
+            assert!(names.contains(&expected), "falta {expected}: {names:?}");
+        }
+        let by = spans.iter().find(|s| s.name == "breakdown").unwrap();
+        assert_eq!(by.fields.get("by").map(String::as_str), Some("model"));
+        let ts = spans.iter().find(|s| s.name == "timeseries").unwrap();
+        assert_eq!(ts.fields.get("bucket").map(String::as_str), Some("day"));
+    }
 }

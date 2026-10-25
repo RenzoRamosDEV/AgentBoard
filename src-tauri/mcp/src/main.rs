@@ -7,7 +7,9 @@
 //! Registro (ejemplo Claude Code):
 //!   claude mcp add agentboard -- /ruta/a/agentboard-mcp
 
-use agentboard_lib::{db, findings, ingest, pricing, providers, queries, sessions, settings};
+use agentboard_lib::{
+    db, findings, ingest, pricing, providers, queries, sessions, settings, telemetry,
+};
 use anyhow::{anyhow, bail, Result};
 use chrono::TimeZone;
 use rusqlite::Connection;
@@ -18,10 +20,11 @@ use std::sync::OnceLock;
 const PROTOCOL: &str = "2025-06-18";
 
 fn main() {
+    telemetry::init();
     let conn = match scan() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("agentboard-mcp: no se pudo leer el historial: {e:#}");
+            tracing::error!("agentboard-mcp: no se pudo leer el historial: {e:#}");
             std::process::exit(1);
         }
     };
@@ -399,6 +402,7 @@ mod tests {
                ('m2', 's2', {ts2}, 'modelo-fantasma', 1000000);"
         ))
         .unwrap();
+        agentboard_lib::derived::refresh(&conn).unwrap();
         conn
     }
 

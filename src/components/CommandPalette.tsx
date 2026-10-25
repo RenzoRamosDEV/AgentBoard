@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Filter, type ProjectRow, type SessionRow } from "../lib/api";
 import { fmt } from "../lib/format";
+import { filterKey, useQuery } from "../lib/query";
+
+const NO_SESSIONS: SessionRow[] = [];
 import { t } from "../lib/i18n";
 import { SECTIONS, type SectionId } from "../lib/sections";
 import { SearchIcon, SectionIcon } from "./Icons";
@@ -44,14 +47,12 @@ export function CommandPalette({
 }) {
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const recent = useQuery("list_sessions", `palette|${filterKey(filter)}`, () => api.sessions(filter, { limit: 30 }));
+  const sessions: SessionRow[] = recent.data?.rows ?? NO_SESSIONS;
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
-  useEffect(() => {
-    input.current?.focus();
-    api.sessions(filter, 30).then((l) => setSessions(l.sessions)).catch(() => setSessions([]));
-  }, [filter]);
+  useEffect(() => input.current?.focus(), []);
 
   const items = useMemo<PaletteItem[]>(() => {
     const sectionItems = SECTIONS.map((s) => ({ id: `s:${s.id}`, group: t("Apartados"), label: t(s.title), hint: t(s.question), icon: s.id, run: () => goSection(s.id) }));

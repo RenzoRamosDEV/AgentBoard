@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { api, type BreakdownRow } from "../lib/api";
+import { api, type BreakdownRow, type Filter } from "../lib/api";
 import { fmt } from "../lib/format";
 import { getLang, LangContext, resolveLang, setLang, t, type Lang } from "../lib/i18n";
 import { InlineBar } from "../components/Charts";
 import { TodayLive, todayRanges } from "./TodayLive";
+import { subscribeTray } from "../lib/live";
+import { queryStore } from "../lib/query";
+
+const NO_FILTER: Filter = {};
 
 /** Enseña la ventana principal (y el backend esconde este panel). */
 const openMain = () => {
@@ -30,21 +34,16 @@ export function TrayPanel() {
       .catch(() => {});
   }, []);
 
-  // La ventana vive oculta: se refresca sola cada 30 s para abrirse al día.
-  useEffect(() => {
-    const id = setInterval(() => setRefresh((n) => n + 1), 30_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // En vivo, como los applets: cada relectura de logs (`ingest://done`) y cada
-  // apertura del panel (`panel://shown`) refrescan al instante.
-  useEffect(() => {
-    const bump = () => setRefresh((n) => n + 1);
-    const offs = [listen("ingest://done", bump), listen("panel://shown", bump)];
-    return () => {
-      for (const off of offs) off.then((f) => f());
-    };
-  }, []);
+  // En vivo, como los applets: cada aviso de datos cambiados y cada apertura del panel
+  // refrescan al instante. Oculto no hace nada: al abrirse se pone al día.
+  useEffect(
+    () =>
+      subscribeTray(listen, () => {
+        setRefresh((n) => n + 1);
+        queryStore.invalidateAll();
+      }),
+    [],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -61,7 +60,7 @@ export function TrayPanel() {
   return (
     <LangContext.Provider value={lang}>
       <div className="tray-panel">
-        <TodayLive filter={{}} refresh={refresh} openSession={openMain} />
+        <TodayLive filter={NO_FILTER} openSession={openMain} />
         {projects.length > 0 && (
           <section className="tray-panel-projects">
             <h2>{t("Proyectos de hoy")}</h2>

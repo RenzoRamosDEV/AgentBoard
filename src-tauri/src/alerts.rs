@@ -2,6 +2,8 @@
 //! bandeja con el gasto del mes y avisa una vez al llegar al 80 % y al 100 % de cada presupuesto:
 //! mensual, diario y mensuales por proyecto o agente.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use crate::{queries, settings};
 use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};
@@ -86,10 +88,10 @@ pub fn pending(
 /// Inicio del día local en curso (epoch ms).
 pub fn today_start() -> i64 {
     use chrono::{Local, TimeZone};
-    let now = Local::now().date_naive();
-    Local
-        .from_local_datetime(&now.and_hms_opt(0, 0, 0).expect("medianoche válida"))
-        .earliest()
+    Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|midnight| Local.from_local_datetime(&midnight).earliest())
         .map(|d| d.timestamp_millis())
         .unwrap_or(0)
 }
@@ -176,17 +178,17 @@ impl Alerts {
     }
 
     /// Recalcula tras un escaneo: refresca la bandeja y lanza los avisos de presupuesto pendientes.
-    pub fn refresh(&self, app: &tauri::AppHandle, db: &Arc<Mutex<Connection>>, tray: &TrayIcon) {
+    pub fn refresh(&self, app: &tauri::AppHandle, readers: &crate::db::ReadPool, tray: &TrayIcon) {
         let s = settings::load();
-        let (month, today, checks) = match db.lock() {
-            Ok(conn) => (
-                queries::month_progress(&conn, &queries::Filter::default()).unwrap_or((0.0, 0.0)),
-                s.tray_shows_today
-                    .then(|| today_spent(&conn).ok())
-                    .flatten(),
-                checks(&conn, &s).unwrap_or_default(),
-            ),
-            Err(_) => return,
+        let read = readers.with(|conn| {
+            Ok((
+                queries::month_progress(conn, &queries::Filter::default()).unwrap_or((0.0, 0.0)),
+                s.tray_shows_today.then(|| today_spent(conn).ok()).flatten(),
+                checks(conn, &s).unwrap_or_default(),
+            ))
+        });
+        let Ok((month, today, checks)) = read else {
+            return;
         };
         let (spent, projection) = month;
         let today = today
@@ -224,6 +226,16 @@ impl Alerts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn el_dia_en_curso_empieza_en_las_ultimas_26_horas() {
+        let now = crate::ingest::now_ms();
+        let start = today_start();
+        assert!(
+            start <= now && now - start < 26 * 3_600_000,
+            "{start} {now}"
+        );
+    }
     use crate::db;
     use crate::queries::testdata;
     use crate::settings::{ScopedBudget, Settings};

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { Language, Settings, Theme } from "../lib/api";
+import { listen } from "@tauri-apps/api/event";
+import { api, type Language, type Settings, type Theme } from "../lib/api";
+import { createRebuild, isDirty } from "../lib/cache";
 import { LANGS, t } from "../lib/i18n";
 import { Segmented } from "./Charts";
+import { DataSettings } from "./DataSettings";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "system", label: "Sistema" },
@@ -9,12 +12,19 @@ const THEMES: { value: Theme; label: string }[] = [
   { value: "dark", label: "Oscuro" },
 ];
 
-type Tab = "tema" | "idioma" | "exportar";
+type Tab = "tema" | "idioma" | "datos" | "exportar";
 const TABS: { id: Tab; label: string }[] = [
   { id: "tema", label: "Tema" },
   { id: "idioma", label: "Idioma" },
+  { id: "datos", label: "Datos" },
   { id: "exportar", label: "Exportar" },
 ];
+
+/** `ingest://done` del backend, con el oyente ya registrado al resolver. */
+const listenDone = async (cb: () => void) => {
+  const off = await listen("ingest://done", cb);
+  return () => off();
+};
 
 /** Miniatura de la app en un tema: panel lateral, tarjetas y barras, con colores fijos. */
 function Preview({ theme }: { theme: "light" | "dark" }) {
@@ -69,7 +79,10 @@ function ThemeCard({ value, label, selected, onSelect }: { value: Theme; label: 
   );
 }
 
-/** Ajustes: tema (con vista previa) e idioma. Lo elegido queda como borrador hasta pulsar Aplicar. */
+/**
+ * Ajustes: tema (con vista previa), idioma, datos (caché) y exportar. Lo elegido queda como
+ * borrador hasta pulsar Aplicar; «Reconstruir caché» actúa al momento.
+ */
 export function SettingsDialog({
   settings,
   onSave,
@@ -84,10 +97,19 @@ export function SettingsDialog({
   const ref = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Tab>("tema");
   const [draft, setDraft] = useState<Settings>(settings);
-  const dirty = draft.theme !== settings.theme || draft.language !== settings.language;
+  const dirty = isDirty(draft, settings);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
+  const rebuild = useRef(createRebuild(api.rebuildCache, listenDone, (s) => setRebuilding(s === "running")));
   useEffect(() => {
     ref.current?.showModal();
+    const r = rebuild.current;
+    return () => r.dispose();
   }, []);
+  const startRebuild = async () => {
+    await rebuild.current.start();
+    setRebuildError(rebuild.current.error());
+  };
   const apply = async () => {
     await onSave(draft);
     onClose();
@@ -136,6 +158,16 @@ export function SettingsDialog({
             <Segmented value={draft.language} options={LANGS.map((o) => ({ ...o, label: o.value === "system" ? t("Sistema") : o.label }))} onChange={(language: Language) => setDraft({ ...draft, language })} />
             <p className="muted small">{t('"Sistema" usa el idioma de tu escritorio (español, inglés, portugués o francés).')}</p>
           </section>
+        )}
+
+        {tab === "datos" && (
+          <DataSettings
+            memoryOnly={draft.memoryOnly}
+            rebuilding={rebuilding}
+            error={rebuildError}
+            onToggle={(memoryOnly) => setDraft({ ...draft, memoryOnly })}
+            onRebuild={startRebuild}
+          />
         )}
 
         {tab === "exportar" && (

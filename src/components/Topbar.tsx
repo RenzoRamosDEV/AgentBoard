@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
+import { filterStore, useFilterState, useLists } from "../lib/filterStore";
 import type { AgentRow, ProjectRow } from "../lib/api";
 import { fmt } from "../lib/format";
 import { t } from "../lib/i18n";
-import { PERIODS, type Period } from "../lib/period";
+import { PERIODS, previousRange, type Period } from "../lib/period";
 import { Popover } from "./Popover";
 import { DownloadIcon, SearchIcon } from "./Icons";
 
@@ -11,8 +12,8 @@ interface Props {
   setPeriod: (p: Period) => void;
   agents: AgentRow[];
   projects: ProjectRow[];
-  hiddenAgents: Set<string>;
-  hiddenProjects: Set<number>;
+  hiddenAgents: ReadonlySet<string>;
+  hiddenProjects: ReadonlySet<number>;
   toggleAgent: (id: string) => void;
   toggleProject: (id: number) => void;
   onlyProject: (id: number | null) => void;
@@ -43,8 +44,34 @@ function useAgo(ts: number | null) {
   return t("hace {n} h", { n: Math.round(m / 60) });
 }
 
+/** Barra superior conectada al filtro global: solo se vuelve a pintar con lo que muestra. */
+export const Topbar = memo(function Topbar(p: { lastScan: number | null; flash: boolean; onSearch: () => void; onExport: (format: "csv" | "json") => void }) {
+  const { agents, projects } = useLists();
+  const s = useFilterState((x) => x);
+  return (
+    <TopbarView
+      period={s.period}
+      setPeriod={filterStore.setPeriod}
+      agents={agents}
+      projects={projects}
+      hiddenAgents={s.hiddenAgents}
+      hiddenProjects={s.hiddenProjects}
+      toggleAgent={filterStore.toggleAgent}
+      toggleProject={filterStore.toggleProject}
+      onlyProject={(id) => filterStore.onlyProject(id, projects.map((x) => x.id))}
+      lastScan={p.lastScan}
+      flash={p.flash}
+      compare={s.compare}
+      setCompare={filterStore.setCompare}
+      canCompare={previousRange(s.period) != null}
+      onSearch={p.onSearch}
+      onExport={p.onExport}
+    />
+  );
+});
+
 /** Barra superior: periodo, agentes, proyectos, estado en vivo y exportar. */
-export function Topbar(p: Props) {
+function TopbarView(p: Props) {
   const [projectQ, setProjectQ] = useState("");
   const ago = useAgo(p.lastScan);
   const shownAgents = p.agents.filter((a) => !p.hiddenAgents.has(a.id)).length;
@@ -61,7 +88,7 @@ export function Topbar(p: Props) {
     <div className="topbar">
       <div className="segmented" role="group" aria-label={t("Periodo")}>
         {PERIODS.map((x) => (
-          <button key={x.kind} type="button" className={`segment ${p.period.kind === x.kind ? "active" : ""}`} aria-pressed={p.period.kind === x.kind} onClick={() => p.setPeriod({ kind: x.kind })}>
+          <button key={x.kind} type="button" data-perf={`period-${x.kind}`} className={`segment ${p.period.kind === x.kind ? "active" : ""}`} aria-pressed={p.period.kind === x.kind} onClick={() => p.setPeriod({ kind: x.kind })}>
             {t(x.label)}
           </button>
         ))}
@@ -69,6 +96,7 @@ export function Topbar(p: Props) {
 
       <Popover
         ariaLabel={t("Agentes")}
+        perf="agents"
         label={
           <>
             <span className="muted">{t("Agentes")}</span>
@@ -81,7 +109,7 @@ export function Topbar(p: Props) {
           {p.agents.map((a) => (
             <li key={a.id}>
               <label title={a.logRoot}>
-                <input type="checkbox" checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
+                <input type="checkbox" data-perf={`agent-${a.id}`} checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
                 <span className="name">{a.name}</span>
                 <span className="muted num">{fmt.usd(a.costUsd)}</span>
               </label>

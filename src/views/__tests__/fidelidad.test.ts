@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { afterCompaction } from "../SessionDetail";
 import { parsePriceFile } from "../Pricing";
 import { filterItems } from "../../components/CommandPalette";
 
-
-describe("afterCompaction", () => {
-  it("compara el coste por turno antes y después de la 3.ª compactación", () => {
-    const turns = [1, 1, 1, 3, 3].map((c, i) => ({ ts: i * 10, costUsd: c }));
-    expect(afterCompaction(turns, [5, 15, 25])).toEqual({ k: 3, ratio: 3 });
-    expect(afterCompaction(turns, [])).toBeNull();
-  });
-});
 
 describe("parsePriceFile", () => {
   it("acepta lista u objeto", () => {

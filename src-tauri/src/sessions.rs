@@ -7,7 +7,7 @@ use crate::queries::{self, BreakdownRow, Filter, Point};
 use anyhow::{Context, Result};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Máximo de sesiones que devuelve el listado (las más recientes).
@@ -83,6 +83,8 @@ fn query_sessions(
     where_sql: &str,
     args: &[Value],
     limit: usize,
+    offset: usize,
+    order: &str,
 ) -> Result<Vec<SessionRow>> {
     let (t_turns, t_events, t_tools, t_calls) = (
         time_bounds(f, "t.ts"),
@@ -116,12 +118,12 @@ fn query_sessions(
                 (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.kind = 'compaction'{t_events}),
                 (SELECT COUNT(*) FROM tool_calls t WHERE t.session_id = s.id{t_tools}),
                 (SELECT COALESCE(SUM(t.is_error), 0) FROM tool_calls t WHERE t.session_id = s.id{t_tools}),
-                p.repo_root
+                p.repo_root, MAX({ended} - sc.first, 0)
          FROM sc JOIN sessions s ON s.id = sc.sid
          LEFT JOIN agents a ON a.id = s.agent_id
          LEFT JOIN projects p ON p.id = s.project_id
          LEFT JOIN top_model tm ON tm.session_id = s.id
-         ORDER BY sc.first DESC, s.id LIMIT {limit}"
+         ORDER BY {order} LIMIT {limit} OFFSET {offset}"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
@@ -158,11 +160,126 @@ fn query_sessions(
     Ok(rows)
 }
 
+/// Orden por defecto del listado: más recientes primero.
+const NEWEST_FIRST: &str = "sc.first DESC, s.id";
+
+/// Columnas por las que la interfaz puede ordenar las sesiones. Un valor desconocido falla al
+/// deserializar: la columna SQL sale siempre de este `enum`, nunca del texto recibido.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionSort {
+    #[default]
+    Started,
+    Agent,
+    Branch,
+    Model,
+    Duration,
+    Turns,
+    Compactions,
+    Cost,
+}
+
+impl SessionSort {
+    /// Columna del `SELECT` de `query_sessions` por la que ordenar.
+    fn column(self) -> &'static str {
+        match self {
+            SessionSort::Started => "7",
+            SessionSort::Agent => "3",
+            SessionSort::Branch => "6",
+            SessionSort::Model => "9",
+            SessionSort::Duration => "23",
+            SessionSort::Turns => "18",
+            SessionSort::Compactions => "19",
+            SessionSort::Cost => "10",
+        }
+    }
+}
+
+/// Una página de una lista: sus filas, el total de la lista y dónde empieza.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Page<T> {
+    pub rows: Vec<T>,
+    pub total: i64,
+    pub offset: usize,
+}
+
+/// Página de sesiones pedida: `limit` (como mucho `MAX_SESSIONS`), desplazamiento y orden.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PageRequest {
+    pub limit: usize,
+    pub offset: usize,
+    pub sort: SessionSort,
+    pub desc: bool,
+}
+
+impl Default for PageRequest {
+    fn default() -> Self {
+        PageRequest {
+            limit: 50,
+            offset: 0,
+            sort: SessionSort::Started,
+            desc: true,
+        }
+    }
+}
+
+impl PageRequest {
+    pub fn limit(&self) -> usize {
+        self.limit.min(MAX_SESSIONS)
+    }
+}
+
+/// `WHERE` del filtro sobre `c` y `s`, acotado a un proyecto si se pide (`""`: sin proyecto).
+fn project_where(f: &Filter, project_key: Option<&str>) -> (String, Vec<Value>) {
+    let (w, mut args) = f.sql("c.ts");
+    match project_key {
+        None => (w, args),
+        Some("") => (format!("{w} AND s.project_id IS NULL"), args),
+        Some(key) => {
+            args.push(Value::from(key.to_string()));
+            (
+                format!("{w} AND s.project_id IN (SELECT id FROM projects WHERE repo_root = ?)"),
+                args,
+            )
+        }
+    }
+}
+
+/// Una página de las sesiones del filtro (y del proyecto `project_key`, si lo hay), ordenada en
+/// la base con desempate estable por id, con el total.
+#[tracing::instrument(level = "debug", skip_all)]
+pub fn session_page(
+    conn: &Connection,
+    f: &Filter,
+    project_key: Option<&str>,
+    page: &PageRequest,
+) -> Result<Page<SessionRow>> {
+    let (w, args) = project_where(f, project_key);
+    let dir = if page.desc { "DESC" } else { "ASC" };
+    let order = format!("{} {dir}, s.id", page.sort.column());
+    let rows = query_sessions(conn, f, &w, &args, page.limit(), page.offset, &order)?;
+    let total = conn.query_row(
+        &format!(
+            "SELECT COUNT(DISTINCT c.session_id) FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"
+        ),
+        params_from_iter(args.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(Page {
+        rows,
+        total,
+        offset: page.offset,
+    })
+}
+
 /// Sesiones con al menos una llamada en el filtro; métricas calculadas con esas llamadas.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn list_sessions(conn: &Connection, f: &Filter, limit: Option<usize>) -> Result<SessionList> {
     let (w, args) = f.sql("c.ts");
     let limit = limit.unwrap_or(MAX_SESSIONS).min(MAX_SESSIONS);
-    let sessions = query_sessions(conn, f, &w, &args, limit)?;
+    let sessions = query_sessions(conn, f, &w, &args, limit, 0, NEWEST_FIRST)?;
     let total = conn.query_row(
         &format!(
             "SELECT COUNT(DISTINCT c.session_id) FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"
@@ -240,6 +357,7 @@ pub fn percentile(sorted: &[i64], p: f64) -> Option<i64> {
     Some(sorted[rank.clamp(1, sorted.len()) - 1])
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     // El detalle de una sesión muestra su historia completa: sin acotar por periodo.
     let session = query_sessions(
@@ -248,6 +366,8 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         "c.session_id = ?",
         &[Value::from(id.to_string())],
         1,
+        0,
+        NEWEST_FIRST,
     )?
     .into_iter()
     .next()
@@ -614,9 +734,10 @@ fn top_models(conn: &Connection, f: &Filter) -> Result<HashMap<String, String>> 
 }
 
 /// Proyectos con al menos una llamada en el filtro, con métricas de esas llamadas.
+#[tracing::instrument(name = "list_project_summaries", level = "debug", skip_all)]
 pub fn list_projects(conn: &Connection, f: &Filter) -> Result<Vec<ProjectSummary>> {
     let (w, args) = f.sql("c.ts");
-    let rows = query_sessions(conn, f, &w, &args, MAX_AGGREGATED)?;
+    let rows = query_sessions(conn, f, &w, &args, MAX_AGGREGATED, 0, NEWEST_FIRST)?;
     summarize(conn, &rows, &top_models(conn, f)?)
 }
 
@@ -633,20 +754,10 @@ pub struct ProjectDetail {
 }
 
 /// Detalle de un proyecto (por su clave de `list_projects`) dentro del filtro.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn project_detail(conn: &Connection, key: &str, f: &Filter, tz: &str) -> Result<ProjectDetail> {
-    let (w, args) = f.sql("c.ts");
-    let (w, mut args) = if key.is_empty() {
-        (format!("{w} AND s.project_id IS NULL"), args)
-    } else {
-        (
-            format!("{w} AND s.project_id IN (SELECT id FROM projects WHERE repo_root = ?)"),
-            args,
-        )
-    };
-    if !key.is_empty() {
-        args.push(Value::from(key.to_string()));
-    }
-    let sessions = query_sessions(conn, f, &w, &args, MAX_AGGREGATED)?;
+    let (w, args) = project_where(f, Some(key));
+    let sessions = query_sessions(conn, f, &w, &args, MAX_AGGREGATED, 0, NEWEST_FIRST)?;
     let project = summarize(conn, &sessions, &top_models(conn, f)?)?
         .into_iter()
         .find(|p| p.key == key)
@@ -716,6 +827,132 @@ pub fn project_detail(conn: &Connection, key: &str, f: &Filter, tz: &str) -> Res
     })
 }
 
+/// Detalle de un proyecto sin sus sesiones (que se piden por páginas con `session_page`): sus
+/// cifras, y cuántas sesiones tuvieron compactaciones, calculadas sobre todas.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverview {
+    pub project: ProjectSummary,
+    pub daily: Vec<Point>,
+    pub activities: Vec<ActivityRow>,
+    pub models: Vec<BreakdownRow>,
+    pub branches: Vec<BreakdownRow>,
+    pub tools: Vec<ToolStat>,
+    pub sessions_with_compactions: i64,
+}
+
+pub fn project_overview(
+    conn: &Connection,
+    key: &str,
+    f: &Filter,
+    tz: &str,
+) -> Result<ProjectOverview> {
+    let d = project_detail(conn, key, f, tz)?;
+    Ok(ProjectOverview {
+        sessions_with_compactions: d.sessions.iter().filter(|s| s.compactions > 0).count() as i64,
+        project: d.project,
+        daily: d.daily,
+        activities: d.activities,
+        models: d.models,
+        branches: d.branches,
+        tools: d.tools,
+    })
+}
+
+/// Coste acumulado de una sesión en columnas (un punto por llamada).
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Timeline {
+    pub ts: Vec<i64>,
+    pub cost: Vec<f64>,
+}
+
+/// Coste por turno tras la compactación `k` frente al de antes (`ratio`: `None` si antes era 0).
+#[derive(Debug, Serialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct AfterCompaction {
+    pub k: usize,
+    pub ratio: Option<f64>,
+}
+
+/// Compara el coste medio por turno antes y después de la tercera compactación (o de la última,
+/// si hay menos); `None` sin compactaciones o sin turnos a algún lado.
+pub fn after_compaction(turns: &[(i64, f64)], compactions: &[i64]) -> Option<AfterCompaction> {
+    let k = compactions.len().min(3);
+    let cut = *compactions.get(k.checked_sub(1)?)?;
+    let avg = |xs: Vec<f64>| (!xs.is_empty()).then(|| xs.iter().sum::<f64>() / xs.len() as f64);
+    let before = avg(turns.iter().filter(|t| t.0 < cut).map(|t| t.1).collect())?;
+    let after = avg(turns.iter().filter(|t| t.0 >= cut).map(|t| t.1).collect())?;
+    Some(AfterCompaction {
+        k,
+        ratio: (before > 0.0).then(|| after / before),
+    })
+}
+
+/// Detalle de una sesión sin la lista de turnos (que se pide por páginas con `session_turns`).
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOverview {
+    pub session: SessionRow,
+    pub timeline: Timeline,
+    pub compactions: Vec<i64>,
+    pub turns_total: i64,
+    pub after_compaction: Option<AfterCompaction>,
+    pub activities: Vec<KeyCost>,
+    pub models: Vec<KeyCost>,
+    pub tools: Vec<ToolStat>,
+}
+
+pub fn session_overview(conn: &Connection, id: &str) -> Result<SessionOverview> {
+    let d = session_detail(conn, id)?;
+    let turns: Vec<(i64, f64)> = d.turns.iter().map(|t| (t.ts, t.cost_usd)).collect();
+    Ok(SessionOverview {
+        after_compaction: after_compaction(&turns, &d.compactions),
+        turns_total: d.turns.len() as i64,
+        timeline: Timeline {
+            ts: d.timeline.iter().map(|p| p.ts).collect(),
+            cost: d.timeline.iter().map(|p| p.cost_usd).collect(),
+        },
+        session: d.session,
+        compactions: d.compactions,
+        activities: d.activities,
+        models: d.models,
+        tools: d.tools,
+    })
+}
+
+/// Página de turnos pedida (como mucho `MAX_SESSIONS` por página).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TurnPage {
+    pub limit: usize,
+    pub offset: usize,
+}
+
+impl Default for TurnPage {
+    fn default() -> Self {
+        TurnPage {
+            limit: 30,
+            offset: 0,
+        }
+    }
+}
+
+/// Una página de los turnos de una sesión, en orden.
+pub fn session_turns(conn: &Connection, id: &str, page: &TurnPage) -> Result<Page<TurnRow>> {
+    let turns = session_detail(conn, id)?.turns;
+    let total = turns.len() as i64;
+    Ok(Page {
+        rows: turns
+            .into_iter()
+            .skip(page.offset)
+            .take(page.limit.min(MAX_SESSIONS))
+            .collect(),
+        total,
+        offset: page.offset,
+    })
+}
+
 /// `true` si existe una sesión con ese id (para errores claros en el servidor MCP).
 pub fn exists(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn
@@ -748,6 +985,7 @@ mod tests {
              INSERT INTO events (session_id, ts, kind) VALUES ('s1', 3000, 'compaction');",
         )
         .unwrap();
+        crate::derived::refresh(conn).unwrap();
     }
 
     #[test]
@@ -783,6 +1021,7 @@ mod tests {
                VALUES ('mn','sn',1500,'claude-sonnet-4-5',1000000,0);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let d = project_detail(&conn, "", &Filter::default(), "UTC").unwrap();
         assert!(d.project.cost_usd > 0.0);
         assert!(!d.daily.is_empty(), "la serie diaria no puede venir vacía");
@@ -867,6 +1106,7 @@ mod tests {
              INSERT INTO calls (message_id,session_id,ts,model,input_tokens,output_tokens) VALUES ('m6','s4',6000,'claude-haiku-4-5',1000000,0),('m7','s5',8000,'claude-haiku-4-5',10,0);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let ps = list_projects(&conn, &Filter::default()).unwrap();
         let web = ps.iter().find(|p| p.key == "/w").unwrap();
         assert_eq!(web.name, "web", "nombre del repo, no del worktree");
@@ -898,5 +1138,307 @@ mod tests {
         let bash = d.tools.iter().find(|t| t.tool == "Bash").unwrap();
         assert_eq!((bash.calls, bash.errors), (2, 1));
         assert!(project_detail(&conn, "/no-existe", &Filter::default(), "UTC").is_err());
+    }
+
+    // ------------------------------------------------------------ páginas y tipos compactos (D9)
+
+    /// 120 sesiones de dos agentes en dos proyectos (uno con un worktree) y sin proyecto, con
+    /// costes, ramas, modelos, turnos y compactaciones repetidos para que el orden necesite el
+    /// desempate por id.
+    fn many(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO agents VALUES ('claude-code','Claude Code','/c',0),('codex','Codex','/x',0);
+             INSERT INTO projects (id,name,cwd,repo_root) VALUES
+               (1,'web','/w','/w'),(2,'api','/a','/a'),(3,'web-feat','/w-feat','/w');",
+        )
+        .unwrap();
+        for i in 0..120i64 {
+            let project = match i % 4 {
+                0 => Some(1),
+                1 => Some(2),
+                2 => Some(3),
+                _ => None,
+            };
+            conn.execute(
+                "INSERT INTO sessions (id,agent_id,project_id,git_branch,started_at,ended_at) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![
+                    format!("s{i:03}"),
+                    if i % 3 == 0 { "codex" } else { "claude-code" },
+                    project,
+                    (i % 5 != 0).then(|| format!("rama-{}", i % 4)),
+                    1000 + (i % 7) * 100,
+                    5000 + i * 10
+                ],
+            )
+            .unwrap();
+            for k in 0..(1 + i % 3) {
+                conn.execute(
+                    "INSERT INTO calls (message_id,session_id,ts,model,input_tokens,output_tokens) VALUES (?1,?2,?3,?4,?5,0)",
+                    params![
+                        format!("m{i}-{k}"),
+                        format!("s{i:03}"),
+                        1000 + (i % 7) * 100 + k * (i % 11) * 10,
+                        ["claude-sonnet-4-5", "claude-haiku-4-5", "modelo-x"][(i % 3) as usize],
+                        (i % 6) * 100_000
+                    ],
+                )
+                .unwrap();
+            }
+            for k in 0..(i % 4) {
+                conn.execute(
+                    "INSERT INTO turns (id, session_id, ts) VALUES (?1, ?2, ?3)",
+                    params![format!("t{i}-{k}"), format!("s{i:03}"), 1000 + k],
+                )
+                .unwrap();
+            }
+            if i % 5 == 1 {
+                conn.execute(
+                    "INSERT INTO events (session_id, ts, kind) VALUES (?1, 1200, 'compaction')",
+                    params![format!("s{i:03}")],
+                )
+                .unwrap();
+            }
+        }
+        crate::derived::refresh(conn).unwrap();
+    }
+
+    fn page(limit: usize, offset: usize, sort: SessionSort, desc: bool) -> PageRequest {
+        PageRequest {
+            limit,
+            offset,
+            sort,
+            desc,
+        }
+    }
+
+    /// El orden de cada columna, en memoria.
+    fn cmp_by(sort: SessionSort, a: &SessionRow, b: &SessionRow) -> std::cmp::Ordering {
+        match sort {
+            SessionSort::Started => a.started_at.cmp(&b.started_at),
+            SessionSort::Agent => a.agent_name.cmp(&b.agent_name),
+            SessionSort::Branch => a.branch.cmp(&b.branch),
+            SessionSort::Model => a.model.cmp(&b.model),
+            SessionSort::Duration => (a.ended_at - a.started_at).cmp(&(b.ended_at - b.started_at)),
+            SessionSort::Turns => a.turns.cmp(&b.turns),
+            SessionSort::Compactions => a.compactions.cmp(&b.compactions),
+            SessionSort::Cost => a.cost_usd.total_cmp(&b.cost_usd),
+        }
+    }
+
+    fn ids(rows: &[SessionRow]) -> Vec<String> {
+        rows.iter().map(|r| r.id.clone()).collect()
+    }
+
+    #[test]
+    fn paginas_sin_repetir_ni_omitir_con_el_total() {
+        let conn = db::open_in_memory().unwrap();
+        many(&conn);
+        let f = Filter::default();
+        let mut seen = Vec::new();
+        for (offset, n) in [(0, 50), (50, 50), (100, 20)] {
+            let p = session_page(
+                &conn,
+                &f,
+                None,
+                &page(50, offset, SessionSort::Started, true),
+            )
+            .unwrap();
+            assert_eq!((p.rows.len(), p.total, p.offset), (n, 120, offset));
+            seen.extend(ids(&p.rows));
+        }
+        let unique: std::collections::BTreeSet<&String> = seen.iter().collect();
+        assert_eq!(unique.len(), 120);
+        let past =
+            session_page(&conn, &f, None, &page(50, 120, SessionSort::Started, true)).unwrap();
+        assert!(past.rows.is_empty());
+        assert_eq!(past.total, 120);
+        for (limit, expected) in [(0, 0), (1, 1), (500, 120)] {
+            let p =
+                session_page(&conn, &f, None, &page(limit, 0, SessionSort::Started, true)).unwrap();
+            assert_eq!(p.rows.len(), expected, "limit {limit}");
+        }
+        assert_eq!(
+            PageRequest {
+                limit: 501,
+                ..Default::default()
+            }
+            .limit(),
+            MAX_SESSIONS
+        );
+        assert_eq!(PageRequest::default().limit(), 50);
+    }
+
+    #[test]
+    fn cada_orden_es_el_de_ordenar_la_lista_completa_con_desempate_por_id() {
+        let conn = db::open_in_memory().unwrap();
+        many(&conn);
+        let f = Filter::default();
+        let all = list_sessions(&conn, &f, Some(500)).unwrap().sessions;
+        for sort in [
+            SessionSort::Started,
+            SessionSort::Agent,
+            SessionSort::Branch,
+            SessionSort::Model,
+            SessionSort::Duration,
+            SessionSort::Turns,
+            SessionSort::Compactions,
+            SessionSort::Cost,
+        ] {
+            for desc in [false, true] {
+                let mut expected = all.clone();
+                expected.sort_by(|a, b| {
+                    let o = cmp_by(sort, a, b);
+                    if desc { o.reverse() } else { o }.then(a.id.cmp(&b.id))
+                });
+                let mut got = Vec::new();
+                for offset in (0..120).step_by(50) {
+                    got.extend(
+                        session_page(&conn, &f, None, &page(50, offset, sort, desc))
+                            .unwrap()
+                            .rows,
+                    );
+                }
+                assert_eq!(ids(&got), ids(&expected), "{sort:?} desc={desc}");
+            }
+        }
+    }
+
+    #[test]
+    fn un_orden_desconocido_falla_al_deserializar() {
+        assert!(
+            serde_json::from_str::<PageRequest>(r#"{"sort":"cost; DROP TABLE calls"}"#).is_err()
+        );
+        let p: PageRequest =
+            serde_json::from_str(r#"{"sort":"cost","desc":false,"limit":10}"#).unwrap();
+        assert_eq!(
+            (p.sort, p.desc, p.limit, p.offset),
+            (SessionSort::Cost, false, 10, 0)
+        );
+        let d: PageRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            (d.sort, d.desc, d.limit()),
+            (SessionSort::Started, true, 50)
+        );
+    }
+
+    #[test]
+    fn las_sesiones_de_un_proyecto_por_paginas_y_sus_cifras_sobre_todas() {
+        let conn = db::open_in_memory().unwrap();
+        many(&conn);
+        let f = Filter::default();
+        // «web» incluye su worktree (repo_root /w); «» son las sesiones sin proyecto.
+        for (key, n) in [("/w", 60), ("/a", 30), ("", 30)] {
+            let p = session_page(
+                &conn,
+                &f,
+                Some(key),
+                &page(25, 0, SessionSort::Started, true),
+            )
+            .unwrap();
+            assert_eq!((p.rows.len(), p.total), (25, n), "{key}");
+            assert!(p
+                .rows
+                .iter()
+                .all(|r| r.project_key.as_deref().unwrap_or("") == key));
+            let o = project_overview(&conn, key, &f, "UTC").unwrap();
+            let d = project_detail(&conn, key, &f, "UTC").unwrap();
+            assert_eq!(o.project, d.project);
+            assert_eq!(
+                o.sessions_with_compactions,
+                d.sessions.iter().filter(|s| s.compactions > 0).count() as i64
+            );
+            assert_eq!(
+                (o.daily.len(), o.tools.len()),
+                (d.daily.len(), d.tools.len())
+            );
+        }
+    }
+
+    #[test]
+    fn el_resumen_de_sesion_trae_la_linea_en_columnas_y_los_turnos_por_paginas() {
+        let conn = db::open_in_memory().unwrap();
+        seed_detail(&conn);
+        let d = session_detail(&conn, "s1").unwrap();
+        let o = session_overview(&conn, "s1").unwrap();
+        assert_eq!(o.session, d.session);
+        assert_eq!(
+            o.timeline.ts,
+            d.timeline.iter().map(|p| p.ts).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            o.timeline.cost,
+            d.timeline.iter().map(|p| p.cost_usd).collect::<Vec<_>>()
+        );
+        assert_eq!(o.compactions, d.compactions);
+        assert_eq!(o.turns_total, d.turns.len() as i64);
+        assert_eq!(
+            (o.activities, o.models, o.tools),
+            (d.activities, d.models, d.tools)
+        );
+        let first = session_turns(
+            &conn,
+            "s1",
+            &TurnPage {
+                limit: 1,
+                offset: 0,
+            },
+        )
+        .unwrap();
+        let second = session_turns(
+            &conn,
+            "s1",
+            &TurnPage {
+                limit: 1,
+                offset: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(first.total, 2);
+        assert_eq!(first.rows, d.turns[..1]);
+        assert_eq!(second.rows, d.turns[1..]);
+        assert!(session_turns(
+            &conn,
+            "s1",
+            &TurnPage {
+                limit: 5,
+                offset: 2
+            }
+        )
+        .unwrap()
+        .rows
+        .is_empty());
+    }
+
+    #[test]
+    fn coste_por_turno_tras_la_compactacion() {
+        let turns: Vec<(i64, f64)> = [1.0, 1.0, 1.0, 3.0, 3.0]
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i as i64 * 10, *c))
+            .collect();
+        assert_eq!(
+            after_compaction(&turns, &[5, 15, 25]),
+            Some(AfterCompaction {
+                k: 3,
+                ratio: Some(3.0)
+            })
+        );
+        assert_eq!(after_compaction(&turns, &[]), None);
+        // Con menos de tres, la última; sin turnos a un lado, nada; antes a coste 0, sin razón.
+        assert_eq!(after_compaction(&turns, &[25]).map(|a| a.k), Some(1));
+        assert_eq!(after_compaction(&turns, &[100]), None);
+        assert_eq!(after_compaction(&turns, &[-1]), None);
+        assert_eq!(
+            after_compaction(&[(0, 0.0), (10, 2.0)], &[5]),
+            Some(AfterCompaction { k: 1, ratio: None })
+        );
+        // Un turno justo en la compactación cuenta después; la razón es después / antes.
+        assert_eq!(
+            after_compaction(&[(0, 2.0), (10, 4.0), (20, 4.0)], &[10]),
+            Some(AfterCompaction {
+                k: 1,
+                ratio: Some(2.0)
+            })
+        );
     }
 }

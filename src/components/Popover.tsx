@@ -9,6 +9,7 @@ export function Popover({
   className = "",
   ariaLabel,
   chevron = true,
+  perf,
 }: {
   label: ReactNode;
   children: ReactNode | ((close: () => void) => ReactNode);
@@ -16,6 +17,8 @@ export function Popover({
   className?: string;
   ariaLabel?: string;
   chevron?: boolean;
+  /** Atributo `data-perf` del botón (sin efecto visual; lo usa el arnés de medición). */
+  perf?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -37,7 +40,7 @@ export function Popover({
 
   return (
     <div className="popover-wrap" ref={wrap}>
-      <button type="button" className={`chip-button ${className}`} aria-expanded={open} aria-haspopup="dialog" aria-label={ariaLabel} onClick={() => setOpen((v) => !v)}>
+      <button type="button" data-perf={perf} className={`chip-button ${className}`} aria-expanded={open} aria-haspopup="dialog" aria-label={ariaLabel} onClick={() => setOpen((v) => !v)}>
         {label}
         {chevron && <ChevronIcon />}
       </button>

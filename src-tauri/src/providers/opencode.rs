@@ -1,6 +1,8 @@
 //! OpenCode guarda todo en SQLite: `~/.local/share/opencode/opencode.db` con `session`,
 //! `message` (JSON por mensaje) y `part` (JSON por parte: texto, herramienta, razonamiento…).
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use super::{prompt_intent, CallRec, Provider, Record, SessionRec, Source, ToolUseRec, TurnRec};
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OpenFlags};

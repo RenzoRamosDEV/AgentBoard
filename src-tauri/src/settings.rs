@@ -1,5 +1,6 @@
 //! Preferencias del usuario en `settings.json` dentro de la carpeta de configuración
-//! (`~/.config/agentboard/` en Linux). Es lo único que la app escribe en disco.
+//! (`~/.config/agentboard/` en Linux). Lo demás que la app escribe es la caché reconstruible de
+//! `db` (salvo con «Solo memoria»).
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,9 @@ pub struct Settings {
     pub alert_at_100: bool,
     /// La bandeja muestra también el gasto de hoy.
     pub tray_shows_today: bool,
+    /// No guardar la caché en disco: los datos viven solo en memoria y al abrir la app se
+    /// vuelven a leer todos los logs.
+    pub memory_only: bool,
 }
 
 fn yes() -> bool {
@@ -79,6 +83,7 @@ impl Default for Settings {
             alert_at_80: true,
             alert_at_100: true,
             tray_shows_today: false,
+            memory_only: false,
         }
     }
 }
@@ -269,6 +274,26 @@ mod tests {
             (s.monthly_budget, s.daily_budget, s.budgets.len()),
             (Some(40.0), None, 0)
         );
+    }
+
+    #[test]
+    fn solo_memoria_esta_desactivado_por_defecto_y_se_guarda() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
+        assert!(!load_from(&path).memory_only);
+        save_to(
+            &path,
+            &Settings {
+                memory_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(load_from(&path).memory_only);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("\"memoryOnly\": true"));
     }
 
     #[test]

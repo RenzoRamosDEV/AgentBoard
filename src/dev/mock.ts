@@ -1,7 +1,8 @@
 /**
  * Datos de ejemplo para desarrollar la UI en un navegador normal (`npm run dev`),
- * sin el núcleo Rust. Solo se carga en modo dev y fuera de Tauri.
+ * sin el núcleo Rust. Solo se carga en modo dev (o en la build `perf` de medición) y fuera de Tauri.
  */
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const DAY = 864e5;
@@ -93,16 +94,61 @@ function sessionDetail(id: string) {
 
 function mockSettings() {
   return {
-    theme: "system", language: "system", monthlyBudget: 60, dailyBudget: 5, alertAt80: true, alertAt100: true, trayShowsToday: false,
+    theme: "system", language: "system", monthlyBudget: 60, dailyBudget: 5, alertAt80: true, alertAt100: true, trayShowsToday: false, memoryOnly: false,
     budgets: [{ kind: "agent", key: "codex", label: "Codex CLI", monthly: 5 }, { kind: "project", key: "AgentBoard", label: "AgentBoard", monthly: 40 }],
     priceOverrides: [{ model: "claude-haiku-4-5", input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1, cacheWrite1h: 1.6 }],
     ...JSON.parse(localStorage.getItem("mockSettings") ?? "{}"),
   };
 }
 
+/** Retraso simulado del backend con `?latency=<ms>`: el Resumen entero, el resto de comandos ¼. */
+function mockLatency(): number {
+  const ms = Number(new URLSearchParams(location.search).get("latency"));
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
 export function installMocks() {
-  mockIPC((cmd, args) => {
+  const latency = mockLatency();
+  // `?history=<días>`: con «Todo» (sin `from`), series de ese número de días (medición con historial largo).
+  const history = Math.max(0, Math.floor(Number(new URLSearchParams(location.search).get("history")) || 0));
+  const longHistory = (f: { from?: number }) => history > 0 && f.from == null;
+  const handle = (cmd: string, args: unknown): unknown => {
     const a = args as Record<string, unknown>;
+    // El Resumen en una petición: los mismos apartados que los comandos sueltos.
+    if (cmd === "get_dashboard_snapshot") {
+      const r = a.request as { filter: object; tz: string; monthFrom: number; branchView: boolean; previous: object | null };
+      const q = (c: string, extra: Record<string, unknown> = {}, filter: object = r.filter) => handle(c, { filter, tz: r.tz, ...extra });
+      const by = (k: string) => q("get_breakdown", { by: k });
+      const project = r.branchView ? "branch" : "project";
+      return {
+        summary: q("get_summary"),
+        agents: by("agent"),
+        daily: q("get_timeseries", { bucket: "day" }),
+        hourly: q("get_timeseries", { bucket: "hour" }),
+        dailyByAgent: q("get_timeseries_by", { by: "agent" }),
+        dailyByModel: q("get_timeseries_by", { by: "model" }),
+        dailyByProject: q("get_timeseries_by", { by: project }),
+        dailyByTool: q("get_timeseries_by", { by: "tool" }),
+        month: q("get_timeseries", { bucket: "day" }, { ...r.filter, from: r.monthFrom, to: undefined }),
+        projects: by("project"),
+        branches: r.branchView ? by("branch") : null,
+        models: by("model"),
+        activity: q("get_activity"),
+        activityDaily: q("get_activity_daily"),
+        tools: by("tool"),
+        commands: by("command"),
+        skills: by("skill"),
+        mcp: by("mcp"),
+        agentTypes: by("agent_type"),
+        prev: r.previous
+          ? {
+              summary: q("get_summary", {}, r.previous),
+              daily: q("get_timeseries", { bucket: "day" }, r.previous),
+              projects: q("get_breakdown", { by: project }, r.previous),
+            }
+          : null,
+      };
+    }
     // Un filtro con `to` es el periodo anterior (comparación): cifras algo distintas.
     const f = (a.filter ?? {}) as { from?: number; to?: number };
     if (f.to != null) {
@@ -142,6 +188,10 @@ export function installMocks() {
           return out;
         }
         // Solo algunos días tienen actividad, como en la realidad.
+        if (longHistory(f)) {
+          const first = Math.floor(now / DAY) * DAY - (history - 1) * DAY;
+          return Array.from({ length: history }, (_, i) => pt(first + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
+        }
         const days = Math.floor((now - monthStart) / DAY) + 1;
         return Array.from({ length: days }, (_, i) => pt(monthStart + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
       }
@@ -155,7 +205,7 @@ export function installMocks() {
           tool: [["Bash", "Bash"], ["Read", "Read"], ["Edit", "Edit"], ["Grep", "Grep"], ["Write", "Write"]],
         };
         const out: { ts: number; key: string; label: string; costUsd: number; calls: number; outputTokens: number }[] = [];
-        for (let d = 13; d >= 0; d--) {
+        for (let d = longHistory(f) ? history - 1 : 13; d >= 0; d--) {
           const ts = Math.floor((now - d * DAY) / DAY) * DAY;
           (keys[String(a.by)] ?? []).forEach(([key, label], i) => {
             if ((d + i) % 4 === 3) return;
@@ -204,7 +254,7 @@ export function installMocks() {
         };
       case "get_activity_daily": {
         const out = [];
-        for (let i = 13; i >= 0; i--) {
+        for (let i = longHistory(f) ? history - 1 : 13; i >= 0; i--) {
           const ts = Math.floor((now - i * DAY) / DAY) * DAY;
           out.push({ ts, activity: "coding", costUsd: 1 + ((i * 7) % 5) * 0.5, turns: 10 });
           out.push({ ts, activity: "exploration", costUsd: 0.4 + ((i * 3) % 4) * 0.3, turns: 3 });
@@ -252,14 +302,49 @@ export function installMocks() {
           activities: [{ key: "feature", costUsd: proj.costUsd * 0.4, turns: 20, editTurns: 18, oneShot: 0.9 }, { key: "coding", costUsd: proj.costUsd * 0.3, turns: 30, editTurns: 30, oneShot: 0.95 }, { key: "testing", costUsd: proj.costUsd * 0.2, turns: 8, editTurns: 0, oneShot: null }, { key: "exploration", costUsd: proj.costUsd * 0.1, turns: 6, editTurns: 0, oneShot: null }],
           models: detail.models.map((m) => ({ ...row(m.key, m.costUsd, m.calls), key: m.key })),
           branches: [...new Set(ses.map((x) => x.branch))].map((b, i) => row(b, proj.costUsd / (i + 2), 100 - i * 20)),
-          sessions: ses,
           tools: detail.tools,
+          sessionsWithCompactions: ses.filter((x) => x.compactions > 0).length,
         };
       }
-      case "list_sessions":
-        return { sessions, total: sessions.length };
-      case "get_session_detail":
-        return sessionDetail(String(a.id));
+      case "list_sessions": {
+        // Como el backend: del proyecto pedido, ordenadas por la columna y por páginas.
+        const page = (a.page ?? {}) as { limit?: number; offset?: number; sort?: string; desc?: boolean };
+        const key = a.projectKey as string | undefined;
+        const rows = sessions.filter((x) => key == null || `/${x.project}` === key);
+        const value: Record<string, (x: (typeof sessions)[number]) => number | string> = {
+          agent: (x) => x.agentName, branch: (x) => x.branch ?? "", model: (x) => x.model ?? "", duration: (x) => x.endedAt - x.startedAt,
+          turns: (x) => x.turns, compactions: (x) => x.compactions, cost: (x) => x.costUsd,
+        };
+        const by = value[page.sort ?? ""] ?? ((x) => x.startedAt);
+        const sign = page.desc === false ? 1 : -1;
+        rows.sort((x, y) => sign * (by(x) < by(y) ? -1 : by(x) > by(y) ? 1 : 0) || x.id.localeCompare(y.id));
+        const offset = page.offset ?? 0;
+        return { rows: rows.slice(offset, offset + Math.min(page.limit ?? 50, 500)), total: rows.length, offset };
+      }
+      case "get_session_detail": {
+        const d = sessionDetail(String(a.id));
+        const k = Math.min(3, d.compactions.length);
+        const cut = d.compactions[k - 1];
+        const avg = (xs: { costUsd: number }[]) => xs.reduce((acc, x) => acc + x.costUsd, 0) / xs.length;
+        const before = d.turns.filter((x) => x.ts < cut);
+        const after = d.turns.filter((x) => x.ts >= cut);
+        return {
+          session: d.session,
+          timeline: { ts: d.timeline.map((p) => p.ts), cost: d.timeline.map((p) => p.costUsd) },
+          compactions: d.compactions,
+          turnsTotal: d.turns.length,
+          afterCompaction: k && before.length && after.length ? { k, ratio: avg(before) > 0 ? avg(after) / avg(before) : null } : null,
+          activities: d.activities,
+          models: d.models,
+          tools: d.tools,
+        };
+      }
+      case "list_session_turns": {
+        const turns = sessionDetail(String(a.id)).turns;
+        const page = (a.page ?? {}) as { limit?: number; offset?: number };
+        const offset = page.offset ?? 0;
+        return { rows: turns.slice(offset, offset + (page.limit ?? 30)), total: turns.length, offset };
+      }
       case "get_data_info":
         return { firstTs: now - 42 * DAY, calls: 3792, watchedFiles: 212, lastScan: now - 60_000 };
       case "export_data":
@@ -269,15 +354,36 @@ export function installMocks() {
       case "set_settings":
         localStorage.setItem("mockSettings", JSON.stringify(a.settings));
         return a.settings;
-      case "plugin:event|listen":
-        return 1;
-      case "plugin:event|unlisten":
+      case "rebuild_cache":
+        // Como el backend: avisa de que pudo cambiar todo y la relectura termina un poco
+        // después con `ingest://done`.
+        setTimeout(() => void emit("data:changed", { generation: ++generation, agents: [], days: [] }), 400);
+        setTimeout(() => void emit("ingest://done", { files: 212, lines: 0, records: 0, errors: 0, full: true }), 800);
         return null;
     }
     console.warn("mock sin implementar:", cmd, args);
     return null;
-  });
+  };
+  const delayed = latency
+    ? async (cmd: string, args: unknown) => {
+        const out = handle(cmd, args);
+        await new Promise((r) => setTimeout(r, cmd === "get_dashboard_snapshot" ? latency : latency / 4));
+        return out;
+      }
+    : handle;
+  mockIPC(delayed, { shouldMockEvents: true });
+  // El arnés de medición emite sus propios avisos: sin relecturas simuladas que lo enturbien.
+  if (new URLSearchParams(location.search).get("perf") === "1") return;
+  // Relecturas simuladas del vigilante: un aviso de datos cambiados de vez en cuando.
+  setInterval(() => {
+    const d = new Date();
+    const day = d.getFullYear() * 10_000 + (d.getMonth() + 1) * 100 + d.getDate();
+    void emit("data:changed", { generation: ++generation, agents: ["claude-code"], days: [day] });
+  }, 20_000);
 }
+
+/** Generación de datos simulada de `data:changed`. */
+let generation = 0;
 
 /**
  * Sonda de maquetación (solo dev, con `?probe=1`): busca elementos que desbordan en

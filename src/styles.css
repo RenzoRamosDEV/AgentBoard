@@ -272,6 +272,7 @@ b { font-weight: 600; }
 .table-head > span, .table-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-row .num { font-size: 12px; }
 .table-more { font-size: 12px; padding: 6px 8px 0; }
+.table-spacer { flex-shrink: 0; }
 .panel .table { flex-grow: 1; }
 .panel-foot { margin-top: auto; display: flex; justify-content: flex-end; padding-top: 4px; }
 

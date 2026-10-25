@@ -174,7 +174,6 @@ export function Overview({
   singleProject,
   open,
   openSession,
-  refresh,
 }: {
   data: DashboardData;
   period: Period;
@@ -182,8 +181,6 @@ export function Overview({
   singleProject: string | null;
   open: (s: SectionId) => void;
   openSession: (id: string) => void;
-  /** Contador de relecturas: la tarjeta «Hoy en directo» se recarga con cada una. */
-  refresh: number;
 }) {
   const scope = singleProject ? t("proyecto {name}", { name: singleProject }) : t("todos los agentes y proyectos");
   const monthSpent = data.month.reduce((a, p) => a + p.costUsd, 0);
@@ -221,7 +218,7 @@ export function Overview({
           </Panel>
         )}
         <Panel id="today" title={t("Hoy en directo")} question={t("sea cual sea el periodo")}>
-          <TodayLive filter={data.filter} refresh={refresh} openSession={openSession} />
+          <TodayLive filter={data.filter} openSession={openSession} />
         </Panel>
       </div>
       <div className="grid-3">

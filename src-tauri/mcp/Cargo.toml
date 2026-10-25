@@ -15,3 +15,4 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
+tracing = "0.1"

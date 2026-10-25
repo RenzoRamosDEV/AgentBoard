@@ -194,11 +194,29 @@ pub fn skills_and_agents(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownR
 
 /// Llamadas por servidor MCP (`mcp__<servidor>__<herramienta>`).
 pub fn mcp_servers(conn: &Connection, f: &Filter) -> Result<Vec<BreakdownRow>> {
-    let (w, args) = f.sql("t.ts");
-    let mut stmt = conn.prepare(&format!(
-        r"SELECT t.tool, COUNT(*), SUM(t.is_error) FROM tool_calls t JOIN sessions s ON s.id = t.session_id
-          WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
-    ))?;
+    mcp_servers_from(conn, f, crate::queries::source(conn, f, None)?)
+}
+
+pub(crate) fn mcp_servers_from(
+    conn: &Connection,
+    f: &Filter,
+    src: crate::queries::Source,
+) -> Result<Vec<BreakdownRow>> {
+    let sql = if src == crate::queries::Source::Detail {
+        let (w, _) = f.sql("t.ts");
+        format!(
+            r"SELECT t.tool, COUNT(*), SUM(t.is_error) FROM tool_calls t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
+        )
+    } else {
+        let (w, _) = src.where_sql(f, "t.day");
+        format!(
+            r"SELECT t.tool, SUM(t.uses), SUM(t.errors) FROM tool_stats t JOIN sessions s ON s.id = t.session_id
+              WHERE {w} AND t.tool LIKE 'mcp\_\_%' ESCAPE '\' GROUP BY 1"
+        )
+    };
+    let (_, args) = src.where_sql(f, "x");
+    let mut stmt = conn.prepare(&sql)?;
     let mut by_server: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     let mut rows = stmt.query(params_from_iter(args.iter()))?;
     while let Some(r) = rows.next()? {
@@ -361,7 +379,7 @@ pub fn classify_turn(t: &TurnStats) -> &'static str {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityRow {
     pub key: String,
@@ -372,7 +390,7 @@ pub struct ActivityRow {
     pub one_shot: Option<f64>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelOneShot {
     pub model: String,
@@ -380,14 +398,27 @@ pub struct ModelOneShot {
     pub one_shot: Option<f64>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityReport {
     pub activities: Vec<ActivityRow>,
     pub models: Vec<ModelOneShot>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TURN_STATS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Veces que este hilo ha calculado `turn_stats` (para los tests).
+#[cfg(test)]
+pub fn turn_stats_calls() -> usize {
+    TURN_STATS_CALLS.with(|c| c.get())
+}
+
 pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnStats>> {
+    #[cfg(test)]
+    TURN_STATS_CALLS.with(|c| c.set(c.get() + 1));
     let mut turns: HashMap<String, TurnStats> = HashMap::new();
     let (w, args) = f.sql("t.ts");
     let mut stmt = conn.prepare(&format!(
@@ -452,8 +483,17 @@ pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnS
     Ok(turns)
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
-    let turns = turn_stats(conn, f)?;
+    activity_from(conn, f, &turn_stats(conn, f)?)
+}
+
+/// `activity` con los turnos ya calculados (`turn_stats` del mismo filtro).
+pub fn activity_from(
+    conn: &Connection,
+    f: &Filter,
+    turns: &HashMap<String, TurnStats>,
+) -> Result<ActivityReport> {
     #[derive(Default)]
     struct Acc {
         cost: f64,
@@ -518,7 +558,7 @@ pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
     Ok(ActivityReport { activities, models })
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDay {
     /// Inicio del día local en epoch ms UTC.
@@ -531,10 +571,20 @@ pub struct ActivityDay {
 /// Coste y turnos por día local y actividad (para el gráfico apilado). El gasto se fecha
 /// por el día de cada llamada, así la serie suma lo mismo que la tabla aunque un turno
 /// cruce el límite del filtro o una llamada no tenga turno.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<ActivityDay>> {
+    activity_daily_from(conn, f, tz, &turn_stats(conn, f)?)
+}
+
+/// `activity_daily` con los turnos ya calculados (`turn_stats` del mismo filtro).
+pub fn activity_daily_from(
+    conn: &Connection,
+    f: &Filter,
+    tz: &str,
+    turns: &HashMap<String, TurnStats>,
+) -> Result<Vec<ActivityDay>> {
     let zone = crate::tz::parse(tz);
     let day_of = |ts: i64| crate::tz::day_start(ts, &zone);
-    let turns = turn_stats(conn, f)?;
     let mut acc: BTreeMap<(i64, String), (f64, i64)> = BTreeMap::new();
 
     let (w, args) = f.sql("c.ts");
@@ -562,7 +612,7 @@ pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<Act
     }
     // Cada turno cuenta una vez: en el día de su primera llamada o, sin llamadas, en el de
     // su propia fecha si cae dentro del periodo.
-    for (id, t) in &turns {
+    for (id, t) in turns {
         let day = match first_call.get(id) {
             Some(ts) => day_of(*ts),
             None if t.ts > 0
@@ -606,6 +656,7 @@ mod tests {
                       ('m2','s',1600,'claude-sonnet-4-5',1000000,0,NULL);",
         )
         .unwrap();
+        crate::derived::refresh(&conn).unwrap();
         let f = Filter {
             from: Some(1000),
             to: Some(2000),

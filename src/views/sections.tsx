@@ -2,7 +2,7 @@
  * Vistas ampliadas de cada apartado: tarjeta de tabla arriba y, debajo, los gráficos que
  * tienen sentido para ese apartado (reparto, ranking con métrica, evolución por día…).
  */
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, SeriesPoint } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName, paletteColor } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
@@ -212,7 +212,7 @@ const rowColor = (rows: { key: string }[]) => (r: { key: string }) => paletteCol
 export function AgentFull({ data }: { data: DashboardData }) {
   const rows = data.agents;
   const color = (r: BreakdownRow, i: number) => agentColor(r.key, i);
-  const columns: Column<BreakdownRow>[] = [
+  const columns = useMemo((): Column<BreakdownRow>[] => [
     { header: t("Agente"), cell: (r) => <span className="with-dot"><i style={{ background: color(r, rows.indexOf(r)) }} />{r.label}</span> },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right" },
@@ -220,7 +220,7 @@ export function AgentFull({ data }: { data: DashboardData }) {
     { header: t("$/sesión"), cell: (r) => cost(r.sessions ? r.costUsd / r.sessions : 0), align: "right", width: "76px", className: "secondary" },
     { header: t("Cache hit"), cell: (r) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right", width: "72px", className: "secondary" },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-blue)"),
-  ];
+  ], [rows]);
   return (
     <>
       <Card title={t("Tabla")} subtitle={t("{n} agentes detectados", { n: rows.length })}>
@@ -238,7 +238,7 @@ export function AgentFull({ data }: { data: DashboardData }) {
 export function ProjectFull({ data, singleProject }: { data: DashboardData; singleProject: string | null }) {
   const rows = data.branches ?? data.projects;
   const color = rowColor(rows);
-  const columns: Column<BreakdownRow>[] = [
+  const columns = useMemo((): Column<BreakdownRow>[] => [
     { header: t(singleProject ? "Rama" : "Proyecto"), cell: (r) => <span className="with-dot"><i style={{ background: color(r) }} />{r.label}</span> },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("$/sesión"), cell: (r) => cost(r.sessions ? r.costUsd / r.sessions : 0), align: "right", width: "76px" },
@@ -246,7 +246,7 @@ export function ProjectFull({ data, singleProject }: { data: DashboardData; sing
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right", className: "secondary" },
     { header: t("Overhead"), cell: (r) => (r.overheadTokens ? fmt.compact(r.overheadTokens) : "–"), align: "right", width: "76px", className: "accent" },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-blue)"),
-  ];
+  ], [rows, singleProject]);
   return (
     <>
       <Card title={t("Tabla")} subtitle={t(singleProject ? "{n} ramas · overhead = tokens de contexto con los que arranca cada sesión" : "{n} proyectos · overhead = tokens de contexto con los que arranca cada sesión", { n: rows.length })}>
@@ -266,7 +266,7 @@ export function ActivityFull({ data }: { data: DashboardData }) {
   const [metric, setMetric] = useState<"cost" | "turns">("cost");
   const get = (r: { costUsd: number; turns: number }) => (metric === "cost" ? r.costUsd : r.turns);
   const format = metric === "cost" ? cost : fmt.int;
-  const columns: Column<ActivityRow>[] = [
+  const columns = useMemo((): Column<ActivityRow>[] => [
     { header: t("Actividad"), cell: (r) => <span className="with-dot"><i style={{ background: activityColor(r.key) }} />{activityLabel(r.key)}</span> },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("Turnos"), cell: (r) => fmt.int(r.turns), align: "right", width: "60px" },
@@ -274,7 +274,7 @@ export function ActivityFull({ data }: { data: DashboardData }) {
     { header: t("Con edición"), cell: (r) => (r.editTurns ? fmt.int(r.editTurns) : "–"), align: "right", width: "84px", className: "secondary" },
     { header: "1-shot", cell: (r) => shot(r.oneShot), align: "right", width: "60px", className: (r) => shotClass(r.oneShot) },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--act-coding)"),
-  ];
+  ], [rows, metric]);
   const b = bucketing(data.daily, data.filter);
   const byDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
   for (const d of data.activityDaily) {
@@ -340,7 +340,7 @@ export function ModelFull({ data }: { data: DashboardData }) {
   const rows = data.models;
   const color = rowColor(rows);
   const oneShot = new Map(data.activity.models.map((m) => [m.model, m.oneShot]));
-  const columns: Column<BreakdownRow>[] = [
+  const columns = useMemo((): Column<BreakdownRow>[] => [
     { header: t("Modelo"), cell: (r) => <span className="with-dot"><i style={{ background: color(r) }} />{modelName(r.key)}</span> },
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right" },
@@ -348,7 +348,7 @@ export function ModelFull({ data }: { data: DashboardData }) {
     { header: t("Cache hit"), cell: (r) => (r.cacheHit ? fmt.pct(r.cacheHit) : "–"), align: "right", width: "72px", className: "secondary" },
     { header: "1-shot", cell: (r) => shot(oneShot.get(r.key)), align: "right", width: "60px", className: (r) => shotClass(oneShot.get(r.key)) },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--series-violet)"),
-  ];
+  ], [data]);
   return (
     <>
       <Card title={t("Tabla")} subtitle={t("{n} modelos · 1-shot solo en modelos con turnos de edición", { n: rows.length })}>
@@ -365,13 +365,13 @@ export function ModelFull({ data }: { data: DashboardData }) {
 
 function UsesFull({ rows, header, plural, others, color, series, data, seriesTitle, mono = false, hint }: { rows: BreakdownRow[]; header: string; plural: string; others: string; color: string; series?: SeriesPoint[]; data: DashboardData; seriesTitle?: string; mono?: boolean; hint?: string }) {
   const rc = rowColor(rows);
-  const columns: Column<BreakdownRow>[] = [
+  const columns = useMemo((): Column<BreakdownRow>[] => [
     { header: t(header), cell: (r) => r.label, className: mono ? "mono" : "" },
     { header: t("Llamadas"), cell: (r) => fmt.int(r.calls), align: "right" },
     { header: t("Errores"), cell: (r) => fmt.int(r.errors), align: "right", width: "64px", className: "secondary" },
     { header: t("% error"), cell: err, align: "right", width: "64px", className: errClass },
     barColumn(t("Uso"), rows, (r) => r.calls, color),
-  ];
+  ], [rows, header, plural, others, color, series, data, seriesTitle, mono, hint]);
   return (
     <>
       <Card title={t("Tabla")} subtitle={`${t(plural, { n: rows.length })}${hint ? ` · ${t(hint)}` : ""}`}>
@@ -401,7 +401,7 @@ function CostUsesFull({ rows, header, usesHeader, color, hint, othersLabel = "Ot
   const withAgent = agentName && rows.some((r) => r.agent);
   const kind = (r: BreakdownRow) => (r.label === "(sin tipo)" ? t(r.label) : r.label);
   const label = (r: BreakdownRow) => (withAgent && r.agent ? `${kind(r)} · ${agentName!(r.agent)}` : r.label);
-  const columns: Column<BreakdownRow>[] = [
+  const columns = useMemo((): Column<BreakdownRow>[] => [
     { header: t(header), cell: (r) => <span className="with-dot"><i style={{ background: rc(r) }} />{withAgent ? kind(r) : r.label}</span> },
     ...(withAgent
       ? [{ header: t("Agente"), cell: (r: BreakdownRow) => (r.agent ? <AgentTag id={r.agent} name={agentName!(r.agent)} /> : "–"), width: "minmax(120px, 0.7fr)" }]
@@ -410,7 +410,7 @@ function CostUsesFull({ rows, header, usesHeader, color, hint, othersLabel = "Ot
     { header: t("Coste"), cell: (r) => cost(r.costUsd), align: "right", className: "cost" },
     { header: t("$/uso"), cell: (r) => cost(r.calls ? r.costUsd / r.calls : 0), align: "right", width: "72px", className: "secondary" },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, color),
-  ];
+  ], [rows, header, usesHeader, color, hint, othersLabel, agentName]);
   return (
     <>
       <Card title={t("Tabla")} subtitle={hint && t(hint)}>

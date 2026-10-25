@@ -3,41 +3,52 @@
 pub mod alerts;
 pub mod commands;
 pub mod db;
+pub mod derived;
 pub mod findings;
 pub mod ingest;
+pub mod ingest_thread;
 pub mod insights;
+pub mod notifier;
 pub mod pricing;
 pub mod providers;
 pub mod queries;
+pub mod result_cache;
 pub mod sessions;
 pub mod settings;
+pub mod snapshot;
+pub mod telemetry;
 pub mod tray;
 pub mod tz;
 pub mod watcher;
 
 use alerts::Alerts;
 use commands::AppState;
-use std::sync::{Arc, Mutex};
+use ingest_thread::{DataGeneration, IngestThread, Origen};
+use std::sync::{Arc, RwLock};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager};
 
 pub fn run() {
+    telemetry::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             db::remove_legacy_db();
-            let conn = db::open_in_memory()?;
-            // Precios fijados por el usuario en Ajustes, encima de los de por defecto.
-            if let Err(e) = pricing::apply_overrides(&conn, &settings::load().price_overrides) {
-                eprintln!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
+            // Caché reconstruible en la carpeta de datos (en memoria si no se puede crear).
+            let mode = db::startup_mode(settings::load().memory_only, db::default_cache_path());
+            let storage = db::Storage::open(mode)?;
+            // Precios fijados por el usuario en Ajustes, encima de los de por defecto; con una
+            // caché existente solo se tocan los que cambiaron.
+            if let Err(e) =
+                pricing::apply_overrides(&storage.writer, &settings::load().price_overrides)
+            {
+                tracing::warn!("agentboard: no se pudieron aplicar los precios del usuario: {e:#}");
             }
-            let db = Arc::new(Mutex::new(conn));
+            let readers: commands::Readers =
+                Arc::new(RwLock::new(Arc::new(storage.readers(db::ReadPool::SIZE)?)));
+            let generation = Arc::new(DataGeneration::default());
             let alerts = Alerts::new();
-            app.manage(AppState {
-                db: db.clone(),
-                alerts: alerts.clone(),
-            });
 
             // Bandeja del sistema: tooltip con el gasto del mes y menú con el de hoy.
             let tray = build_tray(app.handle())?;
@@ -58,42 +69,63 @@ pub fn run() {
             .visible(false)
             .build()?;
 
-            // Refresca la bandeja (tooltip y menú) y los avisos de presupuesto tras cada escaneo.
+            // Refresca la bandeja (tooltip y menú) y los avisos de presupuesto: al terminar el
+            // escaneo inicial y con cada `data:changed` (como mucho uno por segundo).
             let refresh_alerts = {
                 let app = app.handle().clone();
-                let db = db.clone();
+                let readers = readers.clone();
                 let alerts = alerts.clone();
                 let tray = tray.clone();
-                move || {
-                    alerts.refresh(&app, &db, &tray);
-                    tray::refresh(&app, &db, &tray);
-                }
+                Arc::new(move || {
+                    if let Ok(pool) = commands::current(&readers) {
+                        alerts.refresh(&app, &pool, &tray);
+                        tray::refresh(&app, &pool, &tray);
+                    }
+                })
             };
 
-            // Escaneo inicial en segundo plano: lee los logs del ordenador a la base en memoria.
+            // Aviso de datos cambiados a la interfaz, con throttle de 1 por segundo.
+            let changes = {
+                let handle = app.handle().clone();
+                let refresh_alerts = refresh_alerts.clone();
+                notifier::spawn(move |payload| {
+                    tracing::debug_span!("emit.data_changed", generation = payload.generation)
+                        .in_scope(|| handle.emit("data:changed", &payload))
+                        .ok();
+                    refresh_alerts();
+                })
+            };
+
+            // Hilo de ingesta: escaneo inicial y relecturas del vigilante, fuera de la interfaz.
+            // `ingest://done` solo marca el fin del escaneo inicial (o del de una reconstrucción).
             let handle = app.handle().clone();
-            let scan_db = db.clone();
-            let after_scan = refresh_alerts.clone();
-            std::thread::spawn(move || {
-                let result = scan_db
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-                    .and_then(|mut conn| ingest::scan_all(&mut conn, &providers::all()));
-                match result {
-                    Ok(stats) => {
-                        let _ = handle.emit("ingest://done", stats);
-                        after_scan();
+            let ingest = IngestThread::spawn_with_changes(
+                storage,
+                readers.clone(),
+                || settings::load().price_overrides,
+                providers::all(),
+                generation.clone(),
+                move |origen, stats| {
+                    if origen == Origen::EscaneoInicial {
+                        tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
+                            .in_scope(|| handle.emit("ingest://done", stats))
+                            .ok();
+                        refresh_alerts();
                     }
-                    Err(e) => eprintln!("agentboard: falló el escaneo inicial: {e:#}"),
-                }
+                },
+                move |generation, touched| changes.send(generation, touched.clone()),
+            );
+            ingest.request(Origen::EscaneoInicial);
+            app.manage(AppState {
+                readers,
+                ingest: ingest.clone(),
+                generation,
+                results: Arc::new(result_cache::ResultCache::default()),
+                alerts,
             });
 
-            // Vigilante en vivo: relee al vuelo cuando los agentes escriben en sus logs.
-            let watch_handle = app.handle().clone();
-            watcher::spawn(db.clone(), Arc::new(providers::all), move || {
-                let _ = watch_handle.emit("ingest://done", ());
-                refresh_alerts();
-            });
+            // Vigilante en vivo: pide relecturas cuando los agentes escriben en sus logs.
+            watcher::spawn(Arc::new(providers::all), ingest);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -112,6 +144,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_summary,
+            commands::get_dashboard_snapshot,
             commands::get_timeseries,
             commands::get_timeseries_by,
             commands::get_breakdown,
@@ -123,11 +156,13 @@ pub fn run() {
             commands::export_data,
             commands::list_sessions,
             commands::get_session_detail,
+            commands::list_session_turns,
             commands::list_project_summaries,
             commands::get_project_detail,
             commands::list_prices,
             commands::get_settings,
             commands::set_settings,
+            commands::rebuild_cache,
             tray::show_main,
         ])
         .run(tauri::generate_context!())

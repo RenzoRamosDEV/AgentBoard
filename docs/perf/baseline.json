@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "statistic": "median",
+  "unit": "ns",
+  "captured": {
+    "commit": "9d0db2519125647442761ef022d34af6d33f759f",
+    "date": "2026-10-25T08:51:59Z",
+    "runner": "ubuntu-22.04",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "profile": "bench-fast"
+  },
+  "benchmarks": {
+    "ingest_file/claude_code_5mib": 39112120.5625,
+    "parse_file/claude_code": 9910797.974074073,
+    "parse_file/codex": 1189599.4319444443,
+    "parse_file/copilot": 1109995.9171717172,
+    "parse_file/cursor": 679957.4851851852,
+    "parse_file/gemini": 1286606.0542763157,
+    "parse_line/claude_code": 2662.4782124758685,
+    "parse_line/codex": 1987.1796989918557,
+    "parse_line/copilot": 1424.0517170263788,
+    "parse_line/cursor": 1576.1972881850577,
+    "parse_line/gemini": 4181.370406585411,
+    "summary_queries/activity": 4849050.5649999995,
+    "summary_queries/breakdown(model)": 97470.5656122449,
+    "summary_queries/breakdown(project)": 126226.48289012574,
+    "summary_queries/resumen_completo": 19810502.824652776,
+    "summary_queries/summary": 80633.62261721329,
+    "summary_queries/timeseries(day)": 69253.46644122383
+  }
+}

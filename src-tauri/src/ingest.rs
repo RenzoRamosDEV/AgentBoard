@@ -7,7 +7,7 @@ use crate::providers::{CallRec, Provider, Record, Source};
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -22,6 +22,8 @@ pub struct ScanStats {
     pub lines: usize,
     pub records: usize,
     pub errors: usize,
+    /// Escaneo completo de las raíces (`false` en una relectura dirigida).
+    pub full: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -103,6 +105,33 @@ pub fn scan_with_hooks(
     )
 }
 
+/// Relectura dirigida: solo las rutas dadas (y los archivos relacionados que su limpieza obligue a
+/// releer), con la misma tubería que el escaneo completo.
+pub fn scan_paths(
+    conn: &mut Connection,
+    providers: &[Box<dyn Provider>],
+    paths: &BTreeSet<PathBuf>,
+) -> Result<ScanStats> {
+    scan_given(&mut Sink { conn, hooks: None }, providers, paths)
+}
+
+/// `scan_paths` avisando a `hooks` entre lotes, como `scan_with_hooks`.
+pub fn scan_paths_with_hooks(
+    conn: &mut Connection,
+    providers: &[Box<dyn Provider>],
+    paths: &BTreeSet<PathBuf>,
+    hooks: &mut dyn BatchHooks,
+) -> Result<ScanStats> {
+    scan_given(
+        &mut Sink {
+            conn,
+            hooks: Some(hooks),
+        },
+        providers,
+        paths,
+    )
+}
+
 pub fn default_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
@@ -173,8 +202,113 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
             );
         }
     }
-    // Identidad y tamaño de cada archivo JSONL, una sola vez: los usan la limpieza y el plan.
-    let seen: Vec<Option<(String, i64)>> = found
+    let seen = identities(providers, &found);
+    let index = path_index(&found);
+    let states = {
+        let conn = &mut *db.conn;
+        register_agents(conn, providers)?;
+        let tracked = load_tracked(conn)?;
+        let states =
+            if forget_stale_files(conn, providers, &found, &seen, &index, &tracked)?.is_some() {
+                load_file_states(conn)?
+            } else {
+                tracked
+                    .into_iter()
+                    .map(|t| {
+                        (
+                            t.path,
+                            FileState {
+                                file_id: t.file_id,
+                                offset: t.offset,
+                            },
+                        )
+                    })
+                    .collect()
+            };
+        forget_unused_projects(conn)?;
+        states
+    };
+    let stats = read_and_write(db, providers, found, seen, &states, threads)?;
+    Ok(ScanStats {
+        full: true,
+        ..stats
+    })
+}
+
+#[tracing::instrument(name = "scan_paths", level = "debug", skip_all, fields(paths = paths.len(), files = Empty, lines = Empty, records = Empty, errors = Empty))]
+fn scan_given(
+    db: &mut Sink,
+    providers: &[Box<dyn Provider>],
+    paths: &BTreeSet<PathBuf>,
+) -> Result<ScanStats> {
+    let roots: Vec<Vec<PathBuf>> = providers.iter().map(|p| p.log_roots()).collect();
+    let mut found = plan_paths(providers, &roots, paths.iter().filter(|p| p.is_file()));
+    let mut seen = identities(providers, &found);
+    {
+        let conn = &mut *db.conn;
+        let tracked = load_tracked_paths(conn, paths.iter())?;
+        let index = path_index(&found);
+        if let Some(related) = forget_stale_files(conn, providers, &found, &seen, &index, &tracked)?
+        {
+            let extra: Vec<PathBuf> = related
+                .into_iter()
+                .map(PathBuf::from)
+                .filter(|p| !paths.contains(p) && p.is_file())
+                .collect();
+            if !extra.is_empty() {
+                found = plan_paths(
+                    providers,
+                    &roots,
+                    paths.iter().filter(|p| p.is_file()).chain(&extra),
+                );
+                seen = identities(providers, &found);
+            }
+            forget_unused_projects(conn)?;
+        }
+    }
+    let states = load_tracked_paths(db.conn, found.iter().map(|(_, p)| p))?
+        .into_iter()
+        .map(|t| {
+            (
+                t.path,
+                FileState {
+                    file_id: t.file_id,
+                    offset: t.offset,
+                },
+            )
+        })
+        .collect();
+    let threads = default_threads();
+    read_and_write(db, providers, found, seen, &states, threads)
+}
+
+/// Cada ruta con el primer proveedor que la reconoce bajo una de sus raíces, en el orden del
+/// escaneo completo (proveedor, raíz, ruta); las que ninguno reconoce se descartan.
+fn plan_paths<'a>(
+    providers: &[Box<dyn Provider>],
+    roots: &[Vec<PathBuf>],
+    paths: impl IntoIterator<Item = &'a PathBuf>,
+) -> Vec<(usize, PathBuf)> {
+    let mut planned: Vec<(usize, usize, PathBuf)> = paths
+        .into_iter()
+        .filter_map(|path| {
+            providers.iter().enumerate().find_map(|(i, p)| {
+                let r = roots[i].iter().position(|root| path.starts_with(root))?;
+                p.matches(path).then(|| (i, r, path.clone()))
+            })
+        })
+        .collect();
+    planned.sort();
+    planned.dedup();
+    planned.into_iter().map(|(i, _, path)| (i, path)).collect()
+}
+
+/// Identidad y tamaño de cada archivo JSONL, una sola vez: los usan la limpieza y el plan.
+fn identities(
+    providers: &[Box<dyn Provider>],
+    found: &[(usize, PathBuf)],
+) -> Vec<Option<(String, i64)>> {
+    found
         .iter()
         .map(|(i, path)| {
             (providers[*i].source() == Source::Jsonl)
@@ -185,36 +319,32 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
                 })
                 .flatten()
         })
-        .collect();
-    let index: HashMap<&std::ffi::OsStr, usize> = found
+        .collect()
+}
+
+fn path_index(found: &[(usize, PathBuf)]) -> HashMap<&std::ffi::OsStr, usize> {
+    found
         .iter()
         .enumerate()
         .map(|(k, (_, path))| (path.as_os_str(), k))
-        .collect();
-    let states = {
-        let conn = &mut *db.conn;
-        register_agents(conn, providers)?;
-        let tracked = load_tracked(conn)?;
-        let states = if forget_stale_files(conn, providers, &found, &seen, &index, &tracked)? {
-            load_file_states(conn)?
-        } else {
-            tracked
-                .into_iter()
-                .map(|t| {
-                    (
-                        t.path,
-                        FileState {
-                            file_id: t.file_id,
-                            offset: t.offset,
-                        },
-                    )
-                })
-                .collect()
-        };
-        // Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
-        conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
-        states
-    };
+        .collect()
+}
+
+/// Proyectos creados por un `cwd` pasajero (versiones anteriores) que ninguna sesión usa.
+fn forget_unused_projects(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)", [])?;
+    Ok(())
+}
+
+/// Lee los archivos con cambios con varios hilos y los escribe en el orden de `found`, por lotes.
+fn read_and_write(
+    db: &mut Sink,
+    providers: &[Box<dyn Provider>],
+    found: Vec<(usize, PathBuf)>,
+    seen: Vec<Option<(String, i64)>>,
+    states: &HashMap<String, FileState>,
+    threads: usize,
+) -> Result<ScanStats> {
     let mut stats = ScanStats::default();
     let mut jobs = Vec::new();
     for ((i, path), seen) in found.into_iter().zip(seen) {
@@ -235,7 +365,7 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
         for _ in 0..threads {
             let tx = tx.clone();
             let (dispatch, parent) = (dispatch.clone(), parent.clone());
-            let (jobs, states, window, next) = (&jobs, &states, &window, &next);
+            let (jobs, states, window, next) = (&jobs, states, &window, &next);
             scope.spawn(move || {
                 tracing::dispatcher::with_default(&dispatch, || {
                     let _span = parent.entered();
@@ -477,6 +607,32 @@ struct Tracked {
     offset: i64,
 }
 
+/// Los archivos de `file_state` con esas rutas.
+fn load_tracked_paths<'a>(
+    conn: &Connection,
+    paths: impl IntoIterator<Item = &'a PathBuf>,
+) -> Result<Vec<Tracked>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, path, agent_id, file_id, offset FROM file_state WHERE path = ?1",
+    )?;
+    let mut out = Vec::new();
+    for path in paths {
+        let row = stmt
+            .query_row([path.to_string_lossy()], |r| {
+                Ok(Tracked {
+                    id: r.get(0)?,
+                    path: r.get(1)?,
+                    agent: r.get(2)?,
+                    file_id: r.get(3)?,
+                    offset: r.get(4)?,
+                })
+            })
+            .optional()?;
+        out.extend(row);
+    }
+    Ok(out)
+}
+
 fn load_tracked(conn: &Connection) -> Result<Vec<Tracked>> {
     let mut stmt =
         conn.prepare_cached("SELECT id, path, agent_id, file_id, offset FROM file_state")?;
@@ -495,7 +651,8 @@ fn load_tracked(conn: &Connection) -> Result<Vec<Tracked>> {
 /// Archivos leídos antes que ya no están, o que se sustituyeron (otra identidad) o encogieron:
 /// sus datos se retiran y las sesiones a las que aportaban se rehacen leyendo de cero sus otros
 /// archivos, para que la caché diga lo mismo que leer los logs presentes desde cero (D10). Solo
-/// mira los archivos de los proveedores de este escaneo. Devuelve si retiró algo.
+/// mira los archivos de los proveedores de este escaneo. Si retiró algo, devuelve las rutas de los
+/// archivos relacionados que se releerán desde el principio.
 fn forget_stale_files(
     conn: &mut Connection,
     providers: &[Box<dyn Provider>],
@@ -503,7 +660,7 @@ fn forget_stale_files(
     seen: &[Option<(String, i64)>],
     index: &HashMap<&std::ffi::OsStr, usize>,
     tracked: &[Tracked],
-) -> Result<bool> {
+) -> Result<Option<Vec<String>>> {
     let agents: Vec<&str> = providers.iter().map(|p| p.id()).collect();
     let (mut gone, mut changed) = (Vec::new(), Vec::new());
     for t in tracked {
@@ -524,7 +681,7 @@ fn forget_stale_files(
         }
     }
     if gone.is_empty() && changed.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
     let tx = conn.transaction()?;
     tx.execute_batch(
@@ -537,8 +694,19 @@ fn forget_stale_files(
     }
     tx.execute_batch(
         "INSERT INTO stale_sessions
-           SELECT DISTINCT session_id FROM session_files WHERE file IN (SELECT id FROM stale_files);
-         -- Los demás archivos de esas sesiones se releen enteros.
+           SELECT DISTINCT session_id FROM session_files WHERE file IN (SELECT id FROM stale_files);",
+    )?;
+    let related: Vec<String> = tx
+        .prepare(
+            "SELECT path FROM file_state
+             WHERE id IN (SELECT file FROM session_files
+                          WHERE session_id IN (SELECT id FROM stale_sessions))
+               AND id NOT IN (SELECT id FROM stale_files)",
+        )?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    tx.execute_batch(
+        "-- Los demás archivos de esas sesiones se releen enteros.
          UPDATE file_state SET offset = 0, file_id = ''
            WHERE id IN (SELECT file FROM session_files
                         WHERE session_id IN (SELECT id FROM stale_sessions))
@@ -563,7 +731,7 @@ fn forget_stale_files(
         cambiados = changed.len(),
         "agentboard: datos de logs retirados de la caché"
     );
-    Ok(true)
+    Ok(Some(related))
 }
 const SELECT_FILE_STATE: &str = "SELECT file_id, offset FROM file_state WHERE path = ?1";
 
@@ -1709,6 +1877,160 @@ mod tests {
                 from_scratch(dir.path()),
                 "truncado, compartida: {shared}"
             );
+        }
+    }
+
+    /// Proveedor que cuenta qué rutas consulta (`matches`) y qué líneas parsea.
+    struct Counting {
+        inner: ClaudeCode,
+        matched: std::sync::Arc<Mutex<Vec<PathBuf>>>,
+        parsed: std::sync::Arc<Mutex<Vec<PathBuf>>>,
+    }
+
+    impl Provider for Counting {
+        fn id(&self) -> &'static str {
+            self.inner.id()
+        }
+        fn name(&self) -> &'static str {
+            self.inner.name()
+        }
+        fn reset(&self, path: &Path) {
+            self.inner.reset(path)
+        }
+        fn knows(&self, path: &Path) -> bool {
+            self.inner.knows(path)
+        }
+        fn whole_file(&self, path: &Path) -> bool {
+            self.inner.whole_file(path)
+        }
+        fn log_roots(&self) -> Vec<PathBuf> {
+            self.inner.log_roots()
+        }
+        fn matches(&self, path: &Path) -> bool {
+            self.matched.lock().unwrap().push(path.to_path_buf());
+            self.inner.matches(path)
+        }
+        fn parse_line(&self, path: &Path, line: &str) -> Result<Vec<Record>> {
+            self.parsed.lock().unwrap().push(path.to_path_buf());
+            self.inner.parse_line(path, line)
+        }
+    }
+
+    fn paths(list: &[&Path]) -> std::collections::BTreeSet<PathBuf> {
+        list.iter().map(|p| p.to_path_buf()).collect()
+    }
+
+    #[test]
+    fn la_relectura_dirigida_solo_mira_el_archivo_crecido() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("p");
+        fs::create_dir_all(&p).unwrap();
+        let files: Vec<PathBuf> = (0..5).map(|i| p.join(format!("f{i}.jsonl"))).collect();
+        for (i, f) in files.iter().enumerate() {
+            fs::write(
+                f,
+                session_line(
+                    &format!("s{i}"),
+                    &format!("m{i}"),
+                    "2026-09-25T10:00:00Z",
+                    "/h/a",
+                ),
+            )
+            .unwrap();
+        }
+        let (matched, parsed) = (Default::default(), Default::default());
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(Counting {
+            inner: ClaudeCode::with_roots(vec![dir.path().to_path_buf()]),
+            matched: std::sync::Arc::clone(&matched),
+            parsed: std::sync::Arc::clone(&parsed),
+        })];
+        let mut conn = db::open_in_memory().unwrap();
+        scan_all(&mut conn, &providers).unwrap();
+        matched.lock().unwrap().clear();
+        parsed.lock().unwrap().clear();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&files[2])
+            .unwrap()
+            .write_all(session_line("s2", "m2b", "2026-09-25T10:01:00Z", "/h/a").as_bytes())
+            .unwrap();
+        let stats = scan_paths(&mut conn, &providers, &paths(&[&files[2]])).unwrap();
+        assert_eq!(
+            (stats.files, stats.records > 0, stats.full),
+            (1, true, false)
+        );
+        let matched: Vec<PathBuf> = matched.lock().unwrap().clone();
+        assert!(matched.iter().all(|m| m == &files[2]), "{matched:?}");
+        let parsed: Vec<PathBuf> = parsed.lock().unwrap().clone();
+        assert!(
+            !parsed.is_empty() && parsed.iter().all(|m| m == &files[2]),
+            "{parsed:?}"
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM calls"), 6);
+        assert_eq!(dump(&conn), from_scratch(dir.path()));
+    }
+
+    #[test]
+    fn la_relectura_dirigida_ignora_rutas_no_reconocidas() {
+        let (dir, a, _b) = two_files(false);
+        let mut conn = db::open_in_memory().unwrap();
+        scan_dir(&mut conn, dir.path());
+        let before = dump(&conn);
+        let other = dir.path().join("p/notas.txt");
+        fs::write(&other, "hola\n").unwrap();
+        let outside = std::env::temp_dir().join("agentboard-fuera.jsonl");
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![dir
+            .path()
+            .to_path_buf()]))];
+        let stats = scan_paths(&mut conn, &providers, &paths(&[&other, &outside])).unwrap();
+        assert_eq!((stats.files, stats.records, stats.errors), (0, 0, 0));
+        assert_eq!(dump(&conn), before);
+        let stats = scan_paths(&mut conn, &providers, &paths(&[&a])).unwrap();
+        assert_eq!((stats.files, stats.records), (1, 0), "sin cambios");
+        assert!(scan_dir(&mut conn, dir.path()).full);
+    }
+
+    #[test]
+    fn la_relectura_dirigida_de_un_log_borrado_rotado_o_truncado_deja_lo_mismo_que_desde_cero() {
+        let rescan = |conn: &mut Connection, dir: &Path, path: &Path| {
+            let providers: Vec<Box<dyn Provider>> =
+                vec![Box::new(ClaudeCode::with_roots(vec![dir.to_path_buf()]))];
+            scan_paths(conn, &providers, &paths(&[path])).unwrap()
+        };
+        for shared in [false, true] {
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            fs::remove_file(&b).unwrap();
+            rescan(&mut conn, dir.path(), &b);
+            assert_eq!(dump(&conn), from_scratch(dir.path()), "borrado {shared}");
+
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            let tmp = b.with_extension("tmp");
+            fs::write(
+                &tmp,
+                session_line("s3", "c1", "2026-09-27T09:00:00Z", "/h/tres"),
+            )
+            .unwrap();
+            fs::rename(&tmp, &b).unwrap();
+            rescan(&mut conn, dir.path(), &b);
+            assert_eq!(dump(&conn), from_scratch(dir.path()), "rotado {shared}");
+
+            let (dir, _a, b) = two_files(shared);
+            let mut conn = db::open_in_memory().unwrap();
+            scan_dir(&mut conn, dir.path());
+            let first = fs::read_to_string(&b)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .to_string()
+                + "\n";
+            fs::write(&b, first).unwrap();
+            rescan(&mut conn, dir.path(), &b);
+            assert_eq!(dump(&conn), from_scratch(dir.path()), "truncado {shared}");
         }
     }
 

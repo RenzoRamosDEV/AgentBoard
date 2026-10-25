@@ -12,7 +12,8 @@ use crate::providers::Provider;
 use crate::settings::PriceOverride;
 use anyhow::Result;
 use rusqlite::Connection;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -30,6 +31,8 @@ pub type Reply = Sender<Result<(), String>>;
 /// Trabajos del escritor.
 pub enum Job {
     Scan(Origen),
+    /// Relectura dirigida de los archivos que avisó el vigilante.
+    Rescan(BTreeSet<PathBuf>),
     AplicarPrecios(Vec<PriceOverride>, Reply),
     /// Vacía la caché (en el modo pedido o, sin él, el actual) y vuelve a leer todos los logs.
     Reconstruir(Option<CacheMode>, Option<Reply>),
@@ -63,6 +66,11 @@ impl IngestHandle {
     /// Encola un escaneo. Si el hilo ya terminó no hay nada que hacer.
     pub fn request(&self, origen: Origen) {
         let _ = self.0.send(Job::Scan(origen));
+    }
+
+    /// Encola la relectura dirigida de `paths` (del vigilante).
+    pub fn rescan(&self, paths: BTreeSet<PathBuf>) {
+        let _ = self.0.send(Job::Rescan(paths));
     }
 
     /// Aplica los precios del usuario y espera a que estén confirmados (bloquea: desde un
@@ -197,8 +205,51 @@ fn rebuild(
     Ok(())
 }
 
-/// Atiende trabajos hasta que se cierra el canal. Los escaneos acumulados se agrupan en uno
-/// (es completo e idempotente); el escaneo inicial tiene prioridad para el aviso.
+/// Lectura pendiente: un escaneo completo o la relectura dirigida de unas rutas.
+enum Pending {
+    Full(Origen),
+    Paths(BTreeSet<PathBuf>),
+}
+
+impl Pending {
+    /// Une otra petición: las rutas se suman, un escaneo completo absorbe las relecturas y el
+    /// escaneo inicial tiene prioridad para el aviso.
+    fn absorb(self, other: Pending) -> Pending {
+        match (self, other) {
+            (Pending::Paths(mut a), Pending::Paths(b)) => {
+                a.extend(b);
+                Pending::Paths(a)
+            }
+            (Pending::Full(a), Pending::Full(b)) => Pending::Full(
+                if a == Origen::EscaneoInicial || b == Origen::EscaneoInicial {
+                    Origen::EscaneoInicial
+                } else {
+                    a
+                },
+            ),
+            (Pending::Full(o), Pending::Paths(_)) | (Pending::Paths(_), Pending::Full(o)) => {
+                Pending::Full(o)
+            }
+        }
+    }
+
+    fn origen(&self) -> Origen {
+        match self {
+            Pending::Full(o) => *o,
+            Pending::Paths(_) => Origen::Vigilante,
+        }
+    }
+
+    fn into_job(self) -> Job {
+        match self {
+            Pending::Full(o) => Job::Scan(o),
+            Pending::Paths(p) => Job::Rescan(p),
+        }
+    }
+}
+
+/// Atiende trabajos hasta que se cierra el canal. Los escaneos y relecturas acumulados se agrupan
+/// en una pasada (son idempotentes); el escaneo inicial tiene prioridad para el aviso.
 fn run(
     rx: Receiver<Job>,
     mut state: WriterState,
@@ -215,8 +266,9 @@ fn run(
                 Err(_) => return,
             },
         };
-        let mut origen = match job {
-            Job::Scan(origen) => origen,
+        let mut pending = match job {
+            Job::Scan(origen) => Pending::Full(origen),
+            Job::Rescan(paths) => Pending::Paths(paths),
             Job::AplicarPrecios(overrides, reply) => {
                 apply_prices(&state.storage.writer, &overrides, generation, &reply);
                 continue;
@@ -236,15 +288,12 @@ fn run(
                 continue;
             }
         };
-        // Agrupa los escaneos pendientes; precios y reconstrucciones se atienden antes.
+        // Agrupa los escaneos y relecturas pendientes; precios y reconstrucciones van antes.
         let mut later = VecDeque::new();
         for job in deferred.drain(..).chain(rx.try_iter()) {
             match job {
-                Job::Scan(o) => {
-                    if o == Origen::EscaneoInicial {
-                        origen = o;
-                    }
-                }
+                Job::Scan(o) => pending = pending.absorb(Pending::Full(o)),
+                Job::Rescan(paths) => pending = pending.absorb(Pending::Paths(paths)),
                 Job::AplicarPrecios(overrides, reply) => {
                     apply_prices(&state.storage.writer, &overrides, generation, &reply)
                 }
@@ -252,17 +301,25 @@ fn run(
             }
         }
         if !later.is_empty() {
-            // Una reconstrucción pendiente va primero; el escaneo pedido se hace después.
+            // Una reconstrucción pendiente va primero; la lectura pedida se hace después.
             deferred = later;
-            deferred.push_back(Job::Scan(origen));
+            deferred.push_back(pending.into_job());
             continue;
         }
+        let origen = pending.origen();
         let mut hooks = Between {
             rx: &rx,
             generation,
             deferred: &mut deferred,
         };
-        match ingest::scan_with_hooks(&mut state.storage.writer, providers, &mut hooks) {
+        let conn = &mut state.storage.writer;
+        let result = match &pending {
+            Pending::Full(_) => ingest::scan_with_hooks(conn, providers, &mut hooks),
+            Pending::Paths(paths) => {
+                ingest::scan_paths_with_hooks(conn, providers, paths, &mut hooks)
+            }
+        };
+        match result {
             Ok(stats) => on_done(origen, &stats),
             Err(e) => {
                 tracing::error!(?origen, "agentboard: falló el escaneo: {e:#}");
@@ -439,6 +496,61 @@ mod tests {
             vec![Origen::EscaneoInicial],
             "un escaneo, con el aviso inicial"
         );
+    }
+
+    fn run_jobs(fx: &Fixture, writer: Storage, jobs: Vec<Job>) -> Vec<(Origen, ScanStats)> {
+        let (tx, rx) = mpsc::channel();
+        for job in jobs {
+            tx.send(job).unwrap();
+        }
+        drop(tx);
+        let mut done = Vec::new();
+        let readers = readers_of(&writer);
+        let writer = WriterState {
+            storage: writer,
+            readers,
+            prices: Box::new(Vec::new),
+        };
+        run(
+            rx,
+            writer,
+            &fake(fx),
+            &DataGeneration::default(),
+            |origen, stats| done.push((origen, stats.clone())),
+        );
+        done
+    }
+
+    fn rescan(paths: &[&Path]) -> Job {
+        Job::Rescan(paths.iter().map(|p| p.to_path_buf()).collect())
+    }
+
+    #[test]
+    fn las_relecturas_pendientes_se_unen_en_una_pasada_dirigida() {
+        let (fx, writer) = fixture(&[("a.log", "m1\n"), ("b.log", "m2\n"), ("c.log", "m3\n")]);
+        let (a, b) = (fx.root.join("a.log"), fx.root.join("b.log"));
+        let done = run_jobs(&fx, writer, vec![rescan(&[&a]), rescan(&[&b, &a])]);
+        assert_eq!(done.len(), 1, "una pasada");
+        let (origen, stats) = &done[0];
+        assert_eq!(*origen, Origen::Vigilante);
+        assert!(!stats.full, "relectura dirigida");
+        assert_eq!(stats.files, 2, "a y b, sin c");
+        assert_eq!(calls(&fx), 2);
+    }
+
+    #[test]
+    fn un_escaneo_completo_pendiente_absorbe_las_relecturas() {
+        let (fx, writer) = fixture(&[("a.log", "m1\n"), ("b.log", "m2\n"), ("c.log", "m3\n")]);
+        let (a, b) = (fx.root.join("a.log"), fx.root.join("b.log"));
+        let done = run_jobs(
+            &fx,
+            writer,
+            vec![rescan(&[&a]), Job::Scan(Origen::Vigilante), rescan(&[&b])],
+        );
+        assert_eq!(done.len(), 1, "una pasada");
+        assert!(done[0].1.full);
+        assert_eq!(done[0].1.files, 3);
+        assert_eq!(calls(&fx), 3);
     }
 
     #[test]

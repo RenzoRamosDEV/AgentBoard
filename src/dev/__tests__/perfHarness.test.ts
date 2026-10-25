@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { median, parseResults, summarize } from "../perfStats";
-import { chunkSizes } from "../../../scripts/perf-ui.mjs";
+import { chunkSizes, initialChunks } from "../../../scripts/perf-ui.mjs";
 
 describe("mediana de repeticiones", () => {
   it.each([
@@ -65,5 +65,19 @@ describe("tamaño de los chunks", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("chunks del arranque", () => {
+  it("son el script, los modulepreload y la hoja de estilos de index.html", () => {
+    const html = `<script type="module" crossorigin src="/assets/index-a.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-b.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-c.css">
+    <link rel="icon" href="/favicon.png">`;
+    expect(initialChunks(html)).toEqual(new Set(["index-a.js", "react-b.js", "index-c.css"]));
+  });
+
+  it("sin referencias no hay ninguno", () => {
+    expect(initialChunks("<html></html>")).toEqual(new Set());
   });
 });

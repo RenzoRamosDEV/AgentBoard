@@ -31,6 +31,18 @@ export function chunkSizes(dir) {
     .sort((a, b) => b.bytes - a.bytes);
 }
 
+/** Chunks que descarga el arranque: el script, los `modulepreload` y la hoja de estilos de `index.html`. */
+export function initialChunks(indexHtml) {
+  const out = new Set();
+  for (const m of indexHtml.matchAll(/<(script|link)\b[^>]*>/g)) {
+    const tag = m[0];
+    if (tag.startsWith("<link") && !/rel="(modulepreload|stylesheet)"/.test(tag)) continue;
+    const ref = /(?:src|href)="\/assets\/([^"]+)"/.exec(tag);
+    if (ref) out.add(ref[1]);
+  }
+  return out;
+}
+
 function findChrome() {
   if (process.env.CHROME) return process.env.CHROME;
   const base = join(homedir(), ".cache", "ms-playwright");
@@ -152,15 +164,19 @@ async function main() {
   } finally {
     process.kill(-preview.pid);
   }
-  console.log("\n== Chunks (build normal, dist/assets) ==");
-  let total = 0;
-  let totalGz = 0;
+  console.log("\n== Chunks (build normal, dist/assets; * = arranque) ==");
+  const initial = initialChunks(readFileSync(join(ROOT, "dist", "index.html"), "utf8"));
+  const sum = { all: [0, 0], initial: [0, 0] };
   for (const c of chunkSizes(join(ROOT, "dist", "assets"))) {
-    total += c.bytes;
-    totalGz += c.gzip;
-    console.log(`${c.file.padEnd(40)} ${String(c.bytes).padStart(9)} B ${String(c.gzip).padStart(8)} B gzip`);
+    const start = initial.has(c.file);
+    for (const k of start ? ["all", "initial"] : ["all"]) {
+      sum[k][0] += c.bytes;
+      sum[k][1] += c.gzip;
+    }
+    console.log(`${start ? "*" : " "} ${c.file.padEnd(40)} ${String(c.bytes).padStart(9)} B ${String(c.gzip).padStart(8)} B gzip`);
   }
-  console.log(`${"total".padEnd(40)} ${String(total).padStart(9)} B ${String(totalGz).padStart(8)} B gzip`);
+  console.log(`  ${"arranque".padEnd(40)} ${String(sum.initial[0]).padStart(9)} B ${String(sum.initial[1]).padStart(8)} B gzip`);
+  console.log(`  ${"total".padEnd(40)} ${String(sum.all[0]).padStart(9)} B ${String(sum.all[1]).padStart(8)} B gzip`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();

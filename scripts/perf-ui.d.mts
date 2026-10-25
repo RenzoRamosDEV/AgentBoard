@@ -5,3 +5,5 @@ export interface ChunkSize {
 }
 
 export function chunkSizes(dir: string): ChunkSize[];
+
+export function initialChunks(indexHtml: string): Set<string>;

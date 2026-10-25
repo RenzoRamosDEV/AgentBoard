@@ -23,7 +23,7 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 ## 4. Línea base en el runner (D1)
 
 - [x] 4.1 Documentar en `CONTRIBUTING.md` («Benchmarks en CI y línea base»: qué compara, cómo leer el fallo, cómo descargar `perf-baseline` con `gh run download <id> -n perf-baseline` y versionarlo como `docs/perf/baseline.json`) y mencionar el job en «Integración continua» de `CONTRIBUTING.md` y de `docs/wiki/Arquitectura.md`; verificar que los comandos documentados coinciden con los del job
-- [ ] 4.2 Primera línea base: ejecutar el workflow en la rama (push o `gh workflow run ci.yml --ref perf/rendimiento-fluido`), comprobar que `bench` falla con «no hay línea base» y publica `perf-baseline`, versionar el artefacto como `docs/perf/baseline.json` (commit `perf(ci): …`) y verificar que la siguiente ejecución de `bench` queda en verde; anotar commit, runner y CPU en «Desviaciones». Si no hay acceso a CI desde el entorno, dejar la tarea pendiente y avisar al usuario de que este paso es manual
+- [x] 4.2 Primera línea base: ejecutar el workflow en la rama (push o `gh workflow run ci.yml --ref perf/rendimiento-fluido`), comprobar que `bench` falla con «no hay línea base» y publica `perf-baseline`, versionar el artefacto como `docs/perf/baseline.json` (commit `perf(ci): …`) y verificar que la siguiente ejecución de `bench` queda en verde; anotar commit, runner y CPU en «Desviaciones». Si no hay acceso a CI desde el entorno, dejar la tarea pendiente y avisar al usuario de que este paso es manual
 
 ## 5. Documentación y resultados (D5, D6)
 

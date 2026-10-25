@@ -186,3 +186,9 @@ Sin acceso a GitHub desde el entorno de implementación (ni `git push` ni `gh wo
 ### Comprobaciones finales (tarea 6.1)
 
 `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (265 + 62 tests), `python3 -m unittest scripts/test_gen_fixtures.py scripts/test_bench_compare.py` (32 tests), `npm test` (160 tests en 23 archivos), `npm run build`, `actionlint` y `openspec validate perf-fase-5-ci-resultados --strict`: en verde. `git diff --stat 5c5e139 -- src/ src-tauri/src src-tauri/mcp`: vacío.
+
+### Cierre en CI (línea base y ajustes)
+
+- Primera línea base versionada en `docs/perf/baseline.json`, capturada por el job `bench` en el commit `9d0db25` (runner `ubuntu-22.04`, CPU `AMD EPYC 9V74 80-Core Processor`, perfil `bench-fast`).
+- La ejecución siguiente cayó en otra CPU (`AMD EPYC 7763`) y todos los benchmarks salieron +20–60 % sin cambios de código. El comparador pasó a bloquear por tiempo solo con la misma CPU que la línea base; con otra CPU las regresiones son aviso y un benchmark ausente sigue bloqueando.
+- Ajustes de reproducibilidad descubiertos en CI: zona horaria fija en vitest para los golden de la UI, mtimes fijas del fixture de Cursor para los golden de Rust (sin regrabarlos), fixture de 50 MB regenerado desde cero en el job (la caché de Rust restauraba uno anterior) y margen de 1,5 s en un test de tiempo del checkpoint (runner de macOS lento).

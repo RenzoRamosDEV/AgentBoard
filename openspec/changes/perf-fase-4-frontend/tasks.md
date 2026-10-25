@@ -19,8 +19,8 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 3. Filtro global ligero y transiciones (D4)
 
-- [ ] 3.1 Tests en rojo en `src/lib/__tests__/filterStore.test.ts`: `toggleAgent`/`toggleProject`/`onlyProject`/`setPeriod`/`setCompare` producen el estado esperado; un oyente de un selector no se llama si cambia otra parte del estado; el `Filter` derivado es el mismo objeto mientras no cambian sus entradas (y su `filterKey` estable); `compare` se lee y guarda en un `localStorage` falso y sin almacenamiento vale `true`; `prevFilter` es `null` con «Todo»; verificar que fallan
-- [ ] 3.2 Implementar `src/lib/filterStore.ts`; `App`, `Topbar` (con `memo`) y las vistas leen de él; cambios de filtro y de apartado en `startTransition`; `useDeferredValue(filter)` en `Overview`/`Section`/`Projects`; `Sidebar` con `memo`; verificar 3.1, `npm test`, `npm run build`, el aspecto, y medir aplicando la regla
+- [x] 3.1 Tests en rojo en `src/lib/__tests__/filterStore.test.ts`: `toggleAgent`/`toggleProject`/`onlyProject`/`setPeriod`/`setCompare` producen el estado esperado; un oyente de un selector no se llama si cambia otra parte del estado; el `Filter` derivado es el mismo objeto mientras no cambian sus entradas (y su `filterKey` estable); `compare` se lee y guarda en un `localStorage` falso y sin almacenamiento vale `true`; `prevFilter` es `null` con «Todo»; verificar que fallan
+- [x] 3.2 Implementar `src/lib/filterStore.ts`; `App`, `Topbar` (con `memo`) y las vistas leen de él; cambios de filtro y de apartado en `startTransition`; `useDeferredValue(filter)` en `Overview`/`Section`/`Projects`; `Sidebar` con `memo`; verificar 3.1, `npm test`, `npm run build`, el aspecto, y medir aplicando la regla
 
 ## 4. Carga por apartado (D5)
 

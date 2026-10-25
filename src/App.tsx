@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { subscribeApp } from "./lib/live";
-import { filterKey, queryStore, useGeneration, useQuery } from "./lib/query";
-import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
-import { periodRange, previousRange, type Period } from "./lib/period";
+import { queryStore } from "./lib/query";
+import { api, type Settings } from "./lib/api";
+import { filterStore, useFilter, useLists } from "./lib/filterStore";
 import { applyTheme, storedTheme } from "./lib/theme";
 import { LangContext, resolveLang, setLang, t, type LangSetting } from "./lib/i18n";
 import { SECTIONS, type SectionId } from "./lib/sections";
@@ -12,16 +12,18 @@ import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TooltipProvider } from "./components/Tooltip";
-import { Overview } from "./views/Overview";
-import { Section } from "./views/Section";
-import { Projects } from "./views/Projects";
+import { Overview as OverviewView } from "./views/Overview";
+import { Section as SectionView } from "./views/Section";
+import { Projects as ProjectsView } from "./views/Projects";
 import { ProjectDetail } from "./views/ProjectDetail";
 import { SessionDetail } from "./views/SessionDetail";
 import { Pricing } from "./views/Pricing";
 import { CommandPalette } from "./components/CommandPalette";
 
-const NO_AGENTS: AgentRow[] = [];
-const NO_PROJECTS: ProjectRow[] = [];
+// Memoizadas: el render urgente de un cambio de filtro (aún con el filtro anterior) no las repinta.
+const Overview = memo(OverviewView);
+const Section = memo(SectionView);
+const Projects = memo(ProjectsView);
 
 /** Idioma recordado en este equipo, para pintar bien antes de leer los ajustes. */
 function storedLang(): LangSetting {
@@ -44,19 +46,18 @@ export default function App() {
   // Proyecto y sesión abiertos en el apartado Proyectos; al cambiar de apartado se vuelve al listado.
   const [projectKey, setProjectKey] = useState<string | null>(() => devParams?.get("p") ?? null);
   const [sessionId, setSessionId] = useState<string | null>(() => devParams?.get("id") ?? null);
-  const setSection = (s: SectionId) => {
-    setSectionState(s);
-    setProjectKey(null);
-    setSessionId(null);
-  };
-  const openSession = (id: string) => {
+  // El cambio de apartado es una transición: el panel lateral responde y el contenido llega detrás.
+  const setSection = useCallback((s: SectionId) => {
+    startTransition(() => {
+      setSectionState(s);
+      setProjectKey(null);
+      setSessionId(null);
+    });
+  }, []);
+  const openSession = useCallback((id: string) => {
     setSectionState("projects");
     setSessionId(id);
-  };
-  const [period, setPeriod] = useState<Period>({ kind: "30d" });
-  // Se guardan los *ocultos*: un agente o proyecto nuevo aparece incluido por defecto.
-  const [hiddenAgents, setHiddenAgents] = useState<Set<string>>(new Set());
-  const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
+  }, []);
   const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), language: storedLang(), monthlyBudget: null, dailyBudget: null, budgets: [], priceOverrides: [], alertAt80: true, alertAt100: true, trayShowsToday: false, memoryOnly: false });
   const lang = resolveLang(settings.language);
   setLang(lang);
@@ -65,50 +66,6 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [lastScan, setLastScan] = useState<number | null>(null);
-
-  // Con cada aviso de datos se recalcula el rango: los periodos relativos avanzan al cambiar de día.
-  const generation = useGeneration();
-  const range = useMemo(() => periodRange(period), [period, generation]);
-  const [compare, setCompareState] = useState(() => {
-    try {
-      return localStorage.getItem("agentboard.compare") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const setCompare = (v: boolean) => {
-    setCompareState(v);
-    try {
-      localStorage.setItem("agentboard.compare", v ? "1" : "0");
-    } catch {
-      // sin almacenamiento: vale para esta sesión
-    }
-  };
-
-  // Las listas del panel dependen del periodo y de los agentes, no de los proyectos.
-  const agentsQ = useQuery("list_agents", filterKey(range), () => api.agents(range));
-  const agents = agentsQ.data ?? NO_AGENTS;
-  const shownAgents = hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined;
-  const scope: Filter = { ...range, agents: shownAgents };
-  const projectsQ = useQuery("list_projects", filterKey(scope), () => api.projects(scope));
-  const projects = projectsQ.data ?? NO_PROJECTS;
-  // Sesiones leídas en total (pie del panel lateral).
-  const totalQ = useQuery("get_summary", "total", () => api.summary({}));
-  const totalSessions = totalQ.error ? null : (totalQ.data?.sessions ?? null);
-
-  const filter: Filter = useMemo(
-    () => ({
-      ...range,
-      agents: hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined,
-      projects: hiddenProjects.size ? projects.filter((p) => !hiddenProjects.has(p.id)).map((p) => p.id) : undefined,
-    }),
-    [range, hiddenAgents, hiddenProjects, agents, projects],
-  );
-
-  useEffect(() => {
-    const e = agentsQ.error ?? projectsQ.error;
-    if (e) setLoadError(e);
-  }, [agentsQ.error, projectsQ.error]);
 
   // Ctrl+K / Cmd+K abre el buscador.
   useEffect(() => {
@@ -144,34 +101,16 @@ export default function App() {
     });
   }, []);
 
-  const toggle = <T,>(set: Set<T>, v: T) => {
-    const next = new Set(set);
-    next.has(v) ? next.delete(v) : next.add(v);
-    return next;
-  };
-
-  const onlyProject = useCallback(
-    (id: number | null) => setHiddenProjects(id === null ? new Set() : new Set(projects.filter((p) => p.id !== id).map((p) => p.id))),
-    [projects],
-  );
-
-  const visibleProjects = projects.filter((p) => !hiddenProjects.has(p.id));
-  const singleProject = hiddenProjects.size && visibleProjects.length === 1 ? visibleProjects[0].name : null;
-  // Mismo filtro de agentes y proyectos sobre el periodo anterior (no hay con «Todo»).
-  const prevFilter: Filter | null = useMemo(() => {
-    const prev = compare ? previousRange(period) : null;
-    return prev ? { ...filter, ...prev } : null;
-  }, [compare, period, filter]);
-  const { data, error } = useDashboardData(filter, singleProject, prevFilter);
-  const saveSettings = async (s: Settings) => {
+  const saveSettings = useCallback(async (s: Settings) => {
     setSettings(await api.saveSettings(s));
     // El backend recalcula los costes (precios, presupuestos…): invalida lo ya cargado.
     queryStore.invalidateAll();
-  };
+  }, []);
 
-  const doExport = async (format: "csv" | "json") => {
+  // Lee el filtro al exportar, sin suscribir la app a sus cambios.
+  const doExport = useCallback(async (format: "csv" | "json") => {
     try {
-      const text = await api.exportData(filter, format);
+      const text = await api.exportData(filterStore.current()?.filter ?? {}, format);
       const blob = new Blob([text], { type: format === "csv" ? "text/csv;charset=utf-8" : "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -182,78 +121,115 @@ export default function App() {
     } catch (e) {
       setLoadError(String(e));
     }
-  };
-
-  let content;
-  if (section === "projects")
-    content = sessionId ? (
-      <SessionDetail id={sessionId} back={() => setSessionId(null)} backLabel={projectKey != null ? t("‹ Volver al proyecto") : t("‹ Proyectos")} />
-    ) : projectKey != null ? (
-      <ProjectDetail projectKey={projectKey} filter={filter} back={() => setProjectKey(null)} openSession={setSessionId} />
-    ) : (
-      <Projects filter={filter} period={period} open={setProjectKey} />
-    );
-  else if (section === "pricing")
-    content = <Pricing filter={filter} settings={settings} onSave={saveSettings} agents={agents} />;
-  else if (error) content = <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
-  else if (!data) content = <div className="main muted">{t("Cargando…")}</div>;
-  else if (section === "overview")
-    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} />;
-  else if (!SECTIONS.some((x) => x.id === section))
-    // Apartado que ya no existe (p. ej. tras una actualización en caliente): al resumen.
-    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} />;
-  else content = <Section id={section} data={data} period={period} singleProject={singleProject} back={() => setSection("overview")} />;
+  }, []);
+  const openSettings = useCallback(() => setShowSettings(true), []);
+  const openPalette = useCallback(() => setShowPalette(true), []);
 
   return (
     <LangContext.Provider value={lang}>
     <TooltipProvider>
       {/* Al cambiar de idioma se vuelve a montar todo con las cadenas nuevas. */}
       <div className="app" key={lang}>
-        <Sidebar section={section} setSection={setSection} onSettings={() => setShowSettings(true)} agents={agents.length} sessions={totalSessions} />
+        <Sidebar section={section} setSection={setSection} onSettings={openSettings} />
         <div className="content">
+          <ListErrors onError={setLoadError} />
           {loadError && (
             <div className="notice warn banner">
               {t("No se pudieron cargar los datos: {e}", { e: loadError })}
               <button className="link" onClick={() => setLoadError(null)}>{t("Cerrar")}</button>
             </div>
           )}
-          <Topbar
-            period={period}
-            setPeriod={setPeriod}
-            agents={agents}
-            projects={projects}
-            hiddenAgents={hiddenAgents}
-            hiddenProjects={hiddenProjects}
-            toggleAgent={(id) => setHiddenAgents((s) => toggle(s, id))}
-            toggleProject={(id) => setHiddenProjects((s) => toggle(s, id))}
-            onlyProject={onlyProject}
-            lastScan={lastScan}
-            flash={live}
-            compare={compare}
-            setCompare={setCompare}
-            canCompare={previousRange(period) != null}
-            onSearch={() => setShowPalette(true)}
-            onExport={doExport}
+          <Topbar lastScan={lastScan} flash={live} onSearch={openPalette} onExport={doExport} />
+          <Content
+            section={section}
+            projectKey={projectKey}
+            sessionId={sessionId}
+            setSection={setSection}
+            setProjectKey={setProjectKey}
+            setSessionId={setSessionId}
+            openSession={openSession}
+            settings={settings}
+            saveSettings={saveSettings}
           />
-          {content}
         </div>
       </div>
       {showPalette && (
-        <CommandPalette
-          filter={filter}
-          projects={projects}
+        <PaletteHost
           onClose={() => setShowPalette(false)}
           goSection={setSection}
-          onlyProject={(id) => onlyProject(id)}
           openSession={(id) => {
             setProjectKey(null);
             openSession(id);
           }}
-          openSettings={() => setShowSettings(true)}
+          openSettings={openSettings}
         />
       )}
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} onExport={doExport} />}
     </TooltipProvider>
     </LangContext.Provider>
+  );
+}
+
+/** Errores al cargar las listas de agentes y proyectos: al aviso de la barra. */
+function ListErrors({ onError }: { onError: (e: string) => void }) {
+  const { error } = useLists();
+  useEffect(() => {
+    if (error) onError(error);
+  }, [error, onError]);
+  return null;
+}
+
+/** El apartado abierto, con el filtro diferido: la barra responde al instante y el contenido se pinta detrás. */
+function Content(p: {
+  section: SectionId;
+  projectKey: string | null;
+  sessionId: string | null;
+  setSection: (s: SectionId) => void;
+  setProjectKey: (k: string | null) => void;
+  setSessionId: (id: string | null) => void;
+  openSession: (id: string) => void;
+  settings: Settings;
+  saveSettings: (s: Settings) => Promise<void>;
+}) {
+  const now = useFilter();
+  const f = useDeferredValue(now);
+  // El Resumen del filtro nuevo se pide ya, en el render urgente; se pinta con el diferido.
+  useDashboardData(now.filter, now.singleProject, now.prevFilter);
+  const { section, projectKey, sessionId, setSection, setProjectKey, setSessionId, settings } = p;
+  const { data, error } = useDashboardData(f.filter, f.singleProject, f.prevFilter);
+  const backToOverview = useCallback(() => setSection("overview"), [setSection]);
+  const closeSession = useCallback(() => setSessionId(null), [setSessionId]);
+  const closeProject = useCallback(() => setProjectKey(null), [setProjectKey]);
+
+  if (section === "projects")
+    return sessionId ? (
+      <SessionDetail id={sessionId} back={closeSession} backLabel={projectKey != null ? t("‹ Volver al proyecto") : t("‹ Proyectos")} />
+    ) : projectKey != null ? (
+      <ProjectDetail projectKey={projectKey} filter={f.filter} back={closeProject} openSession={setSessionId} />
+    ) : (
+      <Projects filter={f.filter} period={f.period} open={setProjectKey} />
+    );
+  if (section === "pricing") return <Pricing filter={f.filter} settings={settings} onSave={p.saveSettings} agents={f.agents} />;
+  if (error) return <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
+  if (!data) return <div className="main muted">{t("Cargando…")}</div>;
+  // Un apartado que ya no existe (p. ej. tras una actualización en caliente) vuelve al resumen.
+  if (section === "overview" || !SECTIONS.some((x) => x.id === section))
+    return <Overview data={data} period={f.period} budget={settings.monthlyBudget} singleProject={f.singleProject} open={setSection} openSession={p.openSession} />;
+  return <Section id={section} data={data} period={f.period} singleProject={f.singleProject} back={backToOverview} />;
+}
+
+/** El buscador con el filtro y los proyectos actuales. */
+function PaletteHost(p: { onClose: () => void; goSection: (s: SectionId) => void; openSession: (id: string) => void; openSettings: () => void }) {
+  const f = useFilter();
+  return (
+    <CommandPalette
+      filter={f.filter}
+      projects={f.projects}
+      onClose={p.onClose}
+      goSection={p.goSection}
+      onlyProject={(id) => filterStore.onlyProject(id, f.projects.map((x) => x.id))}
+      openSession={p.openSession}
+      openSettings={p.openSettings}
+    />
   );
 }

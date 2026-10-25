@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { memo, useState } from "react";
+import { api } from "../lib/api";
+import { useLists } from "../lib/filterStore";
+import { useQuery } from "../lib/query";
 import { fmt } from "../lib/format";
 import { GROUPS, SECTIONS, type SectionId } from "../lib/sections";
 import { GearIcon, LockIcon, PanelIcon, SectionIcon } from "./Icons";
@@ -12,9 +15,6 @@ interface Props {
   section: SectionId;
   setSection: (s: SectionId) => void;
   onSettings: () => void;
-  /** Agentes detectados y sesiones leídas, para el pie. */
-  agents: number;
-  sessions: number | null;
 }
 
 const COLLAPSE_KEY = "agentboard.sidebarCollapsed";
@@ -34,8 +34,16 @@ const saveFlag = (key: string, value: boolean) => {
   }
 };
 
+/** Agentes detectados y sesiones leídas en total, para el pie. */
+function useFooter() {
+  const { agents } = useLists();
+  const total = useQuery("get_summary", "total", () => api.summary({}));
+  return { agents: agents.length, sessions: total.error ? null : (total.data?.sessions ?? null) };
+}
+
 /** Panel izquierdo: logo, apartados agrupados y ajustes. Se puede colapsar a solo iconos. */
-export function Sidebar(p: Props) {
+export const Sidebar = memo(function Sidebar(p: Props) {
+  const footer = useFooter();
   const [collapsed, setCollapsed] = useState(() => loadFlag(COLLAPSE_KEY, false));
 
   const toggleCollapsed = () => {
@@ -98,11 +106,11 @@ export function Sidebar(p: Props) {
           <span className="nav-label">{t("Local · en memoria")}</span>
         </div>
         <div className="foot-stats nav-label num">
-          {p.sessions == null
-            ? t("{n} agentes", { n: p.agents })
-            : t("{n} agentes · {m} sesiones leídas", { n: p.agents, m: fmt.int(p.sessions) })}
+          {footer.sessions == null
+            ? t("{n} agentes", { n: footer.agents })
+            : t("{n} agentes · {m} sesiones leídas", { n: footer.agents, m: fmt.int(footer.sessions) })}
         </div>
       </div>
     </aside>
   );
-}
+});

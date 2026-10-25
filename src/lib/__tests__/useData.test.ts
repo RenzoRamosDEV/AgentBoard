@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadDashboard } from "../useData";
+import { dashboardKey, loadDashboard } from "../useData";
 import type { Filter } from "../api";
 
 const snapshot = (withPrev: boolean) => ({
@@ -50,5 +50,23 @@ describe("datos del Resumen", () => {
     });
     expect(data.prev).toBeNull();
     expect(data.branches).toBeNull();
+  });
+});
+
+describe("clave del Resumen en la caché", () => {
+  const f: Filter = { from: 10, agents: ["a"] };
+  const prev: Filter = { from: 0, to: 10, agents: ["a"] };
+
+  it("es la misma para el mismo filtro, proyecto único, periodo anterior y mes", () => {
+    expect(dashboardKey({ agents: ["a"], from: 10 }, null, prev, 5)).toBe(dashboardKey(f, null, prev, 5));
+  });
+
+  it.each([
+    ["el filtro", dashboardKey({ from: 11, agents: ["a"] }, null, prev, 5)],
+    ["el proyecto único", dashboardKey(f, "p", prev, 5)],
+    ["la comparación", dashboardKey(f, null, null, 5)],
+    ["el mes", dashboardKey(f, null, prev, 6)],
+  ])("cambia con %s", (_, other) => {
+    expect(other).not.toBe(dashboardKey(f, null, prev, 5));
   });
 });

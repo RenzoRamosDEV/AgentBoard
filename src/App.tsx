@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { subscribeApp } from "./lib/live";
-import { queryStore } from "./lib/query";
+import { filterKey, queryStore, useGeneration, useQuery } from "./lib/query";
 import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, previousRange, type Period } from "./lib/period";
 import { applyTheme, storedTheme } from "./lib/theme";
@@ -19,6 +19,9 @@ import { ProjectDetail } from "./views/ProjectDetail";
 import { SessionDetail } from "./views/SessionDetail";
 import { Pricing } from "./views/Pricing";
 import { CommandPalette } from "./components/CommandPalette";
+
+const NO_AGENTS: AgentRow[] = [];
+const NO_PROJECTS: ProjectRow[] = [];
 
 /** Idioma recordado en este equipo, para pintar bien antes de leer los ajustes. */
 function storedLang(): LangSetting {
@@ -54,21 +57,18 @@ export default function App() {
   // Se guardan los *ocultos*: un agente o proyecto nuevo aparece incluido por defecto.
   const [hiddenAgents, setHiddenAgents] = useState<Set<string>>(new Set());
   const [hiddenProjects, setHiddenProjects] = useState<Set<number>>(new Set());
-  const [agents, setAgents] = useState<AgentRow[]>([]);
-  const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [settings, setSettings] = useState<Settings>({ theme: storedTheme(), language: storedLang(), monthlyBudget: null, dailyBudget: null, budgets: [], priceOverrides: [], alertAt80: true, alertAt100: true, trayShowsToday: false, memoryOnly: false });
   const lang = resolveLang(settings.language);
   setLang(lang);
   const [showSettings, setShowSettings] = useState(() => devParams?.get("settings") === "1");
   const [showPalette, setShowPalette] = useState(false);
-  // Sesiones leídas en total (pie del panel lateral).
-  const [totalSessions, setTotalSessions] = useState<number | null>(null);
-  const [refresh, setRefresh] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [lastScan, setLastScan] = useState<number | null>(null);
 
-  const range = useMemo(() => periodRange(period), [period, refresh]);
+  // Con cada aviso de datos se recalcula el rango: los periodos relativos avanzan al cambiar de día.
+  const generation = useGeneration();
+  const range = useMemo(() => periodRange(period), [period, generation]);
   const [compare, setCompareState] = useState(() => {
     try {
       return localStorage.getItem("agentboard.compare") !== "0";
@@ -85,6 +85,17 @@ export default function App() {
     }
   };
 
+  // Las listas del panel dependen del periodo y de los agentes, no de los proyectos.
+  const agentsQ = useQuery("list_agents", filterKey(range), () => api.agents(range));
+  const agents = agentsQ.data ?? NO_AGENTS;
+  const shownAgents = hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined;
+  const scope: Filter = { ...range, agents: shownAgents };
+  const projectsQ = useQuery("list_projects", filterKey(scope), () => api.projects(scope));
+  const projects = projectsQ.data ?? NO_PROJECTS;
+  // Sesiones leídas en total (pie del panel lateral).
+  const totalQ = useQuery("get_summary", "total", () => api.summary({}));
+  const totalSessions = totalQ.error ? null : (totalQ.data?.sessions ?? null);
+
   const filter: Filter = useMemo(
     () => ({
       ...range,
@@ -94,16 +105,10 @@ export default function App() {
     [range, hiddenAgents, hiddenProjects, agents, projects],
   );
 
-  // Las listas del panel dependen del periodo y de los agentes, no de los proyectos.
   useEffect(() => {
-    const scope: Filter = { ...range, agents: filter.agents };
-    api.agents(range).then(setAgents).catch((e) => setLoadError(String(e)));
-    api.projects(scope).then(setProjects).catch((e) => setLoadError(String(e)));
-  }, [range, filter.agents?.join(","), refresh]);
-
-  useEffect(() => {
-    api.summary({}).then((s) => setTotalSessions(s.sessions)).catch(() => setTotalSessions(null));
-  }, [refresh]);
+    const e = agentsQ.error ?? projectsQ.error;
+    if (e) setLoadError(e);
+  }, [agentsQ.error, projectsQ.error]);
 
   // Ctrl+K / Cmd+K abre el buscador.
   useEffect(() => {
@@ -131,10 +136,7 @@ export default function App() {
     // Fin del escaneo inicial (`ingest://done`) y cada aviso de datos cambiados (`data:changed`);
     // el resalte en vivo, solo con los avisos posteriores al escaneo inicial.
     return subscribeApp(listen, queryStore, {
-      changed: () => {
-        setRefresh((n) => n + 1);
-        setLastScan(Date.now());
-      },
+      changed: () => setLastScan(Date.now()),
       live: () => {
         setLive(true);
         setTimeout(() => setLive(false), 2500);
@@ -160,11 +162,11 @@ export default function App() {
     const prev = compare ? previousRange(period) : null;
     return prev ? { ...filter, ...prev } : null;
   }, [compare, period, filter]);
-  const { data, error } = useDashboardData(filter, singleProject, refresh, prevFilter);
+  const { data, error } = useDashboardData(filter, singleProject, prevFilter);
   const saveSettings = async (s: Settings) => {
     setSettings(await api.saveSettings(s));
     // El backend recalcula los costes (precios, presupuestos…): invalida lo ya cargado.
-    setRefresh((n) => n + 1);
+    queryStore.invalidateAll();
   };
 
   const doExport = async (format: "csv" | "json") => {
@@ -185,21 +187,21 @@ export default function App() {
   let content;
   if (section === "projects")
     content = sessionId ? (
-      <SessionDetail id={sessionId} refresh={refresh} back={() => setSessionId(null)} backLabel={projectKey != null ? t("‹ Volver al proyecto") : t("‹ Proyectos")} />
+      <SessionDetail id={sessionId} back={() => setSessionId(null)} backLabel={projectKey != null ? t("‹ Volver al proyecto") : t("‹ Proyectos")} />
     ) : projectKey != null ? (
-      <ProjectDetail projectKey={projectKey} filter={filter} refresh={refresh} back={() => setProjectKey(null)} openSession={setSessionId} />
+      <ProjectDetail projectKey={projectKey} filter={filter} back={() => setProjectKey(null)} openSession={setSessionId} />
     ) : (
-      <Projects filter={filter} period={period} refresh={refresh} open={setProjectKey} />
+      <Projects filter={filter} period={period} open={setProjectKey} />
     );
   else if (section === "pricing")
-    content = <Pricing filter={filter} refresh={refresh} settings={settings} onSave={saveSettings} agents={agents} />;
+    content = <Pricing filter={filter} settings={settings} onSave={saveSettings} agents={agents} />;
   else if (error) content = <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
   else if (!data) content = <div className="main muted">{t("Cargando…")}</div>;
   else if (section === "overview")
-    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} refresh={refresh} />;
+    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} />;
   else if (!SECTIONS.some((x) => x.id === section))
     // Apartado que ya no existe (p. ej. tras una actualización en caliente): al resumen.
-    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} refresh={refresh} />;
+    content = <Overview data={data} period={period} budget={settings.monthlyBudget} singleProject={singleProject} open={setSection} openSession={openSession} />;
   else content = <Section id={section} data={data} period={period} singleProject={singleProject} back={() => setSection("overview")} />;
 
   return (

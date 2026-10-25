@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type BreakdownRow, type Filter, type ProjectDetail as Detail, type SessionRow, type SessionSort, type ToolStat } from "../lib/api";
 import { createPager, type PagerState } from "../lib/pager";
+import { filterKey, useGeneration, useQuery } from "../lib/query";
 import { activityColor, activityLabel, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import { Bars, LineChart } from "../components/Charts";
@@ -41,18 +42,17 @@ const serverSort = (header: string): SessionSort =>
 export function ProjectDetail({
   projectKey,
   filter,
-  refresh,
   back,
   openSession,
 }: {
   projectKey: string;
   filter: Filter;
-  refresh: number;
   back: () => void;
   openSession: (id: string) => void;
 }) {
-  const [d, setD] = useState<Detail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const fk = filterKey(filter);
+  const { data: d, error } = useQuery<Detail>("get_project_detail", `${projectKey}|${fk}`, () => api.projectDetail(projectKey, filter));
+  const generation = useGeneration();
   const [sort, setSort] = useState<SortState>({ header: t("Inicio"), dir: "desc" });
   const [sessions, setSessions] = useState<PagerState<SessionRow>>({ rows: [], total: 0 });
   // Sesiones por páginas, ordenadas en el servidor; otro orden o un aviso de datos cambiados
@@ -64,21 +64,10 @@ export function ProjectDetail({
         SESSIONS_PAGE,
         setSessions,
       ),
-    [projectKey, filter],
+    [projectKey, fk],
   );
 
-  useEffect(() => {
-    let alive = true;
-    api
-      .projectDetail(projectKey, filter)
-      .then((x) => alive && (setD(x), setError(null)))
-      .catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [projectKey, filter, refresh]);
-
-  useEffect(() => pager.load(sort), [pager, sort, refresh]);
+  useEffect(() => pager.load(sort), [pager, sort, generation]);
 
   if (error)
     return (

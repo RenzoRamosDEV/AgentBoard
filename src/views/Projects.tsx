@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { api, type Filter, type ProjectSummary } from "../lib/api";
+import { filterKey, useQuery } from "../lib/query";
 import { agentColor, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import type { Period } from "../lib/period";
@@ -50,22 +51,10 @@ export const AgentDots = ({ agents }: { agents: { id: string; name: string }[] }
 );
 
 /** Apartado Proyectos: cifras, búsqueda, vistas rápidas y tabla ordenable (una fila por proyecto). */
-export function Projects({ filter, period, refresh, open }: { filter: Filter; period: Period; refresh: number; open: (key: string) => void }) {
-  const [list, setList] = useState<ProjectSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function Projects({ filter, period, open }: { filter: Filter; period: Period; open: (key: string) => void }) {
+  const { data: list, error } = useQuery("list_project_summaries", filterKey(filter), () => api.projectSummaries(filter));
   const [q, setQ] = useState("");
   const [view, setView] = useState<View>("all");
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .projectSummaries(filter)
-      .then((l) => alive && (setList(l), setError(null)))
-      .catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [filter, refresh]);
 
   const all = list ?? [];
   const stats = useMemo(() => projectStats(all), [all]);

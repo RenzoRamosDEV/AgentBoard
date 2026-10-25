@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { tzName, type ActivityDay, type ActivityReport, type BreakdownRow, type Filter, type Point, type SeriesPoint, type Summary } from "./api";
 import { monthStart } from "./period";
+import { filterKey, useQuery } from "./query";
 
 export interface DashboardData {
   /** Filtro con el que se cargó (para rellenar días sin actividad). */
@@ -61,24 +61,16 @@ export async function loadDashboard(
   return { ...snap, filter, prev: snap.prev && prevFilter ? { ...snap.prev, filter: prevFilter } : null };
 }
 
-/** Carga todos los apartados para el filtro activo. */
-export function useDashboardData(filter: Filter, singleProject: string | null, refresh: number, prevFilter: Filter | null = null) {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/** Clave del Resumen en la caché de consultas. */
+export function dashboardKey(filter: Filter, singleProject: string | null, prevFilter: Filter | null, monthFrom: number): string {
+  return `${filterKey(filter)}|${singleProject ?? ""}|${prevFilter ? filterKey(prevFilter) : "-"}|${monthFrom}`;
+}
 
-  useEffect(() => {
-    let alive = true;
-    loadDashboard(tauriInvoke, filter, singleProject, prevFilter, monthStart().getTime())
-      .then((d) => {
-        if (!alive) return;
-        setData(d);
-        setError(null);
-      })
-      .catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [filter, singleProject, refresh, prevFilter]);
-
-  return { data, error };
+/** Carga todos los apartados para el filtro activo (de la caché si ya están). */
+export function useDashboardData(filter: Filter, singleProject: string | null, prevFilter: Filter | null = null) {
+  const monthFrom = monthStart().getTime();
+  const { data, error } = useQuery("get_dashboard_snapshot", dashboardKey(filter, singleProject, prevFilter, monthFrom), () =>
+    loadDashboard(tauriInvoke, filter, singleProject, prevFilter, monthFrom),
+  );
+  return { data: data ?? null, error };
 }

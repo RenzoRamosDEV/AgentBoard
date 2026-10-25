@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type AfterCompaction, type KeyCost, type SessionDetail as Detail, type ToolStat, type TurnRow } from "../lib/api";
 import { createPager, type PagerState } from "../lib/pager";
+import { useGeneration, useQuery } from "../lib/query";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import { Bars, LineChart } from "../components/Charts";
@@ -30,24 +31,14 @@ export function compactionAlert(after: AfterCompaction | null): string | null {
 /** Turnos por página. */
 const TURNS_PAGE = 30;
 
-export function SessionDetail({ id, refresh, back, backLabel }: { id: string; refresh: number; back: () => void; backLabel?: string }) {
-  const [d, setD] = useState<Detail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function SessionDetail({ id, back, backLabel }: { id: string; back: () => void; backLabel?: string }) {
+  const { data: d, error } = useQuery<Detail>("get_session_detail", id, () => api.sessionDetail(id));
+  const generation = useGeneration();
   const [turns, setTurns] = useState<PagerState<TurnRow>>({ rows: [], total: 0 });
   // Turnos por páginas, en orden; un aviso de datos cambiados vuelve a la primera.
   const pager = useMemo(() => createPager<TurnRow, null>((offset, limit) => api.sessionTurns(id, { offset, limit }), TURNS_PAGE, setTurns), [id]);
 
-  useEffect(() => {
-    let alive = true;
-    api
-      .sessionDetail(id)
-      .then((x) => alive && (setD(x), setError(null)))
-      .catch((e) => alive && setError(String(e)));
-    pager.load(null);
-    return () => {
-      alive = false;
-    };
-  }, [id, refresh, pager]);
+  useEffect(() => pager.load(null), [pager, generation]);
 
   if (error) return <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
   if (!d) return <div className="main muted">{t("Cargando…")}</div>;

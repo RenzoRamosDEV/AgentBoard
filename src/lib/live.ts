@@ -1,5 +1,6 @@
 /** Avisos del backend que refrescan las vistas. */
 import type { DataChanged } from "./api";
+import type { QueryStore } from "./query";
 
 /** Cambiaron datos confirmados (como mucho uno por segundo). */
 export const DATA_CHANGED = "data:changed";
@@ -16,18 +17,25 @@ const releaseAll = (offs: Promise<() => void>[]) => () => {
 };
 
 /**
- * Ventana principal: cada aviso de datos refresca; el indicador en vivo se resalta solo con los
- * avisos que llegan tras el primer `ingest://done` (los del escaneo inicial no son «en vivo»).
+ * Ventana principal: cada aviso de datos cambia la generación de la caché de consultas (que
+ * vuelve a pedir solo lo montado); el indicador en vivo se resalta solo con los avisos que llegan
+ * tras el primer `ingest://done` (los del escaneo inicial no son «en vivo»).
  */
-export function subscribeApp(listen: Listen, h: { refresh: () => void; live: () => void }): () => void {
+export function subscribeApp(
+  listen: Listen,
+  store: Pick<QueryStore, "generation" | "setGeneration">,
+  h: { changed: () => void; live: () => void },
+): () => void {
   let initialDone = false;
   return releaseAll([
     listen(INGEST_DONE, () => {
       initialDone = true;
-      h.refresh();
+      store.setGeneration(store.generation() + 1);
+      h.changed();
     }),
-    listen<DataChanged>(DATA_CHANGED, () => {
-      h.refresh();
+    listen<DataChanged>(DATA_CHANGED, (e) => {
+      store.setGeneration(e.payload.generation);
+      h.changed();
       if (initialDone) h.live();
     }),
   ]);

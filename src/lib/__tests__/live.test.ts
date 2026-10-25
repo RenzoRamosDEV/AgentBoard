@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DATA_CHANGED, INGEST_DONE, PANEL_SHOWN, subscribeApp, subscribeTray, whenVisible, type Listen } from "../live";
 import { readFileSync } from "node:fs";
+import { createQueryStore } from "../query";
 
 const source = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const trayPanelSource = source("../../views/TrayPanel.tsx");
@@ -27,24 +28,28 @@ function fakeBus() {
 const changed = { generation: 3, agents: ["claude-code"], days: [20260901] };
 
 describe("suscripción de la ventana principal", () => {
-  it("refresca con data:changed y resalta solo tras el primer ingest://done", () => {
+  it("cada aviso cambia la generación de la caché y resalta solo tras el primer ingest://done", () => {
     const bus = fakeBus();
-    const h = { refresh: vi.fn(), live: vi.fn() };
-    subscribeApp(bus.listen, h);
+    const store = createQueryStore({ now: () => 0 });
+    const h = { changed: vi.fn(), live: vi.fn() };
+    subscribeApp(bus.listen, store, h);
     bus.emit(DATA_CHANGED, changed);
-    expect(h.refresh).toHaveBeenCalledTimes(1);
+    expect(store.generation()).toBe(3);
+    expect(h.changed).toHaveBeenCalledTimes(1);
     expect(h.live).not.toHaveBeenCalled();
     bus.emit(INGEST_DONE, { files: 1, lines: 1, records: 1, errors: 0, full: true });
-    expect(h.refresh).toHaveBeenCalledTimes(2);
+    expect(store.generation()).toBe(4);
+    expect(h.changed).toHaveBeenCalledTimes(2);
     expect(h.live).not.toHaveBeenCalled();
-    bus.emit(DATA_CHANGED, changed);
-    expect(h.refresh).toHaveBeenCalledTimes(3);
+    bus.emit(DATA_CHANGED, { ...changed, generation: 4 });
+    expect(store.generation()).toBe(5);
+    expect(h.changed).toHaveBeenCalledTimes(3);
     expect(h.live).toHaveBeenCalledTimes(1);
   });
 
   it("deja de escuchar al soltarse", async () => {
     const bus = fakeBus();
-    const off = subscribeApp(bus.listen, { refresh: vi.fn(), live: vi.fn() });
+    const off = subscribeApp(bus.listen, createQueryStore({ now: () => 0 }), { changed: vi.fn(), live: vi.fn() });
     expect(bus.listening(DATA_CHANGED)).toBe(1);
     off();
     await Promise.resolve();

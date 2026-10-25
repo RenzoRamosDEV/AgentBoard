@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { subscribeApp } from "./lib/live";
+import { queryStore } from "./lib/query";
 import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, previousRange, type Period } from "./lib/period";
 import { applyTheme, storedTheme } from "./lib/theme";
@@ -129,8 +130,8 @@ export default function App() {
     api.settings().then(setSettings).catch((e) => setLoadError(String(e)));
     // Fin del escaneo inicial (`ingest://done`) y cada aviso de datos cambiados (`data:changed`);
     // el resalte en vivo, solo con los avisos posteriores al escaneo inicial.
-    return subscribeApp(listen, {
-      refresh: () => {
+    return subscribeApp(listen, queryStore, {
+      changed: () => {
         setRefresh((n) => n + 1);
         setLastScan(Date.now());
       },

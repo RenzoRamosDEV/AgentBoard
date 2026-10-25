@@ -286,13 +286,32 @@ pub async fn set_settings(
     let overrides = saved.price_overrides.clone();
     let ingest = state.ingest.clone();
     run_blocking(move || ingest.apply_prices(overrides).map_err(anyhow::Error::msg)).await?;
-    // «Solo memoria» cambiada: la caché pasa a memoria (y se borra del disco) o vuelve al disco.
-    if saved.memory_only != previous.memory_only {
-        let mode = crate::db::startup_mode(saved.memory_only, crate::db::default_cache_path());
+    if let Some(mode) = cache_mode_change(
+        previous.memory_only,
+        saved.memory_only,
+        crate::db::default_cache_path(),
+    ) {
         let ingest = state.ingest.clone();
         run_blocking(move || ingest.rebuild(Some(mode)).map_err(anyhow::Error::msg)).await?;
     }
     Ok(saved)
+}
+
+/// Modo al que pasa la caché si «Solo memoria» cambió: a memoria (la reconstrucción borra la del
+/// disco) o de vuelta al disco. `None` si no cambió.
+fn cache_mode_change(
+    before: bool,
+    now: bool,
+    path: Option<std::path::PathBuf>,
+) -> Option<crate::db::CacheMode> {
+    use crate::db::CacheMode;
+    if before == now {
+        return None;
+    }
+    Some(match (now, path) {
+        (false, Some(path)) => CacheMode::Disco(path),
+        _ => CacheMode::Memoria,
+    })
 }
 
 /// Vacía la caché (en disco o en memoria) y vuelve a leer todos los logs; al terminar llega
@@ -328,6 +347,26 @@ mod tests {
         }))
         .unwrap_err();
         assert_eq!(err, "falló la consulta: sin columna");
+    }
+
+    #[test]
+    fn cambiar_solo_memoria_cambia_el_modo_de_la_cache() {
+        use crate::db::CacheMode;
+        let path = std::path::PathBuf::from("/tmp/x/agentboard/cache.sqlite");
+        assert_eq!(cache_mode_change(false, false, Some(path.clone())), None);
+        assert_eq!(cache_mode_change(true, true, Some(path.clone())), None);
+        assert_eq!(
+            cache_mode_change(false, true, Some(path.clone())),
+            Some(CacheMode::Memoria)
+        );
+        assert_eq!(
+            cache_mode_change(true, false, Some(path.clone())),
+            Some(CacheMode::Disco(path))
+        );
+        assert_eq!(
+            cache_mode_change(true, false, None),
+            Some(CacheMode::Memoria)
+        );
     }
 
     #[test]

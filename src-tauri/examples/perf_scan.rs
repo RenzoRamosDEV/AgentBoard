@@ -689,7 +689,7 @@ fn main() -> Result<()> {
     // de días completos leen de los agregados también al reabrir una caché (`--phase warm`).
     std::env::set_var("TZ", common::TZ);
     telemetry::init();
-    let args = common::parse_args(std::env::args().skip(1))
+    let mut args = common::parse_args(std::env::args().skip(1))
         .map_err(|e| anyhow::anyhow!("{e}\n{}", common::USAGE))?;
     if !args.fixtures.is_dir() {
         bail!(
@@ -697,6 +697,8 @@ fn main() -> Result<()> {
             args.fixtures.display()
         );
     }
+    // Rutas absolutas, como las raíces reales: los eventos del vigilante llegan con rutas absolutas.
+    args.fixtures = args.fixtures.canonicalize()?;
     let providers = common::providers(&args.fixtures);
     row("fase", "métrica", "valor");
     row("fixtures", "carpeta", args.fixtures.display());

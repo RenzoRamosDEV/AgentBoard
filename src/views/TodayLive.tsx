@@ -71,11 +71,11 @@ export function TodayLive({ filter, refresh, openSession }: { filter: Filter; re
       api.summary(today),
       api.summary({ ...scope, from: r.yesterday, to: r.sameTimeYesterday }),
       api.timeseries(today, "hour"),
-      api.sessions(today, 200),
+      api.sessions(today, { limit: 200 }),
     ])
       .then(async ([s, y, hours, sessions]) => {
         // Sin sesiones hoy, la última usada de los últimos 30 días.
-        const rows = sessions.sessions.length ? sessions.sessions : (await api.sessions({ ...scope, from: at - 30 * DAY_MS }, 200)).sessions;
+        const rows = sessions.rows.length ? sessions.rows : (await api.sessions({ ...scope, from: at - 30 * DAY_MS }, { limit: 200 })).rows;
         if (!alive) return;
         setLive({ today: s.costUsd, yesterday: y.costUsd, burn: s.burnRateUsdH, hours, last: lastUsedSession(rows, at) });
         setNow(at);

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { api, type BreakdownRow, type Filter, type ProjectDetail as Detail, type ToolStat } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type BreakdownRow, type Filter, type ProjectDetail as Detail, type SessionRow, type SessionSort, type ToolStat } from "../lib/api";
+import { createPager, type PagerState } from "../lib/pager";
 import { activityColor, activityLabel, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import { Bars, LineChart } from "../components/Charts";
-import { DataTable, type Column } from "../components/DataTable";
+import { DataTable, type Column, type SortState } from "../components/DataTable";
 import { Kpis, type Kpi } from "../components/Kpis";
 import { dayPoints } from "./panels";
 import { AgentDots } from "./Projects";
@@ -20,6 +21,23 @@ export function toolColumns(): Column<ToolStat>[] {
   ];
 }
 
+/** Sesiones del proyecto por página. */
+const SESSIONS_PAGE = 25;
+
+/** Columna del servidor de cada cabecera ordenable de la tabla de sesiones. */
+const serverSort = (header: string): SessionSort =>
+  (
+    ({
+      [t("Agente")]: "agent",
+      [t("Rama")]: "branch",
+      [t("Modelo")]: "model",
+      [t("Duración")]: "duration",
+      [t("Turnos")]: "turns",
+      [t("Compact.")]: "compactions",
+      [t("Coste")]: "cost",
+    }) as Record<string, SessionSort>
+  )[header] ?? "started";
+
 export function ProjectDetail({
   projectKey,
   filter,
@@ -35,6 +53,19 @@ export function ProjectDetail({
 }) {
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortState>({ header: t("Inicio"), dir: "desc" });
+  const [sessions, setSessions] = useState<PagerState<SessionRow>>({ rows: [], total: 0 });
+  // Sesiones por páginas, ordenadas en el servidor; otro orden o un aviso de datos cambiados
+  // vuelven a la primera página.
+  const pager = useMemo(
+    () =>
+      createPager<SessionRow, SortState>(
+        (offset, limit, s) => api.sessions(filter, { offset, limit, sort: serverSort(s.header), desc: s.dir === "desc" }, projectKey),
+        SESSIONS_PAGE,
+        setSessions,
+      ),
+    [projectKey, filter],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -46,6 +77,8 @@ export function ProjectDetail({
       alive = false;
     };
   }, [projectKey, filter, refresh]);
+
+  useEffect(() => pager.load(sort), [pager, sort, refresh]);
 
   if (error)
     return (
@@ -59,7 +92,7 @@ export function ProjectDetail({
   if (!d) return <div className="main muted">{t("Cargando…")}</div>;
 
   const p = d.project;
-  const withCompactions = d.sessions.filter((s) => s.compactions > 0).length;
+  const withCompactions = d.sessionsWithCompactions;
   const kpis: Kpi[] = [
     { label: t("Coste"), value: p.hasPrice || p.costUsd > 0 ? fmt.usd(p.costUsd) : t("sin precio"), hint: t("{n} llamadas", { n: fmt.int(p.calls) }), tone: "accent" },
     { label: t("Sesiones"), value: fmt.int(p.sessions), hint: p.sessions ? t("{v} por sesión", { v: fmt.usd(p.costUsd / p.sessions) }) : "" },
@@ -137,15 +170,16 @@ export function ProjectDetail({
           <header className="panel-head">
             <div className="panel-title">
               <h2>{t("Sesiones")}</h2>
-              <span className="muted">{t("{n} en el periodo · pulsa una para ver su detalle", { n: fmt.int(d.sessions.length) })}</span>
+              <span className="muted">{t("{n} en el periodo · pulsa una para ver su detalle", { n: fmt.int(sessions.total) })}</span>
             </div>
           </header>
           <DataTable
-            rows={d.sessions}
+            rows={sessions.rows}
             rowKey={(r) => r.id}
-            columns={sessionColumns(d.sessions)}
-            collapse={25}
-            defaultSort={{ header: t("Inicio"), dir: "desc" }}
+            columns={sessionColumns(sessions.rows)}
+            sort={sort}
+            onSortChange={setSort}
+            more={{ total: sessions.total, onMore: pager.more }}
             onRowClick={(r) => openSession(r.id)}
           />
       </section>

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { api, type KeyCost, type SessionDetail as Detail, type ToolStat, type TurnRow } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type AfterCompaction, type KeyCost, type SessionDetail as Detail, type ToolStat, type TurnRow } from "../lib/api";
+import { createPager, type PagerState } from "../lib/pager";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import { Bars, LineChart } from "../components/Charts";
@@ -15,25 +16,26 @@ export function markerIndex(timeline: { ts: number }[], ts: number): number {
 
 const TOP_TOOLS = 3;
 
-/**
- * Coste medio por turno antes y después de la k-ésima compactación (k = 3, o la última si hay
- * menos). `null` si no hay compactaciones o faltan turnos a un lado.
- */
-export function afterCompaction(turns: { ts: number; costUsd: number }[], compactions: number[]) {
-  if (!compactions.length) return null;
-  const k = Math.min(3, compactions.length);
-  const cut = compactions[k - 1];
-  const before = turns.filter((x) => x.ts < cut);
-  const after = turns.filter((x) => x.ts >= cut);
-  if (!before.length || !after.length) return null;
-  const avg = (xs: { costUsd: number }[]) => xs.reduce((a, x) => a + x.costUsd, 0) / xs.length;
-  const b = avg(before);
-  return { k, ratio: b > 0 ? avg(after) / b : null };
+/** La línea de coste acumulado, que llega en columnas, como puntos. */
+export function timelinePoints(timeline: Detail["timeline"]): { ts: number; costUsd: number }[] {
+  return timeline.ts.map((ts, i) => ({ ts, costUsd: timeline.cost[i] }));
 }
+
+/** Aviso de que tras compactar cada turno cuesta bastante más (cálculo del backend). */
+export function compactionAlert(after: AfterCompaction | null): string | null {
+  if (!after || after.ratio == null || after.ratio < 1.2) return null;
+  return t("Tras la {k}.ª compactación, cada turno cuesta {x}× más. Buen punto para abrir una sesión nueva.", { k: after.k, x: after.ratio.toFixed(1) });
+}
+
+/** Turnos por página. */
+const TURNS_PAGE = 30;
 
 export function SessionDetail({ id, refresh, back, backLabel }: { id: string; refresh: number; back: () => void; backLabel?: string }) {
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [turns, setTurns] = useState<PagerState<TurnRow>>({ rows: [], total: 0 });
+  // Turnos por páginas, en orden; un aviso de datos cambiados vuelve a la primera.
+  const pager = useMemo(() => createPager<TurnRow, null>((offset, limit) => api.sessionTurns(id, { offset, limit }), TURNS_PAGE, setTurns), [id]);
 
   useEffect(() => {
     let alive = true;
@@ -41,16 +43,18 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
       .sessionDetail(id)
       .then((x) => alive && (setD(x), setError(null)))
       .catch((e) => alive && setError(String(e)));
+    pager.load(null);
     return () => {
       alive = false;
     };
-  }, [id, refresh]);
+  }, [id, refresh, pager]);
 
   if (error) return <div className="main error">{t("No se pudieron cargar los datos: {e}", { e: error })}</div>;
   if (!d) return <div className="main muted">{t("Cargando…")}</div>;
 
   const s = d.session;
-  const after = afterCompaction(d.turns, d.compactions);
+  const alert = compactionAlert(d.afterCompaction);
+  const timeline = timelinePoints(d.timeline);
   const toolCalls = d.tools.reduce((a, x) => a + x.calls, 0);
   const toolErrors = d.tools.reduce((a, x) => a + x.errors, 0);
   const kpis: Kpi[] = [
@@ -62,7 +66,7 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
     { label: t("Herramientas"), value: fmt.int(toolCalls), hint: toolCalls ? t("{p} con error", { p: fmt.pct(toolErrors / toolCalls) }) : "" },
   ];
 
-  const points = d.timeline.map((p) => ({
+  const points = timeline.map((p) => ({
     ts: p.ts,
     value: p.costUsd,
     tooltip: (
@@ -72,7 +76,7 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
       </>
     ),
   }));
-  const markers = d.compactions.map((ts, i) => ({ index: markerIndex(d.timeline, ts), label: t("compact. {n}", { n: i + 1 }) }));
+  const markers = d.compactions.map((ts, i) => ({ index: markerIndex(timeline, ts), label: t("compact. {n}", { n: i + 1 }) }));
 
   const turnColumns: Column<TurnRow>[] = [
     { header: "#", cell: (r) => r.n, width: "36px", className: "muted num" },
@@ -86,7 +90,6 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
         </span>
       ),
       width: "120px",
-      sort: (r) => r.activity,
     },
     {
       header: t("Herramientas"),
@@ -104,8 +107,8 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
         ),
       className: (r) => (r.toolErrors ? "warn" : "secondary"),
     },
-    { header: t("Entrada / salida"), cell: (r) => `${fmt.compact(r.inputTokens)} / ${fmt.compact(r.outputTokens)}`, align: "right", width: "120px", className: "secondary", sort: (r) => r.inputTokens },
-    { header: t("Coste"), cell: (r) => fmt.usd(r.costUsd), align: "right", width: "72px", className: "cost", sort: (r) => r.costUsd },
+    { header: t("Entrada / salida"), cell: (r) => `${fmt.compact(r.inputTokens)} / ${fmt.compact(r.outputTokens)}`, align: "right", width: "120px", className: "secondary" },
+    { header: t("Coste"), cell: (r) => fmt.usd(r.costUsd), align: "right", width: "72px", className: "cost" },
   ];
 
   const toolColumns: Column<ToolStat>[] = [
@@ -166,11 +169,7 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
             thick
           />
           <DataTable rows={d.models} rowKey={(r) => r.key} columns={modelColumns} collapse={false} />
-          {after && after.ratio != null && after.ratio >= 1.2 && (
-            <p className="card-alert static">
-              {t("Tras la {k}.ª compactación, cada turno cuesta {x}× más. Buen punto para abrir una sesión nueva.", { k: after.k, x: after.ratio.toFixed(1) })}
-            </p>
-          )}
+          {alert && <p className="card-alert static">{alert}</p>}
         </section>
       </div>
       <div className="grid-detail">
@@ -181,8 +180,8 @@ export function SessionDetail({ id, refresh, back, backLabel }: { id: string; re
               <span className="muted">{t("el texto de los prompts no se guarda")}</span>
             </div>
           </header>
-          {d.turns.length ? (
-            <DataTable rows={d.turns} rowKey={(r) => r.id} columns={turnColumns} collapse={30} />
+          {d.turnsTotal ? (
+            <DataTable rows={turns.rows} rowKey={(r) => r.id} columns={turnColumns} more={{ total: turns.total, onMore: pager.more }} />
           ) : (
             <Empty>{t("Este agente no registra turnos: el coste se reparte por llamada.")}</Empty>
           )}

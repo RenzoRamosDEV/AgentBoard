@@ -288,14 +288,49 @@ export function installMocks() {
           activities: [{ key: "feature", costUsd: proj.costUsd * 0.4, turns: 20, editTurns: 18, oneShot: 0.9 }, { key: "coding", costUsd: proj.costUsd * 0.3, turns: 30, editTurns: 30, oneShot: 0.95 }, { key: "testing", costUsd: proj.costUsd * 0.2, turns: 8, editTurns: 0, oneShot: null }, { key: "exploration", costUsd: proj.costUsd * 0.1, turns: 6, editTurns: 0, oneShot: null }],
           models: detail.models.map((m) => ({ ...row(m.key, m.costUsd, m.calls), key: m.key })),
           branches: [...new Set(ses.map((x) => x.branch))].map((b, i) => row(b, proj.costUsd / (i + 2), 100 - i * 20)),
-          sessions: ses,
           tools: detail.tools,
+          sessionsWithCompactions: ses.filter((x) => x.compactions > 0).length,
         };
       }
-      case "list_sessions":
-        return { sessions, total: sessions.length };
-      case "get_session_detail":
-        return sessionDetail(String(a.id));
+      case "list_sessions": {
+        // Como el backend: del proyecto pedido, ordenadas por la columna y por páginas.
+        const page = (a.page ?? {}) as { limit?: number; offset?: number; sort?: string; desc?: boolean };
+        const key = a.projectKey as string | undefined;
+        const rows = sessions.filter((x) => key == null || `/${x.project}` === key);
+        const value: Record<string, (x: (typeof sessions)[number]) => number | string> = {
+          agent: (x) => x.agentName, branch: (x) => x.branch ?? "", model: (x) => x.model ?? "", duration: (x) => x.endedAt - x.startedAt,
+          turns: (x) => x.turns, compactions: (x) => x.compactions, cost: (x) => x.costUsd,
+        };
+        const by = value[page.sort ?? ""] ?? ((x) => x.startedAt);
+        const sign = page.desc === false ? 1 : -1;
+        rows.sort((x, y) => sign * (by(x) < by(y) ? -1 : by(x) > by(y) ? 1 : 0) || x.id.localeCompare(y.id));
+        const offset = page.offset ?? 0;
+        return { rows: rows.slice(offset, offset + Math.min(page.limit ?? 50, 500)), total: rows.length, offset };
+      }
+      case "get_session_detail": {
+        const d = sessionDetail(String(a.id));
+        const k = Math.min(3, d.compactions.length);
+        const cut = d.compactions[k - 1];
+        const avg = (xs: { costUsd: number }[]) => xs.reduce((acc, x) => acc + x.costUsd, 0) / xs.length;
+        const before = d.turns.filter((x) => x.ts < cut);
+        const after = d.turns.filter((x) => x.ts >= cut);
+        return {
+          session: d.session,
+          timeline: { ts: d.timeline.map((p) => p.ts), cost: d.timeline.map((p) => p.costUsd) },
+          compactions: d.compactions,
+          turnsTotal: d.turns.length,
+          afterCompaction: k && before.length && after.length ? { k, ratio: avg(before) > 0 ? avg(after) / avg(before) : null } : null,
+          activities: d.activities,
+          models: d.models,
+          tools: d.tools,
+        };
+      }
+      case "list_session_turns": {
+        const turns = sessionDetail(String(a.id)).turns;
+        const page = (a.page ?? {}) as { limit?: number; offset?: number };
+        const offset = page.offset ?? 0;
+        return { rows: turns.slice(offset, offset + (page.limit ?? 30)), total: turns.length, offset };
+      }
       case "get_data_info":
         return { firstTs: now - 42 * DAY, calls: 3792, watchedFiles: 212, lastScan: now - 60_000 };
       case "export_data":

@@ -50,7 +50,7 @@ export function CommandPalette({
 
   useEffect(() => {
     input.current?.focus();
-    api.sessions(filter, 30).then((l) => setSessions(l.sessions)).catch(() => setSessions([]));
+    api.sessions(filter, { limit: 30 }).then((l) => setSessions(l.rows)).catch(() => setSessions([]));
   }, [filter]);
 
   const items = useMemo<PaletteItem[]>(() => {

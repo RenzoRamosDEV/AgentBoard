@@ -96,6 +96,7 @@ const en: Dict = {
   "¿Cuánto cuestan los subagentes?": "How much do subagents cost?",
   // Comunes
   "Ver más ›": "See more ›",
+  "Cargar más ({n} de {total})": "Load more ({n} of {total})",
   "Ver todo ({n}) ▾": "Show all ({n}) ▾",
   "Ver menos ▴": "Show less ▴",
   "Sin datos en este periodo": "No data in this period",
@@ -523,6 +524,7 @@ const pt: Dict = {
   "¿Qué servidores MCP uso?": "Quais servidores MCP uso?",
   "¿Cuánto cuestan los subagentes?": "Quanto custam os subagentes?",
   "Ver más ›": "Ver mais ›",
+  "Cargar más ({n} de {total})": "Carregar mais ({n} de {total})",
   "Ver todo ({n}) ▾": "Ver tudo ({n}) ▾",
   "Ver menos ▴": "Ver menos ▴",
   "Sin datos en este periodo": "Sem dados neste período",
@@ -942,6 +944,7 @@ const fr: Dict = {
   "¿Qué servidores MCP uso?": "Quels serveurs MCP j'utilise ?",
   "¿Cuánto cuestan los subagentes?": "Combien coûtent les sous-agents ?",
   "Ver más ›": "Voir plus ›",
+  "Cargar más ({n} de {total})": "Charger plus ({n} sur {total})",
   "Ver todo ({n}) ▾": "Tout voir ({n}) ▾",
   "Ver menos ▴": "Voir moins ▴",
   "Sin datos en este periodo": "Aucune donnée sur cette période",

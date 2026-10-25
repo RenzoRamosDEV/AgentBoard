@@ -20,6 +20,12 @@ export interface SortState {
   dir: "asc" | "desc";
 }
 
+/** Siguiente orden al pulsar una cabecera: primero descendente; otra vez, ascendente. */
+export const nextSort = (cur: SortState | undefined, header: string): SortState => ({
+  header,
+  dir: cur?.header === header && cur.dir === "desc" ? "asc" : "desc",
+});
+
 /** Al mostrar la lista completa, se pliega a estas filas con un botón para desplegar. */
 const COLLAPSE = 20;
 
@@ -36,6 +42,9 @@ export function DataTable<T>({
   onRowClick,
   defaultSort,
   rowClassName,
+  sort: controlledSort,
+  onSortChange,
+  more,
 }: {
   rows: T[];
   rowKey: (row: T) => string;
@@ -51,12 +60,19 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void;
   defaultSort?: SortState;
   rowClassName?: (row: T) => string;
+  /** Orden controlado desde fuera (el servidor ordena): la tabla no reordena las filas. */
+  sort?: SortState;
+  onSortChange?: (sort: SortState) => void;
+  /** Lista por páginas: total en el servidor y cómo pedir la siguiente. */
+  more?: { total: number; onMore: () => void };
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [sort, setSort] = useState<SortState | undefined>(defaultSort);
+  const [localSort, setSort] = useState<SortState | undefined>(defaultSort);
   if (!rows.length) return <Empty>{empty}</Empty>;
 
-  const sortCol = sort && columns.find((c) => c.header === sort.header && c.sort);
+  const controlled = !!onSortChange;
+  const sort = controlled ? controlledSort : localSort;
+  const sortCol = !controlled && sort && columns.find((c) => c.header === sort.header && c.sort);
   if (sortCol) {
     const key = sortCol.sort!;
     const sign = sort!.dir === "asc" ? 1 : -1;
@@ -66,11 +82,10 @@ export function DataTable<T>({
       return sign * (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y)));
     });
   }
-  const toggleSort = (c: Column<T>) =>
-    setSort((cur) => ({ header: c.header, dir: cur?.header === c.header && cur.dir === "desc" ? "asc" : "desc" }));
+  const toggleSort = (c: Column<T>) => (onSortChange ? onSortChange(nextSort(sort, c.header)) : setSort((cur) => nextSort(cur, c.header)));
 
-  // Con `limit` manda la vista de resumen; sin él, se pliega a `collapse` filas.
-  const selfCollapse = limit == null && collapse !== false && rows.length > collapse;
+  // Con `limit` manda la vista de resumen; sin él, se pliega a `collapse` filas (no por páginas).
+  const selfCollapse = !more && limit == null && collapse !== false && rows.length > collapse;
   const shown = limit ? rows.slice(0, limit) : selfCollapse && !expanded ? rows.slice(0, collapse) : rows;
 
   const template = columns.map((c) => c.width ?? (c.align === "right" ? "72px" : "1fr")).join(" ");
@@ -135,6 +150,13 @@ export function DataTable<T>({
           ) : (
             <span className="muted">{t("… y {n} más", { n: rows.length - limit })}</span>
           )}
+        </div>
+      )}
+      {more && rows.length < more.total && (
+        <div className="table-more">
+          <button className="link" onClick={more.onMore}>
+            {t("Cargar más ({n} de {total})", { n: rows.length, total: more.total })}
+          </button>
         </div>
       )}
       {selfCollapse && (

@@ -150,3 +150,27 @@ Notas de la herramienta:
   es crecimiento de datos y no WAL).
 - En la partida, el aviso a la interfaz de `watch` es `on_done(Vigilante)` con registros (lo que
   emitía `ingest://done`) y todos los escaneos son completos.
+
+### Paso 2–3: relectura dirigida y vigilante (D2–D4)
+
+`bench-fast`, `200m`, tres ejecuciones (load 0,2–0,9). Estructural: **se conserva**.
+
+| Medida | Partida | Paso 3 |
+|---|---|---|
+| `watch`: evento → dato visible (mediana / p95) | 800 / 812 ms | **569 ms** (568–570) / 577–583 ms; 0 escaneos completos |
+| `watch --events 500`: avisos / relecturas / escaneos completos | 1 / 1 / 1 | 500 / 500 / **0** (cada log recibe una línea cada 300 ms > `QUIET`: cada línea es una relectura; el throttle llega en el paso 4) |
+| `idle --idle-secs 60`: CPU / relecturas | 0 ms / 0 | 0 ms / 0 (sin el `RECHECK` de 20 s) |
+
+- La latencia restante es sobre todo la lectura que hace la medición al recibir el aviso: el Resumen
+  de todo el historial de `200m` (≈ 300 ms en frío tras cada cambio), más los 200 ms de `QUIET`.
+- `perf_scan` pasa a usar la ruta absoluta de los fixtures (`canonicalize`): el vigilante filtra por
+  raíz y `notify` entrega rutas absolutas. La partida no filtraba, así que sus cifras siguen valiendo.
+- Test de propiedad (`tests/relectura_dirigida.rs`, en `tests/` porque usa `common::fingerprint`):
+  la relectura dirigida deja **siempre** la misma huella que el escaneo completo incremental (24 de
+  24 pasos). Frente a leer desde cero coinciden 22 de 24: en dos pasos forzados (borrar el log
+  principal de una sesión cuyos subagentes y continuaciones están en otros archivos ya truncados o
+  rotados) el propio escaneo completo incremental ya difiere de leer desde cero (turnos de otra
+  sesión). Es un límite previo de D10 de la Fase 2, no de la relectura dirigida: el test lo acota
+  (≥ 20 de 24) y queda como seguimiento. Las líneas que el test añade a una sesión existente
+  repiten su `cwd`, rama y modelo guardados: con valores distintos repartidos entre archivos, esos
+  campos dependen del orden de lectura también en el escaneo completo incremental.

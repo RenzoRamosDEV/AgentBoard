@@ -356,6 +356,10 @@ fn configure_writer(conn: &Connection, file: bool) -> Result<()> {
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "cache_size", -65_536)?;
+        // El WAL no crece sin límite (tras cada checkpoint se recorta) y el arranque siguiente no
+        // tiene que recorrer uno de decenas de MiB para recuperarlo.
+        conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
+        let _: i64 = conn.query_row(&format!("PRAGMA mmap_size={MMAP_SIZE}"), [], |r| r.get(0))?;
     } else {
         conn.pragma_update(None, "synchronous", "OFF")?;
     }
@@ -370,8 +374,19 @@ fn configure_writer(conn: &Connection, file: bool) -> Result<()> {
     Ok(())
 }
 
+/// Bytes del WAL que se conservan tras un checkpoint.
+const JOURNAL_SIZE_LIMIT: i64 = 8 * 1024 * 1024;
+/// Bytes de la caché en disco que se leen por `mmap`: los lectores pierden su caché de páginas
+/// con cada lote del escritor (WAL) y releerla del sistema de archivos página a página es lo que
+/// más cuesta; con `mmap` vienen de la caché del sistema sin copiarse.
+const MMAP_SIZE: i64 = 1024 * 1024 * 1024;
+
 fn configure_reader(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "query_only", 1)?;
+    // En memoria no hace nada; en un archivo, ver `MMAP_SIZE`.
+    let _: Option<i64> = conn
+        .query_row(&format!("PRAGMA mmap_size={MMAP_SIZE}"), [], |r| r.get(0))
+        .optional()?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     conn.pragma_update(None, "cache_size", -16_384)?;
     conn.busy_timeout(Duration::from_secs(5))?;

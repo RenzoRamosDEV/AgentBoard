@@ -163,6 +163,63 @@ describe("caché de consultas", () => {
     expect(store.snapshot("b").data).toBe("vb");
   });
 
+  it("al caducar dentro de la misma generación, la nueva respuesta sustituye a la anterior", async () => {
+    const c = clock();
+    const store = createQueryStore({ now: c.now });
+    const f = fakeFetch<string>();
+    const off = store.subscribe("a", f.fetch, noop);
+    f.calls[0].resolve("viejo");
+    await flush();
+    off();
+    c.advance(600_000);
+    store.subscribe("a", f.fetch, noop);
+    f.calls[1].resolve("nuevo");
+    await flush();
+    expect(store.snapshot("a").data).toBe("nuevo");
+  });
+
+  it("un error en la misma generación se guarda y el siguiente suscriptor reintenta", async () => {
+    const c = clock();
+    const store = createQueryStore({ now: c.now });
+    const f = fakeFetch<string>();
+    const off = store.subscribe("a", f.fetch, noop);
+    f.calls[0].resolve("x");
+    await flush();
+    off();
+    c.advance(600_000);
+    const off2 = store.subscribe("a", f.fetch, noop);
+    f.calls[1].reject(new Error("caído"));
+    await flush();
+    expect(store.snapshot("a")).toEqual({ data: "x", error: "Error: caído" });
+    off2();
+    store.subscribe("a", f.fetch, noop);
+    expect(f.calls).toHaveLength(3);
+  });
+
+  it("con tantas entradas como el límite no descarta ninguna", async () => {
+    const store = createQueryStore({ now: clock().now, maxEntries: 2 });
+    const f = fakeFetch<string>();
+    store.subscribe("a", f.fetch, noop)();
+    store.subscribe("b", f.fetch, noop)();
+    f.calls.forEach((c, i) => c.resolve(`v${i}`));
+    await flush();
+    expect(store.snapshot("a").data).toBe("v0");
+    expect(store.snapshot("b").data).toBe("v1");
+  });
+
+  it("descarta la usada hace más tiempo, no la primera en entrar", async () => {
+    const store = createQueryStore({ now: clock().now, maxEntries: 2 });
+    const f = fakeFetch<string>();
+    store.subscribe("a", f.fetch, noop)();
+    store.subscribe("b", f.fetch, noop)();
+    f.calls.forEach((c, i) => c.resolve(`v${i}`));
+    await flush();
+    store.subscribe("a", f.fetch, noop)();
+    store.subscribe("c", f.fetch, noop)();
+    expect(store.snapshot("a").data).toBe("v0");
+    expect(store.snapshot("b").data).toBeUndefined();
+  });
+
   it("un error se guarda sin perder el dato anterior y se borra con la siguiente respuesta", async () => {
     const store = createQueryStore({ now: clock().now });
     const f = fakeFetch<string>();

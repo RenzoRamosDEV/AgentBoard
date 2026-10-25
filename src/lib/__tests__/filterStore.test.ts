@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFilterStore } from "../filterStore";
+import { createFilterStore, visibleAgents } from "../filterStore";
 import { filterKey } from "../query";
 import type { AgentRow, ProjectRow } from "../api";
 
@@ -129,6 +129,15 @@ describe("almacén de filtro: filtro derivado", () => {
     const d = store.derive(range, agents, projects);
     expect(d.filter).toEqual({ from: 100, agents: ["b"], projects: [2] });
     expect(d.singleProject).toBe("p2");
+  });
+
+  it("sin proyectos ocultos no hay proyecto único aunque solo haya uno", () => {
+    expect(createFilterStore(fakeStorage()).derive(range, agents, [project(7)]).singleProject).toBeNull();
+  });
+
+  it("visibleAgents lista los no ocultos y sin ocultos no filtra", () => {
+    expect(visibleAgents(new Set(["a"]), agents)).toEqual(["b"]);
+    expect(visibleAgents(new Set(), agents)).toBeUndefined();
   });
 
   it("es el mismo objeto mientras no cambian sus entradas, aunque las listas lleguen de nuevo iguales", () => {

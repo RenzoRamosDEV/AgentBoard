@@ -36,6 +36,11 @@ const toggled = <T,>(set: ReadonlySet<T>, v: T) => {
   return next;
 };
 
+/** Ids de los agentes visibles; sin ocultos, ningún filtro (`undefined`). */
+export function visibleAgents(hidden: ReadonlySet<string>, agents: AgentRow[]): string[] | undefined {
+  return hidden.size ? agents.filter((a) => !hidden.has(a.id)).map((a) => a.id) : undefined;
+}
+
 export function createFilterStore(storage: Storage | null) {
   let compare = true;
   try {
@@ -87,7 +92,7 @@ export function createFilterStore(storage: Storage | null) {
       const { hiddenAgents, hiddenProjects } = state;
       const filter: Filter = {
         ...range,
-        agents: hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined,
+        agents: visibleAgents(hiddenAgents, agents),
         projects: hiddenProjects.size ? projects.filter((p) => !hiddenProjects.has(p.id)).map((p) => p.id) : undefined,
       };
       const visible = projects.filter((p) => !hiddenProjects.has(p.id));
@@ -139,7 +144,7 @@ export function useLists() {
   const hiddenAgents = useFilterState((s) => s.hiddenAgents);
   const agentsQ = useQuery("list_agents", filterKey(range), () => api.agents(range));
   const agents = agentsQ.data ?? NO_AGENTS;
-  const scope: Filter = { ...range, agents: hiddenAgents.size ? agents.filter((a) => !hiddenAgents.has(a.id)).map((a) => a.id) : undefined };
+  const scope: Filter = { ...range, agents: visibleAgents(hiddenAgents, agents) };
   const projectsQ = useQuery("list_projects", filterKey(scope), () => api.projects(scope));
   return { range, agents, projects: projectsQ.data ?? NO_PROJECTS, error: agentsQ.error ?? projectsQ.error };
 }

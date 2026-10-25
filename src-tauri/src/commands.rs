@@ -8,7 +8,7 @@ use crate::queries::{
     self, AgentRow, BreakdownRow, DataInfo, Filter, Point, ProjectRow, SeriesPoint, Summary,
 };
 use crate::result_cache::{self, ResultCache};
-use crate::sessions::{self, SessionDetail, SessionList};
+use crate::sessions::{self, Page, PageRequest, SessionOverview, SessionRow, TurnPage, TurnRow};
 use crate::settings::{self, Settings};
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -230,10 +230,16 @@ pub async fn export_data(
 pub async fn list_sessions(
     state: tauri::State<'_, AppState>,
     filter: Option<Filter>,
-    limit: Option<usize>,
-) -> CmdResult<SessionList> {
+    page: Option<PageRequest>,
+    project_key: Option<String>,
+) -> CmdResult<Page<SessionRow>> {
     with_reader(&state, move |c| {
-        sessions::list_sessions(c, &filter.unwrap_or_default(), limit)
+        sessions::session_page(
+            c,
+            &filter.unwrap_or_default(),
+            project_key.as_deref(),
+            &page.unwrap_or_default(),
+        )
     })
     .await
 }
@@ -257,9 +263,9 @@ pub async fn get_project_detail(
     key: String,
     filter: Option<Filter>,
     tz: String,
-) -> CmdResult<sessions::ProjectDetail> {
+) -> CmdResult<sessions::ProjectOverview> {
     with_reader(&state, move |c| {
-        sessions::project_detail(c, &key, &filter.unwrap_or_default(), &tz)
+        sessions::project_overview(c, &key, &filter.unwrap_or_default(), &tz)
     })
     .await
 }
@@ -269,8 +275,22 @@ pub async fn get_project_detail(
 pub async fn get_session_detail(
     state: tauri::State<'_, AppState>,
     id: String,
-) -> CmdResult<SessionDetail> {
-    with_reader(&state, move |c| sessions::session_detail(c, &id)).await
+) -> CmdResult<SessionOverview> {
+    with_reader(&state, move |c| sessions::session_overview(c, &id)).await
+}
+
+/// Una página de los turnos de una sesión, en orden.
+#[tauri::command]
+#[tracing::instrument(name = "cmd.list_session_turns", level = "info", skip_all)]
+pub async fn list_session_turns(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    page: Option<TurnPage>,
+) -> CmdResult<Page<TurnRow>> {
+    with_reader(&state, move |c| {
+        sessions::session_turns(c, &id, &page.unwrap_or_default())
+    })
+    .await
 }
 
 #[tauri::command]

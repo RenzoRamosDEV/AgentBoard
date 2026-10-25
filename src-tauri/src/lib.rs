@@ -156,6 +156,7 @@ pub fn run() {
             commands::export_data,
             commands::list_sessions,
             commands::get_session_detail,
+            commands::list_session_turns,
             commands::list_project_summaries,
             commands::get_project_detail,
             commands::list_prices,

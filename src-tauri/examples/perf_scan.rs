@@ -268,6 +268,9 @@ fn warm(
 }
 
 fn main() -> Result<()> {
+    // Como en la app, la zona del sistema (la de la caché) es la de la interfaz: así los periodos
+    // de días completos leen de los agregados también al reabrir una caché (`--phase warm`).
+    std::env::set_var("TZ", common::TZ);
     telemetry::init();
     let args = common::parse_args(std::env::args().skip(1))
         .map_err(|e| anyhow::anyhow!("{e}\n{}", common::USAGE))?;

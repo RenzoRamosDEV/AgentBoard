@@ -11,13 +11,28 @@ pub fn parse(name: &str) -> Tz {
     name.parse().ok().or_else(system).unwrap_or(chrono_tz::UTC)
 }
 
-/// Zona IANA del sistema (para el binario MCP y la bandeja; la UI manda la del navegador).
+/// Zona IANA del sistema (para el binario MCP, la bandeja y la caché; la UI manda la del
+/// navegador).
 pub fn system() -> Option<Tz> {
-    iana_time_zone::get_timezone().ok()?.parse().ok()
+    system_name().parse().ok()
 }
 
+/// La de la variable `TZ` si es una zona IANA (como hacen libc y el WebView), si no la del
+/// sistema y, si tampoco, UTC.
 pub fn system_name() -> String {
-    iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into())
+    zone_name(
+        std::env::var("TZ").ok().as_deref(),
+        iana_time_zone::get_timezone().ok(),
+    )
+}
+
+fn zone_name(tz_env: Option<&str>, detected: Option<String>) -> String {
+    tz_env
+        .map(|v| v.trim_start_matches(':'))
+        .filter(|v| v.parse::<Tz>().is_ok())
+        .map(str::to_string)
+        .or(detected)
+        .unwrap_or_else(|| "UTC".into())
 }
 
 /// Instante UTC (ms) de una hora local, resolviendo huecos y repeticiones del cambio de hora.
@@ -194,6 +209,20 @@ mod tests {
             day_number(i64::MAX, &tz),
             day_number(i64::MAX, &chrono_tz::UTC)
         );
+    }
+
+    #[test]
+    fn la_variable_tz_manda_sobre_la_zona_detectada() {
+        let detected = || Some("Europe/Madrid".to_string());
+        assert_eq!(
+            zone_name(Some("America/New_York"), detected()),
+            "America/New_York"
+        );
+        assert_eq!(zone_name(Some(":Asia/Tokyo"), detected()), "Asia/Tokyo");
+        assert_eq!(zone_name(Some("no/existe"), detected()), "Europe/Madrid");
+        assert_eq!(zone_name(Some(""), detected()), "Europe/Madrid");
+        assert_eq!(zone_name(None, detected()), "Europe/Madrid");
+        assert_eq!(zone_name(None, None), "UTC");
     }
 
     #[test]

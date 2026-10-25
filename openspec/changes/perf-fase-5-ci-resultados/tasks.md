@@ -33,7 +33,7 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 
 ## 6. Comprobaciones finales
 
-- [ ] 6.1 `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`, `python3 -m unittest scripts/test_bench_compare.py scripts/test_gen_fixtures.py` y `actionlint` en verde; `git diff --stat 5c5e139 -- src/ src-tauri/src src-tauri/mcp` (archivo de la Fase 4) sin cambios; `openspec validate perf-fase-5-ci-resultados --strict` válido
+- [x] 6.1 `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`, `python3 -m unittest scripts/test_bench_compare.py scripts/test_gen_fixtures.py` y `actionlint` en verde; `git diff --stat 5c5e139 -- src/ src-tauri/src src-tauri/mcp` (archivo de la Fase 4) sin cambios; `openspec validate perf-fase-5-ci-resultados --strict` válido
 
 ## Workflow follow-up
 

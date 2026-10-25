@@ -173,3 +173,16 @@ Cada cifra se comprobó contra `BASELINE.md`; correcciones al mapa de partida de
 - Refresco con lecturas, «antes»: la primera medición es la de la Fase 2 (×1,36–1,38 en disco); se da también la partida de la Fase 3 (×1,29).
 - Filas añadidas: refresco en vivo (presupuesto de la Fase 1) y Resumen después/antes de la contención (≤ ×1,2, no cumple), para no omitir ningún «no cumple» de `BASELINE.md`.
 - Mutación: F1 97 de 545 examinados (96,5 %), F2 305 de 404 (97,1 %), F3 98,7 % de 75 viables, F4 92,6 % (7 equivalentes), F5 98,4 %.
+
+### Tarea 4.2 pendiente (paso manual)
+
+Sin acceso a GitHub desde el entorno de implementación (ni `git push` ni `gh workflow run`), la primera línea base no se pudo medir en el runner. Pasos manuales, documentados también en «Benchmarks en CI y línea base» de `CONTRIBUTING.md`:
+
+1. `git push` de la rama `perf/rendimiento-fluido` (o `gh workflow run ci.yml --ref perf/rendimiento-fluido`).
+2. Comprobar que el job `bench` falla con «no hay línea base» (esperado) y que la ejecución publica el artefacto `perf-baseline`.
+3. `gh run download <id> -n perf-baseline -D /tmp/perf-baseline && cp /tmp/perf-baseline/baseline-candidate.json docs/perf/baseline.json`, revisar `captured` (commit, runner, CPU) y versionarlo: `git commit -m "perf(ci): añade la primera línea base de benchmarks"`.
+4. Push y comprobar que la siguiente ejecución de `bench` queda en verde; anotar aquí commit, runner y CPU, y marcar la 4.2.
+
+### Comprobaciones finales (tarea 6.1)
+
+`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (265 + 62 tests), `python3 -m unittest scripts/test_gen_fixtures.py scripts/test_bench_compare.py` (32 tests), `npm test` (160 tests en 23 archivos), `npm run build`, `actionlint` y `openspec validate perf-fase-5-ci-resultados --strict`: en verde. `git diff --stat 5c5e139 -- src/ src-tauri/src src-tauri/mcp`: vacío.

@@ -271,14 +271,25 @@ export function installMocks() {
         localStorage.setItem("mockSettings", JSON.stringify(a.settings));
         return a.settings;
       case "rebuild_cache":
-        // Como el backend: la relectura termina un poco después con `ingest://done`.
-        setTimeout(() => void emit("ingest://done", { files: 212, lines: 0, records: 0, errors: 0 }), 800);
+        // Como el backend: avisa de que pudo cambiar todo y la relectura termina un poco
+        // después con `ingest://done`.
+        setTimeout(() => void emit("data:changed", { generation: ++generation, agents: [], days: [] }), 400);
+        setTimeout(() => void emit("ingest://done", { files: 212, lines: 0, records: 0, errors: 0, full: true }), 800);
         return null;
     }
     console.warn("mock sin implementar:", cmd, args);
     return null;
   }, { shouldMockEvents: true });
+  // Relecturas simuladas del vigilante: un aviso de datos cambiados de vez en cuando.
+  setInterval(() => {
+    const d = new Date();
+    const day = d.getFullYear() * 10_000 + (d.getMonth() + 1) * 100 + d.getDate();
+    void emit("data:changed", { generation: ++generation, agents: ["claude-code"], days: [day] });
+  }, 20_000);
 }
+
+/** Generación de datos simulada de `data:changed`. */
+let generation = 0;
 
 /**
  * Sonda de maquetación (solo dev, con `?probe=1`): busca elementos que desbordan en

@@ -4,6 +4,7 @@ import { relDelta } from "../lib/delta";
 import { agentColor, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import { Columns } from "../components/Charts";
+import { whenVisible } from "../lib/live";
 
 /** Una sesión cuenta como activa si tuvo llamadas en los últimos 15 minutos. */
 export const ACTIVE_MS = 15 * 60_000;
@@ -44,16 +45,20 @@ export function TodayLive({ filter, refresh, openSession }: { filter: Filter; re
   const [live, setLive] = useState<Live | null>(null);
   const [now, setNow] = useState(Date.now());
   // Recarga periódica: sin datos nuevos también caducan «Activa ahora», el ritmo de la
-  // última hora y el día al cruzar la medianoche.
+  // última hora y el día al cruzar la medianoche. Con la ventana oculta no se consulta nada.
   const [tick, setTick] = useState(0);
   // Solo agentes y proyectos: el periodo de la barra no afecta a esta tarjeta.
   const scope = { agents: filter.agents, projects: filter.projects };
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setNow(Date.now());
-      setTick((n) => n + 1);
-    }, 30_000);
+    const id = setInterval(
+      () =>
+        whenVisible(document, () => {
+          setNow(Date.now());
+          setTick((n) => n + 1);
+        }),
+      30_000,
+    );
     return () => clearInterval(id);
   }, []);
 

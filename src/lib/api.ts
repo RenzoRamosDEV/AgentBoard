@@ -96,6 +96,18 @@ export interface ProjectRow {
   calls: number;
 }
 
+/**
+ * Aviso `data:changed` del backend (como mucho uno por segundo): solo la generación de datos y lo
+ * que cambió, nunca filas. Listas vacías: puede haber cambiado todo (precios, limpieza,
+ * reconstrucción). `days` son días `YYYYMMDD` en la zona horaria de la caché (la del sistema), que
+ * puede no ser la de la interfaz; por ahora la interfaz refresca todo con cada aviso.
+ */
+export interface DataChanged {
+  generation: number;
+  agents: string[];
+  days: number[];
+}
+
 export interface DataInfo {
   firstTs: number | null;
   calls: number;

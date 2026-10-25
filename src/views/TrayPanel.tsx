@@ -6,6 +6,7 @@ import { fmt } from "../lib/format";
 import { getLang, LangContext, resolveLang, setLang, t, type Lang } from "../lib/i18n";
 import { InlineBar } from "../components/Charts";
 import { TodayLive, todayRanges } from "./TodayLive";
+import { subscribeTray } from "../lib/live";
 
 /** Enseña la ventana principal (y el backend esconde este panel). */
 const openMain = () => {
@@ -30,21 +31,9 @@ export function TrayPanel() {
       .catch(() => {});
   }, []);
 
-  // La ventana vive oculta: se refresca sola cada 30 s para abrirse al día.
-  useEffect(() => {
-    const id = setInterval(() => setRefresh((n) => n + 1), 30_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // En vivo, como los applets: cada relectura de logs (`ingest://done`) y cada
-  // apertura del panel (`panel://shown`) refrescan al instante.
-  useEffect(() => {
-    const bump = () => setRefresh((n) => n + 1);
-    const offs = [listen("ingest://done", bump), listen("panel://shown", bump)];
-    return () => {
-      for (const off of offs) off.then((f) => f());
-    };
-  }, []);
+  // En vivo, como los applets: cada aviso de datos cambiados y cada apertura del panel
+  // refrescan al instante. Oculto no hace nada: al abrirse se pone al día.
+  useEffect(() => subscribeTray(listen, () => setRefresh((n) => n + 1)), []);
 
   useEffect(() => {
     let alive = true;

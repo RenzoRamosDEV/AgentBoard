@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { subscribeApp } from "./lib/live";
 import { api, type AgentRow, type Filter, type ProjectRow, type Settings } from "./lib/api";
 import { periodRange, previousRange, type Period } from "./lib/period";
 import { applyTheme, storedTheme } from "./lib/theme";
@@ -126,20 +127,18 @@ export default function App() {
 
   useEffect(() => {
     api.settings().then(setSettings).catch((e) => setLoadError(String(e)));
-    let first = true;
-    const off = listen("ingest://done", () => {
-      setRefresh((n) => n + 1);
-      setLastScan(Date.now());
-      // El primer evento es el escaneo inicial; los siguientes son relecturas en vivo.
-      if (!first) {
+    // Fin del escaneo inicial (`ingest://done`) y cada aviso de datos cambiados (`data:changed`);
+    // el resalte en vivo, solo con los avisos posteriores al escaneo inicial.
+    return subscribeApp(listen, {
+      refresh: () => {
+        setRefresh((n) => n + 1);
+        setLastScan(Date.now());
+      },
+      live: () => {
         setLive(true);
         setTimeout(() => setLive(false), 2500);
-      }
-      first = false;
+      },
     });
-    return () => {
-      off.then((f) => f());
-    };
   }, []);
 
   const toggle = <T,>(set: Set<T>, v: T) => {

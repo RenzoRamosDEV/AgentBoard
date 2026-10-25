@@ -39,13 +39,13 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 6. `activity_daily` en 1 GB (D7)
 
-- [ ] 6.1 Tests en rojo en `insights.rs`: (a) por la ruta de agregados, el SQL de `activity_daily` agrupa (`GROUP BY`) y no devuelve una fila por llamada (`db::trace`); (b) ambas rutas dan lo mismo en las particiones del filtro de `queries` (todo, días completos, mitad de día, otra zona, agente + proyecto, `no_project`, turno que cruza el límite del periodo); (c) cada turno se clasifica una vez (contador); verificar que fallan
-- [ ] 6.2 Implementar el paso A de D7; verificar 6.1 y `equivalencia_consultas` en verde; medir (MB: `queries` en `1g`, tres ejecuciones) y aplicar la regla D1; anotar las cifras
-- [ ] 6.3 Solo si tras 6.2 `activity_daily` en `1g` sigue ≥ 300 ms: tests en rojo en `derived.rs` (la tabla `turn_days` es igual a reconstruirla desde cero tras cualquier secuencia, como el test de propiedad existente) y en `insights.rs` (la ruta de agregados lee `turn_days`); implementar el paso B con su migración; verificar golden y `cargo test --workspace` en verde, medir y aplicar la regla D1; si no hace falta, anotar en design.md que no se hizo y por qué
+- [x] 6.1 Tests en rojo en `insights.rs`: (a) por la ruta de agregados, el SQL de `activity_daily` agrupa (`GROUP BY`) y no devuelve una fila por llamada (`db::trace`); (b) ambas rutas dan lo mismo en las particiones del filtro de `queries` (todo, días completos, mitad de día, otra zona, agente + proyecto, `no_project`, turno que cruza el límite del periodo); (c) cada turno se clasifica una vez (contador); verificar que fallan
+- [x] 6.2 Implementar el paso A de D7; verificar 6.1 y `equivalencia_consultas` en verde; medir (MB: `queries` en `1g`, tres ejecuciones) y aplicar la regla D1; anotar las cifras
+- [x] 6.3 Solo si tras 6.2 `activity_daily` en `1g` sigue ≥ 300 ms: tests en rojo en `derived.rs` (la tabla `turn_days` es igual a reconstruirla desde cero tras cualquier secuencia, como el test de propiedad existente) y en `insights.rs` (la ruta de agregados lee `turn_days`); implementar el paso B con su migración; verificar golden y `cargo test --workspace` en verde, medir y aplicar la regla D1; si no hace falta, anotar en design.md que no se hizo y por qué
 
 ## 7. WAL acotado y contención (D8)
 
-- [ ] 7.1 Tests en rojo en `ingest_thread.rs`/`db.rs` (carpeta temporal): (a) tras un trabajo con el WAL por encima del límite y sin lectores, el `-wal` queda ≤ 8 MiB; (b) con un lector en una transacción abierta, el checkpoint no bloquea al escritor más de 100 ms y se reintenta tras el siguiente trabajo, que lo completa al cerrarse el lector; (c) en memoria no se intenta; verificar que fallan
+- [x] 7.1 Tests en rojo en `ingest_thread.rs`/`db.rs` (carpeta temporal): (a) tras un trabajo con el WAL por encima del límite y sin lectores, el `-wal` queda ≤ 8 MiB; (b) con un lector en una transacción abierta, el checkpoint no bloquea al escritor más de 100 ms y se reintenta tras el siguiente trabajo, que lo completa al cerrarse el lector; (c) en memoria no se intenta; verificar que fallan
 - [ ] 7.2 Implementar el checkpoint de D8; verificar 7.1 y `cargo test --workspace` en verde; medir (MB: `contention --repeat 200 --cache … --reader ui` y `loop`) y verificar `ui` ≤ ×1,1, WAL ≤ 8 MiB y Resumen después ≤ 1,2 × antes; aplicar la regla D1 y anotar las cifras
 
 ## 8. Paginación y tipos compactos (D9)

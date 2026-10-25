@@ -217,3 +217,22 @@ Notas de la herramienta:
   comparación y vista por ramas) con el comparador del golden.
 - Comprobado en `npm run dev` (mock) con Chrome sin cabeza (`?probe=1`): el Resumen se pinta con
   las cifras del periodo y del anterior y la sonda no marca desbordes.
+
+### Paso 6: `activity_daily` en 1 GB (D7) — **revertido**
+
+Paso A implementado (`9907cb2`: dos `GROUP BY` sobre `calls` por turno/día/actividad y por
+día/actividad, memo de clasificación y de medianoche local) con sus tests (igual que el detalle en
+las particiones del filtro, SQL agrupado, cada turno clasificado una vez). Medido con `bench-fast`,
+tres ejecuciones, frente a la partida:
+
+| Medida | Antes | Paso A |
+|---|---|---|
+| `activity_daily` 1g (mediana) | 241 ms (240–242; partida 255) | 263 ms (262–270) (+9 %) |
+| `activity_daily` 200m (mediana) | 37–39 ms | 45–47 ms (+18 %) |
+
+Empeora: ordenar todas las llamadas del periodo para agruparlas por turno cuesta más que
+recorrerlas, y lo caro sigue siendo `turn_stats`. Por la regla de D1 se **revierte** (`b412bab`),
+tests incluidos. El paso B (tabla `turn_days`) **no se hace**: `activity_daily` en `1g` ya está por
+debajo de 300 ms sin el paso A (241–255 ms en `bench-fast`; se confirma en `release` en la medición
+final). El tamaño en bytes de la respuesta cambiaba (20,1 → 19,4 KiB en `200m`) solo por la
+representación decimal de sumas hechas en otro orden (golden de consultas en verde).

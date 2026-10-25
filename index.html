@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentBoard — Coste y actividad de tus agentes de código, en local</title>
-<meta name="description" content="AgentBoard reúne en un panel qué hacen tus agentes de código (Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode) y cuánto cuestan, leyendo los logs locales. Código abierto, sin enviar nada fuera del equipo.">
+<title>AgentBoard — Documentación</title>
+<meta name="description" content="Documentación de AgentBoard: el panel de coste y actividad de tus agentes de código (Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode), en local. Instalación, apartados, ajustes, privacidad, servidor MCP y funcionamiento interno.">
 <meta property="og:title" content="AgentBoard">
 <meta property="og:description" content="El panel de coste y actividad de tus agentes de código, en local.">
 <meta property="og:image" content="assets/panel.png">
@@ -13,174 +13,608 @@
   :root{
     --bg:#0f1115; --surface:#171a20; --surface2:#1d2128; --line:#282d36;
     --text:#e7e9ee; --muted:#9aa2ad; --dim:#6b7280;
-    --accent:#f2a33a; --accent2:#f2a33a; --green:#4ade80; --blue:#5b8def;
-    --radius:14px; --maxw:1000px;
+    --accent:#f2a33a; --green:#4ade80; --red:#f87171; --blue:#5b8def;
+    --radius:14px; --nav:248px;
   }
   *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
+  html{scroll-behavior:smooth;scroll-padding-top:20px}
   body{margin:0;background:var(--bg);color:var(--text);
-    font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;
-    background-image:radial-gradient(60% 45% at 50% -5%, rgba(242,163,58,.14), transparent 70%);}
-  a{color:inherit}
-  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
-  .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65;
+    background-image:radial-gradient(60% 40% at 50% -5%, rgba(242,163,58,.12), transparent 70%);}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono,pre{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  code{background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:.88em;color:#f5d4a6;word-break:break-word}
+  pre{background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;
+    font-size:13.5px;color:#cfd4dd;line-height:1.55}
+  pre code{background:none;border:0;padding:0;color:inherit;font-size:inherit}
+  pre .c{color:var(--dim)}
 
-  header{padding:70px 0 40px;text-align:center}
-  .logo{width:112px;height:112px;border-radius:50%;object-fit:cover;border:2px solid var(--line);
-    box-shadow:0 10px 40px rgba(0,0,0,.45)}
-  h1{font-size:clamp(34px,6vw,54px);margin:20px 0 6px;letter-spacing:-.02em;font-weight:700}
-  .tag{font-size:clamp(16px,2.6vw,20px);color:var(--text);font-weight:600;margin:0 0 10px}
+  /* Layout */
+  .layout{display:grid;grid-template-columns:var(--nav) minmax(0,1fr);max-width:1240px;margin:0 auto}
+  nav.toc{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;padding:28px 18px 40px;
+    border-right:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:22px;color:var(--text);font-weight:700;font-size:18px}
+  .brand img{width:34px;height:34px;border-radius:50%;object-fit:cover;border:1px solid var(--line)}
+  .toc h4{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:20px 0 6px}
+  .toc a{display:block;color:var(--muted);font-size:14px;padding:4px 10px;border-radius:7px;border-left:2px solid transparent}
+  .toc a:hover{color:var(--text);background:var(--surface);text-decoration:none}
+  .toc a.active{color:var(--text);border-left-color:var(--accent);background:var(--surface)}
+  main{padding:0 44px 80px;min-width:0}
+
+  /* Mobile nav */
+  .topbar{display:none}
+  @media (max-width:900px){
+    .layout{grid-template-columns:1fr}
+    nav.toc{display:none;position:fixed;inset:0;z-index:20;height:auto;background:var(--bg);border:0}
+    nav.toc.open{display:block}
+    .topbar{display:flex;position:sticky;top:0;z-index:10;align-items:center;justify-content:space-between;
+      padding:10px 16px;background:rgba(15,17,21,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+    .topbar button{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit;font-size:14px}
+    main{padding:0 16px 60px}
+  }
+
+  /* Hero */
+  header.hero{padding:64px 0 40px;text-align:center}
+  .logo{width:104px;height:104px;border-radius:50%;object-fit:cover;border:2px solid var(--line);box-shadow:0 10px 40px rgba(0,0,0,.45)}
+  h1{font-size:clamp(34px,6vw,52px);margin:18px 0 6px;letter-spacing:-.02em;font-weight:700}
+  .tag{font-size:clamp(16px,2.6vw,20px);font-weight:600;margin:0 0 10px}
   .lead{max-width:640px;margin:0 auto 26px;color:var(--muted);font-size:16px}
   .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
   .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;
-    text-decoration:none;font-weight:600;font-size:15px;border:1px solid var(--line);transition:.15s}
+    font-weight:600;font-size:15px;border:1px solid var(--line);transition:.15s}
+  .btn:hover{text-decoration:none}
   .btn.primary{background:var(--accent);color:#1a1206;border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
   .btn.ghost{background:var(--surface);color:var(--text)}
   .btn.ghost:hover{background:var(--surface2);border-color:var(--dim)}
   .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:22px}
-  .badge{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);
-    padding:4px 10px;border-radius:999px}
+  .badge{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);padding:4px 10px;border-radius:999px}
 
-  section{padding:46px 0;border-top:1px solid var(--line)}
+  /* Content */
+  section{padding:44px 0 8px;border-top:1px solid var(--line)}
   h2{font-size:clamp(22px,4vw,30px);margin:0 0 8px;letter-spacing:-.01em}
-  .sub{color:var(--muted);margin:0 0 26px;max-width:680px}
-
-  .shot{width:100%;border-radius:var(--radius);border:1px solid var(--line);
-    box-shadow:0 16px 50px rgba(0,0,0,.4);display:block}
-  .shot+.shot{margin-top:18px}
-
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
-  .card h3{margin:0 0 6px;font-size:17px}
+  h3{font-size:18px;margin:28px 0 8px}
+  p{margin:0 0 14px}
+  .sub{color:var(--muted);margin:0 0 22px;max-width:760px}
+  ul,ol{padding-left:22px;margin:0 0 16px}
+  li{margin:4px 0}
+  li::marker{color:var(--accent)}
+  .shot{width:100%;border-radius:var(--radius);border:1px solid var(--line);box-shadow:0 16px 50px rgba(0,0,0,.4);display:block;margin:6px 0 18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .card h3{margin:0 0 6px;font-size:16px}
   .card p{margin:0;color:var(--muted);font-size:14.5px}
-  .card .ico{font-size:22px;display:block;margin-bottom:10px}
-
-  ul.checks{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 22px}
-  ul.checks li{color:var(--muted);padding-left:26px;position:relative}
-  ul.checks li b{color:var(--text)}
-  ul.checks li::before{content:"›";color:var(--accent);position:absolute;left:8px;font-weight:700}
-
-  pre{background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;
-    font-size:13.5px;color:#cfd4dd}
-  pre .c{color:var(--dim)}
-
-  .dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
-  .dl a{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;
-    text-decoration:none;transition:.15s;display:block}
-  .dl a:hover{background:var(--surface2);border-color:var(--accent);transform:translateY(-2px)}
+  .card .ico{font-size:20px;display:block;margin-bottom:8px}
+  .tbl{overflow-x:auto;margin:0 0 18px;border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;font-size:14.5px}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--surface);color:var(--muted);font-weight:600;font-size:13px;white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .good{color:var(--green);font-weight:600}
+  .note{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:10px;padding:13px 16px;color:var(--muted);font-size:14.5px;margin:0 0 18px}
+  .note b{color:var(--text)}
+  .note.warn{border-left-color:var(--red)}
+  .steps{counter-reset:s;list-style:none;padding:0}
+  .steps li{counter-increment:s;position:relative;padding-left:40px;margin:0 0 14px}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;
+    background:var(--surface2);border:1px solid var(--line);color:var(--accent);font-weight:700;font-size:13px;
+    display:flex;align-items:center;justify-content:center}
+  .dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
+  .dl a{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;color:var(--text);transition:.15s;display:block}
+  .dl a:hover{background:var(--surface2);border-color:var(--accent);transform:translateY(-2px);text-decoration:none}
   .dl .os{font-weight:700;font-size:17px;margin-bottom:2px}
   .dl .files{color:var(--muted);font-size:13.5px}
-
-  .note{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
-    border-radius:10px;padding:14px 16px;color:var(--muted);font-size:14px;margin-top:20px}
-
-  footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);text-align:center;font-size:14px}
+  details{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:0 0 10px}
+  details summary{cursor:pointer;font-weight:600}
+  details[open] summary{margin-bottom:8px}
+  details p:last-child{margin-bottom:0}
+  .flow{display:grid;gap:8px;margin:0 0 18px}
+  .flow div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:14.5px}
+  .flow div b{color:var(--accent);font-family:"IBM Plex Mono",monospace;font-size:13px;margin-right:6px}
+  .flow .arrow{background:none;border:0;padding:0;text-align:center;color:var(--dim)}
+  footer{padding:36px 0 50px;border-top:1px solid var(--line);color:var(--dim);font-size:14px;margin-top:40px}
   footer a{color:var(--muted)}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="wrap">
-    <img class="logo" src="assets/icon.jpg" alt="Logo de AgentBoard">
-    <h1>AgentBoard</h1>
-    <p class="tag">El panel de coste y actividad de tus agentes de código, en local.</p>
-    <p class="lead">Reúne en una sola vista qué hacen Claude Code, Codex, Copilot, Cursor, Gemini y OpenCode
-      —y cuánto cuestan— leyendo los logs que ya tienen en el ordenador. Nada sale de la máquina.</p>
-    <div class="cta">
-      <a class="btn primary" href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">⬇ Descargar</a>
-      <a class="btn ghost" href="https://github.com/RenzoRamosDEV/AgentBoard">Ver en GitHub</a>
-    </div>
-    <div class="badges">
-      <span class="badge">Tauri 2 · Rust</span>
-      <span class="badge">React + TypeScript</span>
-      <span class="badge">SQLite · caché local</span>
-      <span class="badge">Servidor MCP</span>
-      <span class="badge">Código abierto · MIT</span>
-    </div>
+<div class="topbar">
+  <span class="brand" style="margin:0"><img src="assets/icon.jpg" alt="">AgentBoard</span>
+  <button type="button" id="menu">Índice</button>
+</div>
+
+<div class="layout">
+<nav class="toc" id="toc" aria-label="Índice">
+  <a class="brand" href="#inicio" style="padding:0;border:0;background:none"><img src="assets/icon.jpg" alt="">AgentBoard</a>
+  <h4>Empezar</h4>
+  <a href="#que-es">Qué es</a>
+  <a href="#instalacion">Instalación</a>
+  <a href="#primeros-pasos">Primeros pasos</a>
+  <a href="#agentes">Agentes compatibles</a>
+  <h4>Usar la app</h4>
+  <a href="#panel">El panel y sus apartados</a>
+  <a href="#filtros">Filtros y comparar</a>
+  <a href="#proyectos">Proyectos y sesiones</a>
+  <a href="#metricas">Métricas y «Hoy en directo»</a>
+  <a href="#precios">Precios y presupuestos</a>
+  <a href="#escritorio">Funciones de escritorio</a>
+  <a href="#ajustes">Ajustes y datos</a>
+  <h4>Por dentro</h4>
+  <a href="#privacidad">Privacidad</a>
+  <a href="#vivo">Actualización en vivo</a>
+  <a href="#arquitectura">Arquitectura</a>
+  <a href="#rendimiento">Rendimiento</a>
+  <h4>Integración</h4>
+  <a href="#mcp">Servidor MCP</a>
+  <a href="#avisos">Avisos (insights)</a>
+  <h4>Más</h4>
+  <a href="#faq">Problemas frecuentes</a>
+  <a href="#desarrollo">Desarrollo</a>
+  <a href="#licencia">Licencia</a>
+</nav>
+
+<main>
+<header class="hero" id="inicio">
+  <img class="logo" src="assets/icon.jpg" alt="Logo de AgentBoard">
+  <h1>AgentBoard</h1>
+  <p class="tag">El panel de coste y actividad de tus agentes de código, en local.</p>
+  <p class="lead">Reúne en una sola vista qué hacen Claude Code, Codex, Copilot, Cursor, Gemini y OpenCode
+    —y cuánto cuestan— leyendo los logs que ya tienen en el ordenador. Nada sale de la máquina.</p>
+  <div class="cta">
+    <a class="btn primary" href="#instalacion">⬇ Instalar</a>
+    <a class="btn ghost" href="https://github.com/RenzoRamosDEV/AgentBoard">Ver en GitHub</a>
+  </div>
+  <div class="badges">
+    <span class="badge">Tauri 2 · Rust</span>
+    <span class="badge">React 19 + TypeScript</span>
+    <span class="badge">SQLite · caché local</span>
+    <span class="badge">Servidor MCP · 22 herramientas</span>
+    <span class="badge">es · en · pt · fr</span>
+    <span class="badge">Código abierto · MIT</span>
   </div>
 </header>
 
 <section id="que-es">
-  <div class="wrap">
-    <h2>Qué es</h2>
-    <p class="sub">Los agentes de código generan mucha actividad —llamadas al modelo, tokens, sesiones,
-      herramientas, comandos— y con ella un gasto repartido y opaco en cada herramienta. AgentBoard lee
-      esos registros, los cruza y los presenta en un panel, sin enviar nada fuera del equipo.</p>
-    <ul class="checks">
-      <li><b>Local y privado.</b> Sin proxy, sin claves de API, sin telemetría.</li>
-      <li><b>Solo lectura.</b> Lee los logs existentes; no interfiere con los agentes.</li>
-      <li><b>Caché local reconstruible.</b> Guarda solo cifras de uso (nunca el texto de prompts ni respuestas) para arrancar al instante; se puede borrar o usar el modo «Solo memoria».</li>
-      <li><b>Multiplataforma.</b> Linux, Windows y macOS desde un único binario.</li>
-    </ul>
+  <h2>Qué es</h2>
+  <p class="sub">Los agentes de código generan mucha actividad —llamadas al modelo, tokens, sesiones, herramientas,
+    comandos— y un gasto repartido y opaco en cada herramienta. No hay un sitio que responda de un vistazo
+    <i>cuánto llevo gastado este mes</i>, <i>qué modelo me sale más caro</i> o <i>en qué se me va el tiempo del agente</i>.
+    AgentBoard es una app de escritorio que lee esos registros, los cruza y los presenta en un panel.</p>
+  <div class="grid">
+    <div class="card"><span class="ico">🔒</span><h3>Local y privado</h3><p>Sin proxy, sin claves de API, sin telemetría. Ningún dato sale del equipo.</p></div>
+    <div class="card"><span class="ico">👁️</span><h3>Solo lectura</h3><p>Lee los logs que ya existen; no toca ni interfiere con el trabajo de los agentes.</p></div>
+    <div class="card"><span class="ico">💾</span><h3>Caché reconstruible</h3><p>Guarda solo cifras de uso para arrancar al instante. Se puede borrar o desactivar con «Solo memoria».</p></div>
+    <div class="card"><span class="ico">⚡</span><h3>En vivo y rápido</h3><p>Lo que escribe un agente aparece en menos de medio segundo. 0 % de CPU en reposo.</p></div>
+    <div class="card"><span class="ico">🖥️</span><h3>Multiplataforma</h3><p>Linux, Windows y macOS con un único binario nativo y ligero.</p></div>
+    <div class="card"><span class="ico">🤖</span><h3>Para otros agentes</h3><p>Un servidor MCP permite que un agente consulte estos datos en mitad de una conversación.</p></div>
   </div>
+  <h3>Para qué sirve</h3>
+  <ul>
+    <li><b>Controlar el gasto:</b> coste del día y del mes, proyección a fin de mes y aviso al acercarse al presupuesto.</li>
+    <li><b>Entender el uso:</b> qué agente y qué modelo se usan más, y con qué eficiencia de caché.</li>
+    <li><b>Ver en qué se trabaja:</b> reparto por actividad (coding, testing, debugging…), por proyecto y por rama de git.</li>
+    <li><b>Detectar fricción:</b> qué herramientas, comandos y servidores MCP fallan más.</li>
+    <li><b>Consultarlo desde otro agente</b> con el servidor MCP incluido.</li>
+  </ul>
+</section>
+
+<section id="instalacion">
+  <h2>Instalación</h2>
+  <p class="sub">Descarga el instalador de tu sistema desde la última versión publicada. Todos incluyen la app y el servidor MCP.</p>
+  <div class="dl">
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest"><div class="os">🐧 Linux</div><div class="files">.AppImage · .deb · .rpm</div></a>
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest"><div class="os">🪟 Windows</div><div class="files">.msi · -setup.exe</div></a>
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest"><div class="os">🍎 macOS</div><div class="files">.dmg (universal: Intel y Apple Silicon)</div></a>
+  </div>
+  <div class="tbl"><table>
+    <tr><th>Archivo</th><th>Qué es</th></tr>
+    <tr><td><code>AgentBoard-App_&lt;versión&gt;_linux_…</code></td><td>La app para Linux (<code>.AppImage</code>, <code>.deb</code>, <code>.rpm</code>), con el MCP dentro.</td></tr>
+    <tr><td><code>AgentBoard-App_&lt;versión&gt;_windows_…</code></td><td>La app para Windows (<code>.msi</code> o instalador <code>-setup.exe</code>).</td></tr>
+    <tr><td><code>AgentBoard-App_&lt;versión&gt;_darwin_…</code></td><td>La app para macOS (<code>.dmg</code> universal).</td></tr>
+    <tr><td><code>AgentBoard-MCP_&lt;versión&gt;_&lt;sistema&gt;</code></td><td>Solo el servidor MCP, para registrarlo en un agente sin instalar la app.</td></tr>
+  </table></div>
+  <h3>Linux</h3>
+  <ul>
+    <li><b>.deb / .rpm:</b> se instalan con el gestor de paquetes (<code>sudo apt install ./archivo.deb</code>, <code>sudo dnf install ./archivo.rpm</code>). La app queda en el menú y el MCP en <code>/usr/bin/agentboard-mcp</code>.</li>
+    <li><b>AppImage:</b> no necesita instalación. Dale permiso de ejecución y ábrelo:
+<pre><code>chmod +x AgentBoard-App_*_linux_*.AppImage
+./AgentBoard-App_*_linux_*.AppImage</code></pre>
+      Ideal en distribuciones inmutables (Bazzite, Silverblue…). Si tu sistema no tiene FUSE, ejecútalo con <code>APPIMAGE_EXTRACT_AND_RUN=1</code> o extráelo con <code>--appimage-extract</code> y lanza <code>squashfs-root/AppRun</code>.</li>
+    <li>Requiere WebKitGTK 4.1, presente en cualquier escritorio moderno.</li>
+  </ul>
+  <h3>Windows y macOS</h3>
+  <div class="note">Los binarios de Windows y macOS van <b>sin firmar</b>: la primera vez el sistema pedirá confirmación.
+    En Windows, SmartScreen → «Más información» → «Ejecutar de todas formas». En macOS, clic derecho sobre la app → «Abrir».</div>
+  <h3>Actualizar o desinstalar</h3>
+  <p>Para actualizar, instala la versión nueva encima (o sustituye el AppImage). Para desinstalar, quita la app con el gestor
+    de tu sistema; si quieres no dejar rastro, borra también la carpeta de ajustes y la de la caché (ver <a href="#ajustes">Ajustes y datos</a>).</p>
+</section>
+
+<section id="primeros-pasos">
+  <h2>Primeros pasos</h2>
+  <ol class="steps">
+    <li><b>Abre AgentBoard.</b> Detecta solo los agentes instalados y lee sus logs. La primera vez lee todo el historial y crea la caché; las siguientes solo lee lo nuevo, así que arranca al instante.</li>
+    <li><b>Elige el periodo</b> en la barra superior (hoy, 7, 30, 60 o 90 días, o todo) y, si quieres, filtra agentes o proyectos.</li>
+    <li><b>Mira el Resumen:</b> coste, sesiones, cache hit, ahorro por caché, burn rate y gasto del mes, con la variación frente al periodo anterior.</li>
+    <li><b>Entra en un apartado</b> desde el panel lateral (o con <code>Ctrl+K</code>) para ver su tabla, su gráfico y la vista ampliada.</li>
+    <li><b>Configura precios y presupuestos</b> para recibir avisos al 80 % y al 100 %.</li>
+    <li><b>Déjala en la bandeja:</b> al cerrar la ventana sigue funcionando y mantiene los datos al día. Para cerrarla del todo, «Salir» en el menú de la bandeja.</li>
+  </ol>
+</section>
+
+<section id="agentes">
+  <h2>Agentes compatibles</h2>
+  <p class="sub">Un agente aparece si está instalado (ejecutable en el PATH o su carpeta de configuración), aunque aún no tenga sesiones. Sus datos salen en cuanto existan.</p>
+  <div class="tbl"><table>
+    <tr><th>Agente</th><th>Dónde lee</th><th>Variable para cambiar la ruta</th></tr>
+    <tr><td>Claude Code</td><td><code>~/.claude/projects/**/*.jsonl</code></td><td><code>$CLAUDE_CONFIG_DIR</code></td></tr>
+    <tr><td>Codex CLI</td><td><code>~/.codex/sessions/**/rollout-*.jsonl</code></td><td><code>$CODEX_HOME</code></td></tr>
+    <tr><td>GitHub Copilot CLI</td><td><code>~/.copilot/session-state/*/events.jsonl</code></td><td><code>$COPILOT_HOME</code></td></tr>
+    <tr><td>Cursor CLI</td><td><code>~/.cursor/projects/*/agent-transcripts/*/*.jsonl</code></td><td>—</td></tr>
+    <tr><td>Gemini CLI</td><td><code>~/.gemini/tmp/*/chats/session-*.jsonl</code></td><td><code>$GEMINI_CLI_HOME</code></td></tr>
+    <tr><td>OpenCode</td><td>su base SQLite (<code>opencode.db</code>), lectura incremental</td><td>—</td></tr>
+  </table></div>
+  <p>Los nombres de herramientas y modelos de cada agente se normalizan para poder compararlos entre sí. Los subagentes
+    (por ejemplo, las tareas que Claude Code delega) se atribuyen a su sesión y también se ven por separado en <b>Agent Types</b>.</p>
 </section>
 
 <section id="panel">
-  <div class="wrap">
-    <h2>El panel</h2>
-    <p class="sub">Un panel lateral para organizarlo todo y cada apartado con su tabla y su gráfico.</p>
-    <img class="shot" src="assets/panel.png" alt="Resumen de AgentBoard: tarjetas de coste, sesiones, cache hit, ahorro por caché, burn rate y gasto del mes, con los paneles Daily Activity y By Agent debajo">
-    <img class="shot" src="assets/tools.png" alt="Tabla de herramientas con llamadas, errores y porcentaje de error por herramienta">
+  <h2>El panel y sus apartados</h2>
+  <p class="sub">Un panel lateral agrupa los apartados en <b>Coste</b>, <b>Trabajo</b>, <b>Herramientas</b> y <b>Configuración</b>.
+    Cada apartado tiene su tabla y su gráfico, y una vista ampliada al pulsarlo. El panel se puede plegar a solo iconos.</p>
+  <img class="shot" src="assets/panel.png" alt="Resumen de AgentBoard con tarjetas de coste, sesiones, cache hit, ahorro, burn rate y gasto del mes, y los paneles Daily Activity y By Agent">
+  <div class="tbl"><table>
+    <tr><th>Apartado</th><th>Qué responde</th></tr>
+    <tr><td>📊 <b>Resumen</b></td><td>KPIs con su variación, gasto diario por agente con la línea del periodo anterior, «Hoy en directo» y top de proyectos, modelos y actividades.</td></tr>
+    <tr><td>📅 <b>Daily Activity</b></td><td>Cuánto se gasta cada día.</td></tr>
+    <tr><td>🤖 <b>By Agent</b></td><td>Qué agente se usa más y cuánto cuesta cada uno.</td></tr>
+    <tr><td>📁 <b>By Project</b></td><td>Coste por proyecto (y por rama al elegir uno), con el <i>overhead</i> de contexto.</td></tr>
+    <tr><td>🧾 <b>Proyectos</b></td><td>Una fila por proyecto (agrupando worktrees) con su detalle y sus sesiones. Ver <a href="#proyectos">Proyectos y sesiones</a>.</td></tr>
+    <tr><td>🧭 <b>By Activity</b></td><td>Reparto por tipo de actividad: coding, exploration, testing, delegation, conversation, build/deploy, feature-dev, debugging, brainstorming, general.</td></tr>
+    <tr><td>🧠 <b>By Model</b></td><td>Coste, cache hit y llamadas por modelo.</td></tr>
+    <tr><td>🔧 <b>Tools</b></td><td>Uso y porcentaje de error por herramienta nativa.</td></tr>
+    <tr><td>⌨️ <b>Shell Commands</b></td><td>Comandos de shell más ejecutados y sus errores.</td></tr>
+    <tr><td>✨ <b>Skills &amp; Agents</b></td><td>Skills y subagentes invocados.</td></tr>
+    <tr><td>🔌 <b>MCP Servers</b></td><td>Servidores MCP usados y su actividad.</td></tr>
+    <tr><td>🧬 <b>Agent Types</b></td><td>Subagentes de todos los agentes, por agente y tipo, con su coste.</td></tr>
+    <tr><td>🏷️ <b>Precios y presupuestos</b></td><td>Precios por modelo editables y presupuestos. Ver <a href="#precios">Precios y presupuestos</a>.</td></tr>
+  </table></div>
+  <img class="shot" src="assets/tools.png" alt="Tabla de herramientas con llamadas, errores, porcentaje de error y barra de uso">
+  <p>Las tablas largas se pueden ordenar por cualquier columna; las de más de 200 filas solo dibujan lo visible para mantener la fluidez.</p>
+</section>
+
+<section id="filtros">
+  <h2>Filtros y comparar periodos</h2>
+  <p class="sub">La barra superior aplica un filtro común a todos los apartados.</p>
+  <ul>
+    <li><b>Periodo:</b> hoy, 7, 30, 60 o 90 días, o todo el historial.</li>
+    <li><b>Agentes:</b> mostrar u ocultar cada agente.</li>
+    <li><b>Proyectos:</b> uno o varios; también «sin proyecto» para sesiones fuera de un repositorio.</li>
+    <li><b>Comparar con el periodo anterior:</b> cada KPI muestra su variación y los gráficos dibujan la línea del periodo anterior.</li>
+  </ul>
+  <p>Los cambios de filtro y de apartado responden en un fotograma (≈ 33 ms) cuando los datos ya se habían cargado: la app guarda en memoria lo último consultado y solo vuelve a pedir datos cuando cambian.</p>
+</section>
+
+<section id="proyectos">
+  <h2>Proyectos y sesiones</h2>
+  <p>El apartado <b>Proyectos</b> tiene una fila por proyecto (los worktrees de un mismo repo se agrupan) con agentes, ramas,
+    modelo principal, sesiones, tiempo activo, turnos, compactaciones y coste, con búsqueda y vistas rápidas.</p>
+  <ul>
+    <li><b>Detalle de proyecto:</b> coste acumulado por día, actividades, modelos, ramas, latencia de cada herramienta (p50/p95) y la lista de sesiones, paginada y ordenable.</li>
+    <li><b>Detalle de sesión:</b> coste acumulado con las compactaciones marcadas, turnos con su actividad y coste (cargados por páginas), modelos usados y latencia por herramienta.</li>
+  </ul>
+</section>
+
+<section id="metricas">
+  <h2>Métricas y «Hoy en directo»</h2>
+  <div class="tbl"><table>
+    <tr><th>Métrica</th><th>Qué significa</th></tr>
+    <tr><td><b>Coste</b></td><td>Tokens de cada llamada por el precio de su modelo (USD por millón de tokens). Si el agente informa su propio coste, se usa ese.</td></tr>
+    <tr><td><b>Cache hit</b></td><td>Proporción de tokens servidos desde caché sobre el total de entrada.</td></tr>
+    <tr><td><b>Ahorro por caché</b></td><td>Estimación de lo que habría costado ese contexto a precio completo.</td></tr>
+    <tr><td><b>Burn rate</b></td><td>Coste de los últimos 60 minutos, en USD/hora.</td></tr>
+    <tr><td><b>Proyección del mes</b></td><td>Gasto acumulado extrapolado a fin de mes, con aviso si supera el presupuesto.</td></tr>
+    <tr><td><b>Overhead de contexto</b></td><td>Tokens de la primera llamada de cada sesión: lo que cuesta arrancar con el contexto del proyecto.</td></tr>
+    <tr><td><b>1-shot</b></td><td>Proporción de turnos con ediciones que salieron bien a la primera, sin reintentos.</td></tr>
+  </table></div>
+  <h3>Hoy en directo</h3>
+  <p>La portada muestra siempre lo de hoy, sea cual sea el periodo (respetando los filtros de agentes y proyectos): el gasto desde
+    las 00:00 y su variación frente a ayer a la misma hora, el ritmo de la última hora, el gasto por hora y la sesión activa (o la última de hoy) con enlace a su detalle.</p>
+</section>
+
+<section id="precios">
+  <h2>Precios y presupuestos</h2>
+  <ul>
+    <li><b>Precios por modelo</b> (entrada, salida, lectura y escritura de caché), editables. Cada precio indica su origen: por defecto, editado, coste del agente o «falta precio».</li>
+    <li>Los modelos sin precio cuentan como 0 y aparecen avisados, para que no pasen desapercibidos.</li>
+    <li>Los precios editados se guardan en los ajustes y recalculan todos los costes al momento, en la app y en el servidor MCP.</li>
+    <li><b>Presupuestos:</b> mensual, diario y por proyecto o por agente, cada uno con su barra de progreso.</li>
+    <li><b>Avisos nativos</b> al 80 % y al 100 % de cada presupuesto: los mensuales y por proyecto/agente sobre la proyección del mes, el diario sobre el gasto de hoy.</li>
+  </ul>
+</section>
+
+<section id="escritorio">
+  <h2>Funciones de escritorio</h2>
+  <div class="grid">
+    <div class="card"><span class="ico">🛎️</span><h3>Bandeja del sistema</h3><p>Gasto del mes en el tooltip, panel de «Hoy» y menú Mostrar / Salir. Al cerrar la ventana la app sigue en segundo plano.</p></div>
+    <div class="card"><span class="ico">🔍</span><h3>Buscador Ctrl+K</h3><p>Salta a cualquier apartado, deja solo un proyecto o abre una sesión reciente.</p></div>
+    <div class="card"><span class="ico">📤</span><h3>Exportar</h3><p>Las llamadas del filtro activo a CSV o JSON, desde la barra superior o Ajustes.</p></div>
+    <div class="card"><span class="ico">🎨</span><h3>Temas</h3><p>Claro, oscuro o del sistema.</p></div>
+    <div class="card"><span class="ico">🌍</span><h3>Idiomas</h3><p>Español, inglés, portugués y francés, o el idioma del sistema.</p></div>
+    <div class="card"><span class="ico">📐</span><h3>Adaptable</h3><p>La interfaz funciona desde 600 px de ancho y el panel lateral se pliega.</p></div>
   </div>
 </section>
 
-<section id="funciones">
-  <div class="wrap">
-    <h2>Qué ofrece</h2>
-    <p class="sub">Coste y uso de un vistazo, más las funciones que se esperan de una app de escritorio.</p>
-    <div class="grid">
-      <div class="card"><span class="ico">📊</span><h3>Coste y proyección</h3><p>Gasto del día y del mes, proyección a fin de mes y aviso al acercarse al presupuesto.</p></div>
-      <div class="card"><span class="ico">🤖</span><h3>Por agente y modelo</h3><p>Qué agente y qué modelo se usan más, y con qué eficiencia de caché.</p></div>
-      <div class="card"><span class="ico">🧭</span><h3>Por actividad</h3><p>Reparto entre coding, testing, debugging, exploración… y por proyecto y rama.</p></div>
-      <div class="card"><span class="ico">🔧</span><h3>Herramientas y comandos</h3><p>Uso y porcentaje de error por herramienta y por comando de shell.</p></div>
-      <div class="card"><span class="ico">⚡</span><h3>En vivo y rápido</h3><p>Lo que escribe un agente aparece en menos de medio segundo. Arranque al instante, cambios de filtro fluidos y 0 % de CPU en reposo.</p></div>
-      <div class="card"><span class="ico">🎛️</span><h3>Bandeja e idiomas</h3><p>Gasto del mes en la bandeja, avisos de presupuesto, exportar a CSV/JSON, temas e idiomas.</p></div>
-    </div>
+<section id="ajustes">
+  <h2>Ajustes y datos</h2>
+  <p class="sub">Los ajustes (tema, idioma, precios, presupuestos, avisos) se guardan en <code>settings.json</code> dentro de la carpeta de configuración de AgentBoard
+    (<code>~/.config/agentboard/</code> en Linux).</p>
+  <h3>Ajustes → Datos</h3>
+  <ul>
+    <li><b>Solo memoria</b> (desactivado por defecto): deja de guardar la caché en disco y la borra. Cada vez que abras la app se vuelven a leer todos los logs.</li>
+    <li><b>Reconstruir caché:</b> borra los datos guardados y relee todos los logs. El botón queda deshabilitado hasta que termina y el panel se actualiza solo.</li>
+  </ul>
+  <p>Ambas opciones se aplican sin reiniciar la app.</p>
+  <h3>Dónde está la caché</h3>
+  <div class="tbl"><table>
+    <tr><th>Sistema</th><th>Ruta</th></tr>
+    <tr><td>Linux</td><td><code>~/.local/share/agentboard/cache.sqlite</code> (o <code>$XDG_DATA_HOME/agentboard/</code>)</td></tr>
+    <tr><td>macOS</td><td><code>~/Library/Application Support/agentboard/cache.sqlite</code></td></tr>
+    <tr><td>Windows</td><td><code>%APPDATA%\agentboard\cache.sqlite</code></td></tr>
+  </table></div>
+  <p>Junto a ella pueden aparecer <code>cache.sqlite-wal</code> y <code>cache.sqlite-shm</code>. Ocupa aproximadamente una quinta parte del tamaño de los logs
+    (unos 40 MB por cada 200 MB de logs). Si se daña o es de otra versión, la app la borra y la reconstruye sola. Con la app cerrada, también puedes borrar esos tres archivos a mano.</p>
+</section>
+
+<section id="privacidad">
+  <h2>Privacidad</h2>
+  <div class="tbl"><table>
+    <tr><th>Se guarda (en la caché)</th><th>No se guarda nunca</th></tr>
+    <tr><td>
+      <ul style="margin:0">
+        <li>Sesiones, llamadas, turnos y usos de herramienta</li>
+        <li>Modelo, tokens, coste y hora de cada llamada</li>
+        <li>Proyecto (ruta de la carpeta) y rama de git</li>
+        <li>Nombres de herramientas, comandos de shell y servidores MCP</li>
+        <li>Qué parte de cada log ya se leyó</li>
+      </ul></td>
+    <td>
+      <ul style="margin:0">
+        <li>El texto de tus prompts</li>
+        <li>El texto de las respuestas de los modelos</li>
+        <li>El contenido de los archivos que leen o editan los agentes</li>
+        <li>Claves de API o credenciales</li>
+      </ul></td></tr>
+  </table></div>
+  <ul>
+    <li>Sin telemetría ni conexiones externas: nada sale del ordenador.</li>
+    <li>En Linux y macOS la carpeta de la caché es <code>0700</code> y sus archivos <code>0600</code>: solo tu usuario puede leerlos.</li>
+    <li>Con <b>Solo memoria</b> no se escribe nada en disco salvo los ajustes.</li>
+    <li>AgentBoard solo lee las carpetas de logs de los agentes; no explora el resto del disco.</li>
+  </ul>
+</section>
+
+<section id="vivo">
+  <h2>Actualización en vivo</h2>
+  <p class="sub">No hay sondeo periódico: AgentBoard se entera de los cambios porque el sistema operativo le avisa cuando un log cambia.</p>
+  <ol class="steps">
+    <li><b>Vigilante.</b> Un único vigilante por carpeta de agente (inotify, FSEvents o ReadDirectoryChangesW según el sistema) avisa de cada archivo modificado.</li>
+    <li><b>Agrupa ráfagas.</b> Espera 150 ms sin cambios en ese archivo para juntar escrituras seguidas; si un log no deja de crecer, lo relee igualmente una vez por segundo.</li>
+    <li><b>Lee solo lo nuevo.</b> Cada archivo se sigue desde el byte donde se quedó. Una línea a medio escribir se deja para la siguiente pasada. Si un log se trunca o se sustituye, se relee desde cero sin duplicar.</li>
+    <li><b>Avisa a la interfaz</b> como mucho una vez por segundo, y solo se refrescan las vistas que están en pantalla.</li>
+  </ol>
+  <div class="note">Resultado: lo que escribe un agente aparece en el panel en <b>menos de medio segundo</b>, y sin actividad la app no consume CPU.
+    Al arrancar no se relee todo: la caché recuerda hasta dónde se leyó cada archivo.</div>
+</section>
+
+<section id="arquitectura">
+  <h2>Arquitectura</h2>
+  <p class="sub"><b>Tauri 2</b>: un núcleo en <b>Rust</b> hace la lectura y la agregación, y una interfaz en <b>React + TypeScript</b> la presenta. Un único binario nativo por sistema.</p>
+  <div class="flow">
+    <div><b>logs</b> Archivos JSONL de cada agente y base SQLite de OpenCode (solo lectura)</div>
+    <div class="arrow">↓</div>
+    <div><b>vigilante</b> Eventos del sistema → espera por archivo → lista de rutas a releer</div>
+    <div class="arrow">↓</div>
+    <div><b>ingesta</b> Hilo dedicado: lee y parsea en paralelo (un hilo por núcleo), escribe en orden por lotes</div>
+    <div class="arrow">↓</div>
+    <div><b>SQLite</b> Un solo escritor · agregados diarios incrementales · lectores separados que nunca esperan al escritor</div>
+    <div class="arrow">↓</div>
+    <div><b>avisos</b> Evento <code>data:changed</code> (≤ 1 por segundo, sin datos dentro)</div>
+    <div class="arrow">↓</div>
+    <div><b>interfaz</b> Caché de consultas por vista · el Resumen llega en una sola petición · tablas virtualizadas</div>
   </div>
+  <h3>Piezas</h3>
+  <div class="tbl"><table>
+    <tr><th>Pieza</th><th>Qué hace</th></tr>
+    <tr><td>Providers</td><td>Un módulo por agente: detecta si está instalado, sabe dónde están sus logs y convierte cada registro a tipos comunes (sesiones, llamadas, turnos, usos de herramienta). Mira el tipo de cada línea antes de parsearla entera y nunca copia el texto de los mensajes.</td></tr>
+    <tr><td>Ingesta</td><td>Lectura incremental por offsets. Cada llamada se identifica por su <code>message_id</code>, así que releer nunca duplica. Un archivo corrupto solo afecta a ese archivo.</td></tr>
+    <tr><td>Base de datos</td><td>SQLite con el coste y el día local precalculados al guardar y agregados diarios por sesión y modelo; los periodos de días completos se responden desde ahí.</td></tr>
+    <tr><td>Caché de resultados</td><td>Las consultas repetidas con los mismos datos se sirven al instante; se invalida en cuanto entran datos nuevos.</td></tr>
+    <tr><td>Caché fiel a los logs</td><td>Si un log desaparece, se sustituye o encoge, sus datos se retiran: la caché dice lo mismo que leer los logs presentes desde cero.</td></tr>
+    <tr><td>Precios</td><td>Precio por modelo para calcular coste y ahorro por caché.</td></tr>
+    <tr><td>Servidor MCP</td><td>Binario aparte que reutiliza providers, ingesta y consultas.</td></tr>
+  </table></div>
+  <div class="tbl"><table>
+    <tr><th>Capa</th><th>Tecnología</th></tr>
+    <tr><td>Escritorio</td><td>Tauri 2 (usa el WebView del sistema)</td></tr>
+    <tr><td>Núcleo</td><td>Rust · rusqlite · notify · tracing</td></tr>
+    <tr><td>Interfaz</td><td>React 19 · TypeScript · Vite · gráficos dibujados a medida</td></tr>
+    <tr><td>Integración</td><td>Model Context Protocol (stdio, JSON-RPC 2.0)</td></tr>
+    <tr><td>Especificación</td><td>OpenSpec: cada cambio se describe antes de implementarse</td></tr>
+  </table></div>
+</section>
+
+<section id="rendimiento">
+  <h2>Rendimiento</h2>
+  <p class="sub">Medido con 200 MB de logs sintéticos (unas 430 000 llamadas) en un portátil de 12 núcleos. Detalle y comandos para reproducirlo en
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/blob/main/docs/perf/RESULTS.md"><code>docs/perf/RESULTS.md</code></a>.</p>
+  <div class="tbl"><table>
+    <tr><th>Métrica</th><th>Antes</th><th>Ahora</th></tr>
+    <tr><td>Arranque con datos ya indexados</td><td class="num">1,8 s</td><td class="num good">~130 ms</td></tr>
+    <tr><td>Primer escaneo (sin caché)</td><td class="num">15,5 s</td><td class="num good">2,2 s</td></tr>
+    <tr><td>Escritura en un log → dato en pantalla</td><td class="num">~790 ms</td><td class="num good">~460 ms</td></tr>
+    <tr><td>Resumen completo</td><td class="num">1 012 ms</td><td class="num good">~103 ms (0 ms repetido)</td></tr>
+    <tr><td>Cambio de filtro o apartado ya cargado</td><td class="num">67–167 ms</td><td class="num good">33 ms</td></tr>
+    <tr><td>Consulta más lenta con 1 GB de logs</td><td class="num">~1 s</td><td class="num good">≤ 243 ms</td></tr>
+    <tr><td>CPU en reposo</td><td class="num">sondeo cada 20 s</td><td class="num good">0–10 ms por minuto</td></tr>
+  </table></div>
+  <p>Cada Pull Request ejecuta benchmarks en CI y falla si alguno empeora más de un 20 % respecto a la línea base.</p>
 </section>
 
 <section id="mcp">
-  <div class="wrap">
-    <h2>Servidor MCP</h2>
-    <p class="sub">Además de la interfaz, un servidor <b>MCP</b> expone los mismos datos a cualquier agente
-      compatible (Claude Code, Codex, Gemini, Cursor, OpenCode). Así un agente puede preguntar «¿cuánto llevo
-      gastado este mes?» durante una conversación, sin abrir la app.</p>
-<pre><span class="c"># compilar y registrar en Claude Code</span>
-cargo build --release --bin agentboard-mcp
-claude mcp add agentboard -- ./target/release/agentboard-mcp</pre>
-    <p class="sub" style="margin-top:16px">15 herramientas (<span class="mono">get_summary</span>,
-      <span class="mono">get_cost_by_model</span>, <span class="mono">get_daily</span>,
-      <span class="mono">list_agents</span>…), todas con filtro de periodo, agentes y proyectos.</p>
-  </div>
+  <h2>Servidor MCP</h2>
+  <p class="sub"><code>agentboard-mcp</code> expone los mismos datos a cualquier agente compatible con el Model Context Protocol (Claude Code, Codex, Gemini, Cursor, OpenCode…).
+    Un agente puede preguntar «¿cuánto llevo gastado este mes?» o «¿qué modelo me sale más caro?» durante una conversación.</p>
+  <ul>
+    <li><b>No necesita la app abierta:</b> al arrancar escanea los logs a memoria y responde por stdio (JSON-RPC 2.0: <code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>).</li>
+    <li>No usa la caché de la app ni escribe nada en disco.</li>
+    <li>Los argumentos inválidos devuelven un error legible sin cerrar la conexión.</li>
+  </ul>
+  <h3>Dónde está</h3>
+  <div class="tbl"><table>
+    <tr><th>Instalación</th><th>Ruta del servidor</th></tr>
+    <tr><td>Linux (.deb / .rpm)</td><td><code>/usr/bin/agentboard-mcp</code></td></tr>
+    <tr><td>Linux (AppImage extraído)</td><td><code>&lt;carpeta&gt;/usr/bin/agentboard-mcp</code>, o el binario suelto <code>AgentBoard-MCP_…</code></td></tr>
+    <tr><td>Windows</td><td><code>C:\Program Files\AgentBoard\agentboard-mcp.exe</code></td></tr>
+    <tr><td>macOS</td><td><code>/Applications/AgentBoard.app/Contents/MacOS/agentboard-mcp</code></td></tr>
+  </table></div>
+  <h3>Registrarlo en tu agente</h3>
+<pre><code><span class="c"># Claude Code</span>
+claude mcp add agentboard -- /usr/bin/agentboard-mcp
+
+<span class="c"># Codex CLI  (~/.codex/config.toml)</span>
+[mcp_servers.agentboard]
+command = "/usr/bin/agentboard-mcp"
+
+<span class="c"># Gemini CLI  (~/.gemini/settings.json)</span>
+{ "mcpServers": { "agentboard": { "command": "/usr/bin/agentboard-mcp" } } }
+
+<span class="c"># OpenCode  (opencode.json)</span>
+{ "mcp": { "agentboard": { "type": "local", "command": ["/usr/bin/agentboard-mcp"] } } }</code></pre>
+  <h3>Herramientas</h3>
+  <p>Casi todas aceptan un filtro opcional: <code>period</code> (<code>today</code>, <code>7d</code>, <code>30d</code>, <code>60d</code>, <code>90d</code>, <code>all</code>),
+    <code>agents</code> (ids), <code>projects</code> (ids) y <code>no_project</code> (solo sesiones sin proyecto).</p>
+  <div class="tbl"><table>
+    <tr><th>Herramienta</th><th>Devuelve</th></tr>
+    <tr><td><code>get_summary</code></td><td>Coste, llamadas, sesiones, cache hit, ahorro por caché, burn rate y modelos sin precio.</td></tr>
+    <tr><td><code>get_cost_by_agent</code> · <code>_model</code> · <code>_project</code> · <code>_branch</code></td><td>Desglose de coste y uso por dimensión.</td></tr>
+    <tr><td><code>get_daily</code> · <code>get_hourly</code></td><td>Series por día o por hora (coste, llamadas, sesiones, tokens).</td></tr>
+    <tr><td><code>get_activity</code></td><td>Reparto por tipo de actividad.</td></tr>
+    <tr><td><code>get_tools</code> · <code>get_shell_commands</code></td><td>Uso y errores por herramienta o comando.</td></tr>
+    <tr><td><code>get_skills</code> · <code>get_mcp_servers</code> · <code>get_agent_types</code></td><td>Skills y subagentes, servidores MCP y tipos de subagente.</td></tr>
+    <tr><td><code>get_projects</code> · <code>get_project_detail</code></td><td>Proyectos del periodo y el detalle de uno (serie diaria, actividades, modelos, ramas, sesiones, latencia p50/p95).</td></tr>
+    <tr><td><code>get_sessions</code> · <code>get_session_detail</code></td><td>Sesiones del periodo (<code>limit</code> 1–500) y el detalle de una (coste acumulado, compactaciones, turnos, latencia).</td></tr>
+    <tr><td><code>get_insights</code></td><td>Avisos del periodo, del más grave al menos. Ver <a href="#avisos">Avisos</a>.</td></tr>
+    <tr><td><code>get_prices</code></td><td>Precio vigente por modelo y su origen.</td></tr>
+    <tr><td><code>list_agents</code> · <code>list_projects</code></td><td>Agentes y proyectos detectados, con su coste.</td></tr>
+    <tr><td><code>get_data_info</code></td><td>Rango de fechas y totales del historial.</td></tr>
+  </table></div>
 </section>
 
-<section id="descargar">
-  <div class="wrap">
-    <h2>Descargar</h2>
-    <p class="sub">Elige el instalador de tu sistema. Todos se generan automáticamente en cada versión.</p>
-    <div class="dl">
-      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
-        <div class="os">🐧 Linux</div><div class="files">.AppImage · .deb · .rpm</div></a>
-      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
-        <div class="os">🪟 Windows</div><div class="files">.msi · .exe</div></a>
-      <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases/latest">
-        <div class="os">🍎 macOS</div><div class="files">.dmg (universal)</div></a>
-    </div>
-    <div class="note">Los binarios de Windows y macOS van sin firmar: la primera vez el sistema pedirá
-      confirmación (SmartScreen / Gatekeeper).</div>
-  </div>
+<section id="avisos">
+  <h2>Avisos (insights)</h2>
+  <p class="sub">La herramienta MCP <code>get_insights</code> analiza el periodo y devuelve avisos ordenados por gravedad (importante, aviso, información y lo que va bien).</p>
+  <div class="tbl"><table>
+    <tr><th>Aviso</th><th>Salta cuando</th></tr>
+    <tr><td>Compactaciones</td><td>Hay sesiones con 3 o más compactaciones de contexto.</td></tr>
+    <tr><td>Modelo caro en tareas sencillas</td><td>Un modelo de gama alta en exploración o conversación, con ahorro estimado &gt; 1 USD usando uno más barato.</td></tr>
+    <tr><td>Herramienta / MCP / comando que falla</td><td>Herramienta ≥ 20 usos y &gt; 10 % de error; servidor MCP ≥ 10 usos y &gt; 10 %; comando ≥ 5 errores y ≥ 5 %.</td></tr>
+    <tr><td>Modelos sin precio</td><td>Algún modelo del periodo no tiene precio.</td></tr>
+    <tr><td>Cache hit bajo</td><td>Un modelo con ≥ 100 llamadas por debajo del 70 %.</td></tr>
+    <tr><td>1-shot bajo / bueno</td><td>&lt; 80 % o ≥ 95 %, con ≥ 20 turnos con ediciones.</td></tr>
+    <tr><td>Concentración</td><td>Un proyecto con ≥ 50 % del gasto, o un modelo con ≥ 70 %.</td></tr>
+    <tr><td>Sesión más cara</td><td>Supone ≥ 20 % del gasto o más de 5 USD.</td></tr>
+    <tr><td>Subagentes</td><td>Suman ≥ 20 % del gasto.</td></tr>
+    <tr><td>Ritmo alto</td><td>La última hora cuesta más del doble de la media por hora activa.</td></tr>
+    <tr><td>Fuera de horario</td><td>≥ 30 % del gasto antes de las 9 o desde las 19 h.</td></tr>
+    <tr><td>Pico de gasto</td><td>Un día &gt; 2× la media y &gt; media + 2σ (con ≥ 5 días de actividad).</td></tr>
+    <tr><td>Tendencias</td><td>Caída del cache hit &gt; 3 puntos o coste por sesión +30 % frente al periodo anterior.</td></tr>
+    <tr><td>Agentes sin uso</td><td>Instalados pero sin llamadas en el periodo.</td></tr>
+    <tr><td>Ahorro por caché</td><td>La caché ahorró más de lo que se gastó.</td></tr>
+  </table></div>
+</section>
+
+<section id="faq">
+  <h2>Problemas frecuentes</h2>
+  <details><summary>La ventana se abre en blanco en Linux</summary>
+    <p>Pasa con algunas librerías de display empaquetadas y Mesa moderno (Fedora, Bazzite, Arch). Los AppImage publicados ya vienen corregidos;
+      si compilas tú, usa <code>scripts/fix-appimage.sh</code>. Como alternativa, prueba el <code>.rpm</code> o el <code>.deb</code>.</p></details>
+  <details><summary>Un agente no aparece</summary>
+    <p>Comprueba que está instalado y que sus logs están en la ruta de la tabla de <a href="#agentes">Agentes compatibles</a>, o en la de su variable de entorno.
+      Si su carpeta aparece después de abrir la app, el vigilante la detecta sola.</p></details>
+  <details><summary>Las cifras no cuadran o veo datos raros</summary>
+    <p>Ajustes → Datos → <b>Reconstruir caché</b>. Relee todos los logs desde cero. Revisa también que el modelo tenga precio en <b>Precios y presupuestos</b>.</p></details>
+  <details><summary>Aparecen errores «database is locked»</summary>
+    <p>Suele deberse a tener dos instancias de AgentBoard abiertas a la vez con la misma caché. Cierra una (también desde la bandeja).</p></details>
+  <details><summary>Quiero que no se guarde nada en disco</summary>
+    <p>Activa <b>Solo memoria</b> en Ajustes → Datos. Se borra la caché y la app vuelve a leer los logs cada vez que se abre.</p></details>
+  <details><summary>Windows o macOS no me dejan abrirla</summary>
+    <p>Los binarios van sin firmar. En Windows: SmartScreen → «Más información» → «Ejecutar de todas formas». En macOS: clic derecho → «Abrir».</p></details>
+  <details><summary>¿Cómo veo qué está haciendo por dentro?</summary>
+    <p>Arranca la app desde una terminal con <code>AGENTBOARD_LOG=debug</code>: muestra el escaneo, cada archivo, las consultas y su duración.</p></details>
+  <details><summary>He vuelto a una versión anterior y la caché sigue ahí</summary>
+    <p>Las versiones sin caché la ignoran. Puedes borrar a mano <code>cache.sqlite</code>, <code>-wal</code> y <code>-shm</code> de la carpeta de datos.</p></details>
+</section>
+
+<section id="desarrollo">
+  <h2>Desarrollo</h2>
+  <p>Requisitos: Node.js 20+, Rust estable y, en Linux, WebKitGTK 4.1.</p>
+<pre><code>npm ci
+npm run tauri dev        <span class="c"># app con recarga en caliente</span>
+npm test                 <span class="c"># tests del frontend (vitest)</span>
+
+cargo test  --manifest-path src-tauri/Cargo.toml --workspace
+cargo build --manifest-path src-tauri/Cargo.toml -p agentboard-mcp</code></pre>
+  <h3>Cómo perfilar</h3>
+<pre><code>AGENTBOARD_LOG=debug npm run tauri dev                 <span class="c"># trazas con duración</span>
+python3 scripts/gen-fixtures.py 200m               <span class="c"># logs sintéticos (50m / 200m / 1g)</span>
+cd src-tauri &amp;&amp; cargo build --profile bench-fast --example perf_scan
+./target/bench-fast/examples/perf_scan --fixtures target/perf-fixtures/200m --phase queries
+cargo bench --manifest-path src-tauri/Cargo.toml       <span class="c"># benchmarks criterion</span>
+node scripts/perf-ui.mjs --latency=104 --runs=3        <span class="c"># tiempos de la interfaz</span></code></pre>
+  <h3>Cómo contribuir</h3>
+  <ul>
+    <li>Cada cambio se describe primero con <a href="https://github.com/Fission-AI/OpenSpec">OpenSpec</a> en <code>openspec/</code>.</li>
+    <li>Commits en español con Conventional Commits, uno por cambio lógico.</li>
+    <li>Cada Pull Request compila y prueba en Linux, Windows y macOS, y compara los benchmarks.</li>
+    <li>Para añadir un agente: un módulo en <code>src-tauri/src/providers/</code> que implemente el trait <code>Provider</code>, registrarlo en <code>providers::all()</code> y añadir un fixture anonimizado con su test.</li>
+    <li>Traducciones en <code>src/lib/i18n.ts</code>, con el español como clave.</li>
+  </ul>
+  <p>Guía completa en <a href="https://github.com/RenzoRamosDEV/AgentBoard/blob/main/CONTRIBUTING.md"><code>CONTRIBUTING.md</code></a> y en la
+    <a href="https://github.com/RenzoRamosDEV/AgentBoard/tree/main/docs/wiki">wiki</a>.</p>
+</section>
+
+<section id="licencia">
+  <h2>Licencia</h2>
+  <p>AgentBoard es software de código abierto bajo licencia <a href="https://github.com/RenzoRamosDEV/AgentBoard/blob/main/LICENSE">MIT</a> © Renzo Ramos.</p>
 </section>
 
 <footer>
-  <div class="wrap">
-    AgentBoard es software de código abierto bajo licencia
-    <a href="https://github.com/RenzoRamosDEV/AgentBoard/blob/main/LICENSE">MIT</a>.
-    · <a href="https://github.com/RenzoRamosDEV/AgentBoard">Repositorio</a>
-    · <a href="https://github.com/RenzoRamosDEV/AgentBoard/tree/main/docs/wiki">Documentación</a>
-  </div>
+  <a href="https://github.com/RenzoRamosDEV/AgentBoard">Repositorio</a>
+  · <a href="https://github.com/RenzoRamosDEV/AgentBoard/releases">Versiones</a>
+  · <a href="https://github.com/RenzoRamosDEV/AgentBoard/issues">Issues</a>
+  · <a href="https://github.com/RenzoRamosDEV/AgentBoard/tree/main/docs/wiki">Wiki</a>
 </footer>
+</main>
+</div>
 
+<script>
+  // Índice: abrir/cerrar en móvil y marcar la sección visible.
+  const toc = document.getElementById('toc');
+  document.getElementById('menu').addEventListener('click', () => toc.classList.toggle('open'));
+  toc.addEventListener('click', e => { if (e.target.closest('a')) toc.classList.remove('open'); });
+  const links = [...toc.querySelectorAll('a[href^="#"]')];
+  const byId = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const seen = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) {
+      links.forEach(a => a.classList.remove('active'));
+      byId.get(e.target.id)?.classList.add('active');
+    }
+  }, { rootMargin: '-10% 0px -80% 0px' });
+  document.querySelectorAll('main section[id]').forEach(s => seen.observe(s));
+</script>
 </body>
 </html>

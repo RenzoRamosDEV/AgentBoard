@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Empty } from "./Panel";
 import { useTooltip } from "./Tooltip";
 import { getLang, LOCALES, t } from "../lib/i18n";
@@ -14,7 +14,7 @@ export interface BarItem {
 }
 
 /** Barras horizontales: etiqueta, barra proporcional al máximo y valor. */
-export function Bars({ items, color = "var(--series-1)", limit, labelWidth = 84, thick = false }: { items: BarItem[]; color?: string; limit?: number; labelWidth?: number; thick?: boolean }) {
+export const Bars = memo(function Bars({ items, color = "var(--series-1)", limit, labelWidth = 84, thick = false }: { items: BarItem[]; color?: string; limit?: number; labelWidth?: number; thick?: boolean }) {
   const setTip = useTooltip();
   if (!items.length) return <Empty />;
   const shown = limit ? items.slice(0, limit) : items;
@@ -40,14 +40,14 @@ export function Bars({ items, color = "var(--series-1)", limit, labelWidth = 84,
       ))}
     </div>
   );
-}
+});
 
 /** Barra dentro de una fila de tabla: proporcional al máximo del conjunto, sin etiqueta ni cifra. */
-export const InlineBar = ({ value, max, color = "var(--series-1)" }: { value: number; max: number; color?: string }) => (
+export const InlineBar = memo(({ value, max, color = "var(--series-1)" }: { value: number; max: number; color?: string }) => (
   <span className="inline-bar" aria-hidden>
     <span className="inline-bar-fill" style={{ width: `${max > 0 ? Math.max((value / max) * 100, value > 0 ? 1.5 : 0) : 0}%`, background: color }} />
   </span>
-);
+));
 
 export interface ColumnPoint {
   ts: number;
@@ -86,7 +86,7 @@ export function niceStep(raw: number): number {
 }
 
 /** Gráfico de columnas por día (o apilado por serie), con eje de fechas y tooltip. */
-export function Columns({
+export const Columns = memo(function Columns({
   points,
   height = 190,
   color = "var(--accent)",
@@ -175,10 +175,10 @@ export function Columns({
       </div>
     </div>
   );
-}
+});
 
 /** Línea con área bajo la curva (p. ej. acumulado del periodo), con tooltip por punto. */
-export function LineChart({
+export const LineChart = memo(function LineChart({
   points,
   height = 200,
   color = "var(--accent)",
@@ -272,7 +272,7 @@ export function LineChart({
       </div>
     </div>
   );
-}
+});
 
 /** Selector de opciones excluyentes (métrica, desglose…). */
 export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label?: string }) {
@@ -298,7 +298,7 @@ export interface Segment {
 }
 
 /** Anillo de reparto con total en el centro y leyenda de los mayores. */
-export function Donut({ segments, center, sub, format, size = 150 }: { segments: Segment[]; center: string; sub?: string; format: (v: number) => string; size?: number }) {
+export const Donut = memo(function Donut({ segments, center, sub, format, size = 150 }: { segments: Segment[]; center: string; sub?: string; format: (v: number) => string; size?: number }) {
   const setTip = useTooltip();
   const total = segments.reduce((a, s) => a + s.value, 0);
   if (!total) return <Empty />;
@@ -363,10 +363,10 @@ export function Donut({ segments, center, sub, format, size = 150 }: { segments:
       </div>
     </div>
   );
-}
+});
 
 /** Reparto: barra apilada al 100 % con segmentos separados y lista con porcentaje y valor. */
-export function ShareBar({ segments, format, limit = 8, compact = false, othersLabel = t("Otros") }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean; othersLabel?: string }) {
+export const ShareBar = memo(function ShareBar({ segments, format, limit = 8, compact = false, othersLabel = t("Otros") }: { segments: Segment[]; format: (v: number) => string; limit?: number; compact?: boolean; othersLabel?: string }) {
   const setTip = useTooltip();
   const total = segments.reduce((a, s) => a + s.value, 0);
   if (!total) return <Empty />;
@@ -419,11 +419,11 @@ export function ShareBar({ segments, format, limit = 8, compact = false, othersL
       </ul>
     </div>
   );
-}
+});
 
 const fmtPct = (v: number) => `${Math.round(v * 100)}%`;
 
-export const Legend = ({ items }: { items: { label: string; color: string }[] }) => (
+export const Legend = memo(({ items }: { items: { label: string; color: string }[] }) => (
   <div className="legend">
     {items.map((i) => (
       <span key={i.label}>
@@ -432,4 +432,4 @@ export const Legend = ({ items }: { items: { label: string; color: string }[] })
       </span>
     ))}
   </div>
-);
+));

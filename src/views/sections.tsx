@@ -10,6 +10,7 @@ import { t } from "../lib/i18n";
 import { Bars, Columns, Legend, Segmented, ShareBar } from "../components/Charts";
 import { DataTable, type Column } from "../components/DataTable";
 import { barColumn, bucketing, cost, dayPoints, err, errClass, shot, shotClass } from "./panels";
+import { rankItems, rankKeys, stacksByBucket } from "./derive";
 
 // --- Bloques genéricos ------------------------------------------------------------------
 
@@ -65,46 +66,45 @@ function RankingCard<T extends { key: string }>({
   const [metric, setMetric] = useState(metrics[0].value);
   const m = metrics.find((x) => x.value === metric) ?? metrics[0];
   const isRate = m.value === "errors" || m.value === "cache" || m.value === "avg";
-  const sorted = rows.map((r, i) => ({ r, i })).sort((a, b) => m.get(b.r) - m.get(a.r));
-  const head = sorted.length > limit ? sorted.slice(0, limit - 1) : sorted;
-  const tail = sorted.slice(head.length);
-  const items = head.map(({ r, i }) => ({
-    key: r.key,
-    label: label(r),
-    value: m.get(r),
-    valueLabel: m.format(m.get(r)),
-    color: color(r, i),
-    tooltip: (
-      <>
-        <b>{label(r)}</b>
-        <div>{m.format(m.get(r))}</div>
-      </>
-    ),
-  }));
-  if (tail.length) {
-    // Los porcentajes y medias no se suman: para "otros" se usa la media.
-    const others = othersLabel ?? t("Otros");
-    const values = tail.map(({ r }) => m.get(r));
-    const value = isRate ? values.reduce((a, v) => a + v, 0) / values.length : values.reduce((a, v) => a + v, 0);
-    items.push({
-      key: "__otros",
-      label: `${others} (${tail.length})`,
-      value,
-      valueLabel: m.format(value),
-      color: "var(--text-muted)",
+  // `label` y `color` dependen solo de las filas en todos los usos: la memo va por filas y métrica.
+  const items = useMemo(() => {
+    const { head, tail, others } = rankItems(rows, m.get, isRate, limit);
+    const out = head.map(({ r, i }) => ({
+      key: r.key,
+      label: label(r),
+      value: m.get(r),
+      valueLabel: m.format(m.get(r)),
+      color: color(r, i),
       tooltip: (
         <>
-          <b>{others}</b>
-          <div>{t("{n} elementos · {mode}: {v}", { n: tail.length, mode: t(isRate ? "media" : "suma"), v: m.format(value) })}</div>
-          {tail.slice(0, 6).map(({ r }) => (
-            <div key={r.key} className="muted">
-              {label(r)}: {m.format(m.get(r))}
-            </div>
-          ))}
+          <b>{label(r)}</b>
+          <div>{m.format(m.get(r))}</div>
         </>
       ),
-    });
-  }
+    }));
+    if (others != null) {
+      const name = othersLabel ?? t("Otros");
+      out.push({
+        key: "__otros",
+        label: `${name} (${tail.length})`,
+        value: others,
+        valueLabel: m.format(others),
+        color: "var(--text-muted)",
+        tooltip: (
+          <>
+            <b>{name}</b>
+            <div>{t("{n} elementos · {mode}: {v}", { n: tail.length, mode: t(isRate ? "media" : "suma"), v: m.format(others) })}</div>
+            {tail.slice(0, 6).map(({ r }) => (
+              <div key={r.key} className="muted">
+                {label(r)}: {m.format(m.get(r))}
+              </div>
+            ))}
+          </>
+        ),
+      });
+    }
+    return out;
+  }, [rows, m, isRate, limit, othersLabel]);
   return (
     <Card title={title} subtitle={t(m.label)} actions={metrics.length > 1 && <Segmented value={metric} options={metrics.map((x) => ({ value: x.value, label: t(x.label) }))} onChange={setMetric} label={t("Métrica")} />}>
       <Bars items={items} thick labelWidth={150} />
@@ -154,49 +154,45 @@ function EvolutionCard({
   const get = (s: { costUsd: number; calls: number; outputTokens: number }) => (metric === "cost" ? s.costUsd : metric === "calls" ? s.calls : s.outputTokens);
   const format = metric === "cost" ? cost : metric === "tokens" ? fmt.compact : fmt.int;
 
-  // Las claves con más peso tienen color propio; el resto se agrupa en "Otros".
-  const totals = new Map<string, { label: string; value: number }>();
-  for (const s of series) {
-    const t = totals.get(s.key) ?? { label: label(s), value: 0 };
-    t.value += get(s);
-    totals.set(s.key, t);
-  }
-  const ranked = [...totals.entries()].sort((a, b) => b[1].value - a[1].value);
-  const colors = new Map(ranked.slice(0, maxKeys).map(([key], i) => [key, color(key, i)]));
-  const legend = ranked.slice(0, maxKeys).map(([key, t]) => ({ label: t.label, color: colors.get(key)! }));
-  if (ranked.length > maxKeys) legend.push({ label: t("Otros"), color: "var(--text-muted)" });
+  // `color` y `label` dependen solo de la clave en todos los usos: la memo va por serie, datos y métrica.
+  const { legend, points } = useMemo(() => {
+    // Las claves con más peso tienen color propio; el resto se agrupa en "Otros".
+    const ranked = rankKeys(series, get, label);
+    const colors = new Map(ranked.slice(0, maxKeys).map(({ key }, i) => [key, color(key, i)]));
+    const legend = ranked.slice(0, maxKeys).map((x) => ({ label: x.label, color: colors.get(x.key)! }));
+    if (ranked.length > maxKeys) legend.push({ label: t("Otros"), color: "var(--text-muted)" });
 
-  const b = bucketing(data.daily, data.filter);
-  const byDay = new Map<number, Map<string, { key: string; label: string; value: number; color: string }>>();
-  for (const s of series) {
-    const day = b.key(s.ts);
-    const key = colors.has(s.key) ? s.key : "__otros";
-    const map = byDay.get(day) ?? new Map();
-    const cur = map.get(key) ?? { key, label: key === "__otros" ? t("Otros") : label(s), value: 0, color: colors.get(s.key) ?? "var(--text-muted)" };
-    cur.value += get(s);
-    map.set(key, cur);
-    byDay.set(day, map);
-  }
-  const points = dayPoints(data.daily, data.filter).map((d) => {
-    const stack = [...(byDay.get(d.ts)?.values() ?? [])].sort((a, b) => b.value - a.value);
-    const value = stack.reduce((a, s) => a + s.value, 0);
-    return {
-      ts: d.ts,
-      value,
-      stack,
-      tooltip: (
-        <>
-          <b>{b.label(d.ts)}</b>
-          <div>{format(value)}</div>
-          {stack.slice(0, 6).map((s) => (
-            <div key={s.key} className="muted">
-              {s.label}: {format(s.value)}
-            </div>
-          ))}
-        </>
-      ),
-    };
-  });
+    const b = bucketing(data.daily, data.filter);
+    const byDay = stacksByBucket(
+      series,
+      (s) => b.key(s.ts),
+      (s) => (colors.has(s.key) ? s.key : "__otros"),
+      (s) => (colors.has(s.key) ? label(s) : t("Otros")),
+      get,
+      (s) => colors.get(s.key) ?? "var(--text-muted)",
+    );
+    const points = dayPoints(data.daily, data.filter).map((d) => {
+      const stack = [...(byDay.get(d.ts) ?? [])].sort((a, b) => b.value - a.value);
+      const value = stack.reduce((a, s) => a + s.value, 0);
+      return {
+        ts: d.ts,
+        value,
+        stack,
+        tooltip: (
+          <>
+            <b>{b.label(d.ts)}</b>
+            <div>{format(value)}</div>
+            {stack.slice(0, 6).map((s) => (
+              <div key={s.key} className="muted">
+                {s.label}: {format(s.value)}
+              </div>
+            ))}
+          </>
+        ),
+      };
+    });
+    return { legend, points };
+  }, [series, data, metric, maxKeys]);
   return (
     <Card title={title} subtitle={t("por día, apilado")} actions={metrics.length > 1 && <Segmented value={metric} options={metrics.map((o) => ({ ...o, label: t(o.label) }))} onChange={setMetric} label={t("Métrica")} />}>
       <Columns points={points} format={format} height={240} />
@@ -275,36 +271,38 @@ export function ActivityFull({ data }: { data: DashboardData }) {
     { header: "1-shot", cell: (r) => shot(r.oneShot), align: "right", width: "60px", className: (r) => shotClass(r.oneShot) },
     barColumn(t("Reparto del coste"), rows, (r) => r.costUsd, "var(--act-coding)"),
   ], [rows, metric]);
-  const b = bucketing(data.daily, data.filter);
-  const byDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
-  for (const d of data.activityDaily) {
-    const day = b.key(d.ts);
-    const list = byDay.get(day) ?? [];
-    const cur = list.find((x) => x.key === d.activity);
-    if (cur) cur.value += get({ costUsd: d.costUsd, turns: d.turns });
-    else list.push({ key: d.activity, label: activityLabel(d.activity), value: get({ costUsd: d.costUsd, turns: d.turns }), color: activityColor(d.activity) });
-    byDay.set(day, list);
-  }
-  const points = dayPoints(data.daily, data.filter).map((d) => {
-    const stack = (byDay.get(d.ts) ?? []).sort((a, b) => b.value - a.value);
-    const value = stack.reduce((a, s) => a + s.value, 0);
-    return {
-      ts: d.ts,
-      value,
-      stack,
-      tooltip: (
-        <>
-          <b>{b.label(d.ts)}</b>
-          <div>{format(value)}</div>
-          {stack.slice(0, 5).map((s) => (
-            <div key={s.key} className="muted">
-              {s.label}: {format(s.value)}
-            </div>
-          ))}
-        </>
-      ),
-    };
-  });
+  const points = useMemo(() => {
+    const b = bucketing(data.daily, data.filter);
+    const byDay = stacksByBucket(
+      data.activityDaily,
+      (d) => b.key(d.ts),
+      (d) => d.activity,
+      (d) => activityLabel(d.activity),
+      (d) => get({ costUsd: d.costUsd, turns: d.turns }),
+      (d) => activityColor(d.activity),
+    );
+    return dayPoints(data.daily, data.filter).map((d) => {
+      const stack = (byDay.get(d.ts) ?? []).sort((a, b) => b.value - a.value);
+      const value = stack.reduce((a, s) => a + s.value, 0);
+      return {
+        ts: d.ts,
+        value,
+        stack,
+        tooltip: (
+          <>
+            <b>{b.label(d.ts)}</b>
+            <div>{format(value)}</div>
+            {stack.slice(0, 5).map((s) => (
+              <div key={s.key} className="muted">
+                {s.label}: {format(s.value)}
+              </div>
+            ))}
+          </>
+        ),
+      };
+    });
+    // `get` y `format` dependen solo de la métrica.
+  }, [data, metric]);
   const shots = rows.filter((r) => r.oneShot != null).map((r) => ({ key: r.key, label: activityLabel(r.key), value: r.oneShot!, valueLabel: fmt.pct(r.oneShot!), color: activityColor(r.key) }));
   const segments = rows.map((r) => ({ key: r.key, label: activityLabel(r.key), value: r.costUsd, color: activityColor(r.key) }));
   const total = rows.reduce((a, r) => a + r.costUsd, 0);

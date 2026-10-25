@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { activityLabel, fmt, modelName } from "../lib/format";
 import { t } from "../lib/i18n";
 import type { Period } from "../lib/period";
@@ -101,6 +102,7 @@ export function Section({
   back: () => void;
 }) {
   const s = sectionOf(id);
+  const kpis = useMemo(() => sectionKpis(id, data), [id, data]);
   const title = id === "project" && singleProject ? t("By Branch · {name}", { name: singleProject }) : t(s.title);
   return (
     <div className="main">
@@ -112,7 +114,7 @@ export function Section({
           {title} <span className="muted">· {t(s.question)} · {periodLabel(period)}</span>
         </h1>
       </header>
-      <Kpis items={sectionKpis(id, data)} />
+      <Kpis items={kpis} />
       {id === "daily" && <DailyFull data={data} />}
       {id === "agent" && <AgentFull data={data} />}
       {id === "project" && <ProjectFull data={data} singleProject={singleProject} />}

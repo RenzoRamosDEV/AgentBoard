@@ -251,6 +251,18 @@ fn rebuild(
     Ok(())
 }
 
+/// Checkpoint `TRUNCATE` del WAL si supera su límite; si un lector lo impide, se reintenta tras
+/// el siguiente trabajo.
+fn checkpoint(storage: &Storage) {
+    match crate::db::checkpoint_if_large(&storage.writer, &storage.target) {
+        Ok(crate::db::Checkpoint::Busy) => {
+            tracing::debug!("agentboard: checkpoint del WAL aplazado por un lector")
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("agentboard: falló el checkpoint del WAL: {e:#}"),
+    }
+}
+
 /// Lectura pendiente: un escaneo completo o la relectura dirigida de unas rutas.
 enum Pending {
     Full(Origen),
@@ -371,7 +383,15 @@ fn run(
             }
         };
         match result {
-            Ok(stats) => on_done(origen, &stats),
+            Ok(stats) => {
+                on_done(origen, &stats);
+                // Con la cola vacía el escritor queda libre: momento de reiniciar el WAL.
+                match rx.try_recv() {
+                    Ok(job) => deferred.push_back(job),
+                    Err(_) if deferred.is_empty() => checkpoint(&state.storage),
+                    Err(_) => {}
+                }
+            }
             Err(e) => {
                 tracing::error!(?origen, "agentboard: falló el escaneo: {e:#}");
                 if crate::db::is_corruption(&e) {
@@ -642,6 +662,70 @@ mod tests {
         handle.apply_prices(Vec::new()).unwrap();
         let (_, touched) = change_rx.recv_timeout(WAIT).unwrap();
         assert!(touched.all, "los precios pueden cambiar todo");
+    }
+
+    #[test]
+    fn el_wal_grande_se_trunca_cuando_el_escritor_queda_libre_y_no_hay_lectores() {
+        let (fx, storage) = fixture(&[("a.log", "m1\n")]);
+        let path = match &storage.mode {
+            CacheMode::Disco(p) => p.clone(),
+            CacheMode::Memoria => unreachable!(),
+        };
+        let wal = || {
+            std::fs::metadata(format!("{}-wal", path.display()))
+                .map(|m| m.len())
+                .unwrap_or(0)
+        };
+        const LIMIT: u64 = 8 * 1024 * 1024;
+        // Un lector a mitad de su lectura mientras llega un lote de 10 MiB: el WAL no se reinicia.
+        let (hold_tx, hold_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let target = fx.target.clone();
+        let holder = std::thread::spawn(move || {
+            db::ReadPool::open(&target, 1)
+                .unwrap()
+                .with(|c| {
+                    c.execute_batch("BEGIN")?;
+                    let _: i64 = c.query_row("SELECT COUNT(*) FROM calls", [], |r| r.get(0))?;
+                    ready_tx.send(()).ok();
+                    hold_rx.recv().ok();
+                    c.execute_batch("COMMIT")?;
+                    Ok(())
+                })
+                .unwrap();
+        });
+        ready_rx.recv().unwrap();
+        storage
+            .writer
+            .execute_batch(
+                "CREATE TABLE junk (b BLOB);
+                 BEGIN;
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 160)
+                   INSERT INTO junk SELECT randomblob(65536) FROM n;
+                 COMMIT;",
+            )
+            .unwrap();
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn(storage, fake(&fx), Default::default(), move |_, _| {
+            tx.send(()).unwrap();
+        });
+        handle.request(Origen::EscaneoInicial);
+        rx.recv_timeout(WAIT).unwrap();
+        assert!(wal() > LIMIT, "con el lector abierto no se puede");
+        hold_tx.send(()).unwrap();
+        holder.join().unwrap();
+        // El siguiente trabajo no escribe nada (archivo sin cambios), pero deja al escritor libre.
+        handle.rescan([fx.root.join("a.log")].into());
+        rx.recv_timeout(WAIT).unwrap();
+        let deadline = std::time::Instant::now() + WAIT;
+        while wal() > LIMIT {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "el WAL sigue en {}",
+                wal()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

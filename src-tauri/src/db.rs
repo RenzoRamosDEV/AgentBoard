@@ -376,6 +376,41 @@ fn configure_writer(conn: &Connection, file: bool) -> Result<()> {
 
 /// Bytes del WAL que se conservan tras un checkpoint.
 const JOURNAL_SIZE_LIMIT: i64 = 8 * 1024 * 1024;
+/// Espera máxima del checkpoint `TRUNCATE` por los lectores: el escritor no se bloquea más.
+const CHECKPOINT_WAIT: Duration = Duration::from_millis(100);
+
+/// Resultado de `checkpoint_if_large`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checkpoint {
+    /// En memoria o con el WAL por debajo de su límite.
+    NotNeeded,
+    /// WAL copiado a la base y truncado.
+    Done,
+    /// Un lector lo impidió; se reintenta tras el siguiente trabajo.
+    Busy,
+}
+
+/// Con la caché en disco y el `-wal` por encima de `JOURNAL_SIZE_LIMIT`, `wal_checkpoint(TRUNCATE)`
+/// esperando como mucho `CHECKPOINT_WAIT` a los lectores. Con un lector siempre activo el
+/// autocheckpoint (PASSIVE) no reinicia el WAL, que crece y frena las lecturas.
+pub fn checkpoint_if_large(conn: &Connection, target: &Target) -> Result<Checkpoint> {
+    let Target::File(path) = target else {
+        return Ok(Checkpoint::NotNeeded);
+    };
+    let wal = std::fs::metadata(format!("{}-wal", path.display())).map_or(0, |m| m.len());
+    if wal <= JOURNAL_SIZE_LIMIT as u64 {
+        return Ok(Checkpoint::NotNeeded);
+    }
+    conn.busy_timeout(CHECKPOINT_WAIT)?;
+    let result = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+        r.get::<_, i64>(0)
+    });
+    conn.busy_timeout(Duration::from_secs(5))?;
+    Ok(match result? {
+        0 => Checkpoint::Done,
+        _ => Checkpoint::Busy,
+    })
+}
 /// Bytes de la caché en disco que se leen por `mmap`: los lectores pierden su caché de páginas
 /// con cada lote del escritor (WAL) y releerla del sistema de archivos página a página es lo que
 /// más cuesta; con `mmap` vienen de la caché del sistema sin copiarse.
@@ -950,5 +985,111 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    // ------------------------------------------------------------ checkpoint del WAL (D8)
+
+    fn wal_len(path: &Path) -> u64 {
+        std::fs::metadata(format!("{}-wal", path.display()))
+            .map(|m| m.len())
+            .unwrap_or(0)
+    }
+
+    const BIG_TX: &str = "BEGIN;
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 160)
+           INSERT INTO junk SELECT randomblob(65536) FROM n;
+         COMMIT;";
+
+    fn disk_with_junk() -> (tempfile::TempDir, Storage, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.sqlite");
+        let storage = Storage::open(CacheMode::Disco(path.clone())).unwrap();
+        storage
+            .writer
+            .execute_batch("CREATE TABLE junk (b BLOB);")
+            .unwrap();
+        (dir, storage, path)
+    }
+
+    /// Caché en disco con un WAL por encima de su límite (una transacción de 10 MiB).
+    fn big_wal() -> (tempfile::TempDir, Storage, PathBuf) {
+        let (dir, storage, path) = disk_with_junk();
+        storage.writer.execute_batch(BIG_TX).unwrap();
+        assert!(
+            wal_len(&path) > JOURNAL_SIZE_LIMIT as u64,
+            "{}",
+            wal_len(&path)
+        );
+        (dir, storage, path)
+    }
+
+    #[test]
+    fn sin_lectores_el_checkpoint_deja_el_wal_por_debajo_del_limite() {
+        let (_dir, storage, path) = big_wal();
+        assert_eq!(
+            checkpoint_if_large(&storage.writer, &storage.target).unwrap(),
+            Checkpoint::Done
+        );
+        assert!(
+            wal_len(&path) <= JOURNAL_SIZE_LIMIT as u64,
+            "{}",
+            wal_len(&path)
+        );
+        assert_eq!(
+            checkpoint_if_large(&storage.writer, &storage.target).unwrap(),
+            Checkpoint::NotNeeded,
+            "ya está por debajo"
+        );
+    }
+
+    #[test]
+    fn con_un_lector_abierto_no_bloquea_y_se_completa_al_cerrarse() {
+        let (_dir, storage, path) = disk_with_junk();
+        let reader = ReadPool::open(&storage.target, 1).unwrap();
+        let (hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let pool = std::sync::Arc::new(reader);
+        let p2 = pool.clone();
+        let holder = std::thread::spawn(move || {
+            p2.with(|c| {
+                c.execute_batch("BEGIN")?;
+                let _: i64 = c.query_row("SELECT COUNT(*) FROM junk", [], |r| r.get(0))?;
+                ready_tx.send(()).ok();
+                hold_rx.recv().ok();
+                c.execute_batch("COMMIT")?;
+                Ok(())
+            })
+            .unwrap();
+        });
+        ready_rx.recv().unwrap();
+        // El lote llega con el lector a mitad de su lectura: el WAL no se puede reiniciar.
+        storage.writer.execute_batch(BIG_TX).unwrap();
+        assert!(wal_len(&path) > JOURNAL_SIZE_LIMIT as u64);
+        let t = std::time::Instant::now();
+        let first = checkpoint_if_large(&storage.writer, &storage.target).unwrap();
+        let blocked = t.elapsed();
+        assert_eq!(first, Checkpoint::Busy);
+        assert!(blocked < Duration::from_millis(400), "{blocked:?}");
+        // El escritor sigue con su espera normal para lo demás.
+        storage
+            .writer
+            .execute("INSERT INTO junk VALUES (x'00')", [])
+            .unwrap();
+        hold_tx.send(()).unwrap();
+        holder.join().unwrap();
+        assert_eq!(
+            checkpoint_if_large(&storage.writer, &storage.target).unwrap(),
+            Checkpoint::Done
+        );
+        assert!(wal_len(&path) <= JOURNAL_SIZE_LIMIT as u64);
+    }
+
+    #[test]
+    fn en_memoria_no_se_intenta() {
+        let storage = Storage::open(CacheMode::Memoria).unwrap();
+        assert_eq!(
+            checkpoint_if_large(&storage.writer, &storage.target).unwrap(),
+            Checkpoint::NotNeeded
+        );
     }
 }

@@ -308,3 +308,40 @@ creadas fuera de las raíces (p. ej. bajo el `~` vigilado sin recursión), un co
 observan. Puntuación sobre los mutantes viables examinados: 1 superviviente de 75 (98,7 %). El
 mutante con tiempo agotado (`Sink::committed → Ok(())`) es detectado: sin el aviso el test espera el
 cambio hasta el límite.
+
+### Medición final y resumen de desviaciones respecto a D1–D11
+
+Medición final `release` A/B (tres pares, load 0,3–2,6) en `docs/perf/BASELINE.md`, «Después de la
+Fase 3». Presupuestos de D1: latencia aislada 459–462 ms (**cumple**, tras bajar la calma a 150 ms),
+ráfaga con avisos separados ≥ 1 s y 0 escaneos completos (**cumple**), reposo 0–10 ms y 0 relecturas
+(**cumple**), snapshot 102–104 ms en frío con comparación (**cumple**), `activity_daily` 1 GB
+238–243 ms (**cumple**), respuestas ≤ 1 MiB (**cumple**); contención `ui` × 1,21–1,23, WAL y
+Resumen después/antes (**no cumplen** en esta carga; motivo en el paso 7).
+
+- **D2**: `QUIET` 150 ms en lugar de 200 ms (dentro de los 150–300 ms del spec): con 200 ms la
+  latencia `release` quedaba en 509–511 ms. Tests de bordes ajustados a 149/150/151 ms. Además,
+  `relevant` no relee el contenido de una carpeta por eventos que no la crean ni la mueven.
+- **D3**: como diseñado; el rechequeo de 30 s solo existe con raíces que fallaron al vigilarse.
+- **D4**: `scan_paths` añade a la misma pasada los archivos relacionados que la limpieza reinicia
+  (si existen) y borra los proyectos huérfanos solo si hubo limpieza. El test de propiedad está en
+  `tests/relectura_dirigida.rs` (necesita `common::fingerprint`) y compara con el escaneo completo
+  incremental (24/24) y con leer desde cero (22/24; límite previo de D10, ver paso 2–3).
+- **D5**: `Touched` lee también una tabla temporal `touched_days` para los días de las llamadas
+  sumadas por `Deltas`; la limpieza de D10 avisa con `Touched::everything()`. `ingest://done` solo al
+  terminar `Origen::EscaneoInicial` (incluido el de una reconstrucción). `IngestThread::spawn_with_changes`
+  añade el aviso sin cambiar la firma de `spawn`.
+- **D6**: como diseñado; `perf_scan` no compara el snapshot (lo hace `tests/snapshot_resumen.rs`).
+- **D7**: paso A revertido por empeorar (+9 % / +18 %); paso B no necesario.
+- **D8**: como diseñado; `perf_scan --phase contention` reproduce el checkpoint del escritor y el
+  throttle de la interfaz, y cuenta checkpoints hechos y aplazados. Presupuestos no cumplidos con
+  lectores continuos.
+- **D9**: `SessionSort` ordena por número de columna del `SELECT` (nunca texto recibido);
+  `project_overview`/`session_overview`/`session_turns` se componen sobre las funciones del MCP. Los
+  turnos de la sesión no se ordenan en la interfaz (llegan en orden).
+- **D10**: como diseñado.
+- **D11**: `docs/wiki/Arquitectura.md` y `docs/perf/BASELINE.md` actualizados.
+- **Medición**: `perf_scan` usa la ruta absoluta de los fixtures; el coste de `stat` de esa ruta
+  explica todo el +20–35 % aparente del refresco y del escaneo sin cambios frente a la partida con
+  ruta relativa (la partida con ruta absoluta da lo mismo que el final).
+- **Tarea 4.4**: la prueba manual en `npm run tauri dev` se sustituyó por `perf_scan --phase watch`
+  (vigilante, ingesta y notificador reales) y Chrome sin cabeza sobre el mock.

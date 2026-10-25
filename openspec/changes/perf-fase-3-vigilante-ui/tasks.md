@@ -57,10 +57,10 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 ## 9. Cierre de la fase
 
 - [x] 9.1 Mutación dirigida (ver cabecera) sobre `watcher.rs` (`relevant`, `Debouncer`), `notifier.rs` (`Throttle`), `sessions.rs` (página, orden, `after_compaction`), `snapshot.rs` y la planificación de `scan_paths`; verificar > 95 % o supervivientes justificados en design.md
-- [ ] 9.2 Medición final en `release`, A/B contra el binario de la partida (1.3), tres pares por métrica, con los comandos de «Reproducción» de `docs/perf/BASELINE.md` más `watch`, `watch --events 500`, `idle`, `contention --reader ui|loop` y `queries` (snapshot y bytes) en `50m`/`200m`/`1g` donde aplique, y `--fingerprint`/`--query-fingerprint` de `200m` iguales a la partida; verificar los presupuestos de D1
-- [ ] 9.3 Añadir a `docs/perf/BASELINE.md` la sección «Después de la Fase 3» (entorno y carga, antes/después por métrica, pasos conservados y revertidos con su motivo, estado frente a los presupuestos, seguimientos para la Fase 4) y las fases nuevas en «Reproducción»; verificar que cada comando citado se ejecuta tal cual
-- [ ] 9.4 Comprobaciones finales: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`; verificar que todo pasa
-- [ ] 9.5 Completar «Desviaciones durante la implementación» de design.md con todo lo que cambió respecto a D1–D11; verificar `openspec validate perf-fase-3-vigilante-ui --strict`
+- [x] 9.2 Medición final en `release`, A/B contra el binario de la partida (1.3), tres pares por métrica, con los comandos de «Reproducción» de `docs/perf/BASELINE.md` más `watch`, `watch --events 500`, `idle`, `contention --reader ui|loop` y `queries` (snapshot y bytes) en `50m`/`200m`/`1g` donde aplique, y `--fingerprint`/`--query-fingerprint` de `200m` iguales a la partida; verificar los presupuestos de D1
+- [x] 9.3 Añadir a `docs/perf/BASELINE.md` la sección «Después de la Fase 3» (entorno y carga, antes/después por métrica, pasos conservados y revertidos con su motivo, estado frente a los presupuestos, seguimientos para la Fase 4) y las fases nuevas en «Reproducción»; verificar que cada comando citado se ejecuta tal cual
+- [x] 9.4 Comprobaciones finales: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`; verificar que todo pasa
+- [x] 9.5 Completar «Desviaciones durante la implementación» de design.md con todo lo que cambió respecto a D1–D11; verificar `openspec validate perf-fase-3-vigilante-ui --strict`
 
 ## Workflow follow-up
 

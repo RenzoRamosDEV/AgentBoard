@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -16,4 +17,6 @@ export default defineConfig(({ mode }) => ({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
+  // Zona fija en los tests: los golden dependen del día local (y del cambio de hora).
+  test: { env: { TZ: "Europe/Madrid" } },
 }));

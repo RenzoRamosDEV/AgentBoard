@@ -64,6 +64,47 @@ binario nativo para Linux, Windows y macOS.
   se ignora (queda `warn`). Las trazas van siempre a stderr, nunca a stdout (el servidor MCP
   usa stdout para JSON-RPC).
 
+## Hilos y canales de la ingesta
+
+Camino de una línea nueva en un log hasta el Resumen que pinta la interfaz. Cada flecha lleva el
+canal, la llamada o el evento por el que pasa; los nodos son hilos (backend) o módulos (interfaz).
+
+```mermaid
+flowchart TD
+    log["Log del agente<br/>(JSONL o SQLite)"]
+    notify["notify<br/>(hilo del SO)"]
+    watcher["Vigilante · watcher.rs<br/>filtro de eventos y debounce por archivo<br/>150 ms de calma, 1 s como máximo"]
+    ingest["Hilo de ingesta · ingest_thread.rs<br/>escritor único: ingest::scan_paths<br/>(relectura dirigida, lotes de 5 000 filas o 200 ms)"]
+    derived["derived::refresh<br/>(en la transacción de cada lote)"]
+    notifier["Notificador · notifier.rs<br/>throttle: 1 aviso/s"]
+    live["Interfaz · lib/live.ts<br/>setGeneration"]
+    query["Caché de consultas · lib/query.ts<br/>(comando + filtro + generación)"]
+    cmd["Comando get_dashboard_snapshot<br/>(caché de resultados por generación)"]
+    pool["ReadPool<br/>2 conexiones de solo lectura"]
+    db[("cache.sqlite<br/>WAL")]
+
+    log -- "evento del sistema de archivos" --> notify
+    notify -- "mpsc: notify::Event" --> watcher
+    watcher -- "mpsc: Job::Rescan(rutas)" --> ingest
+    ingest -- "INSERT por lotes" --> db
+    ingest --> derived
+    derived -- "Touched (agentes y días) + COMMIT" --> ingest
+    ingest -- "on_change(generación, Touched) → mpsc" --> notifier
+    notifier -- "evento data:changed { generation, agents, days }" --> live
+    live -- "generación nueva: caduca lo cacheado" --> query
+    query -- "invoke (solo las vistas montadas)" --> cmd
+    cmd --> pool
+    pool -- "lectura en una transacción" --> db
+```
+
+- El vigilante no sondea: sin eventos su hilo duerme. Si el SO pierde eventos, pide un escaneo
+  completo (`Job::Scan`) por el mismo canal.
+- El hilo de ingesta es el único que escribe; los lectores no esperan al escritor en disco
+  (WAL). Cada `COMMIT` con cambios sube la generación de datos.
+- `data:changed` no lleva filas: la interfaz vuelve a pedir lo que muestra. Con cada aviso se
+  refrescan también la bandeja y los avisos de presupuesto.
+- Cómo medir cada tramo: «Cómo perfilar» en [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
+
 ## Frontend (React + TypeScript, `src/`)
 
 - **Vistas y componentes.** `views/` arma el resumen y las vistas ampliadas; `components/`
@@ -95,5 +136,10 @@ especificación en `openspec/` antes de implementarse, y se archiva al completar
 
 - Cada Pull Request compila y prueba la app y el servidor MCP en **Linux, Windows y macOS**
   (matriz en GitHub Actions), además de comprobar formato, clippy, tipos y tests.
+- El job `bench` (solo Linux, `ubuntu-22.04`) genera el fixture sintético de 50 MB, ejecuta los
+  benchmarks criterion con el perfil `bench-fast` y compara la mediana de cada uno con la línea
+  base versionada `docs/perf/baseline.json` (`scripts/bench-compare.py`): falla si alguno empeora
+  más de un 20 % o si falta alguno. Cada ejecución publica la línea base candidata como artefacto
+  `perf-baseline` (ver «Benchmarks en CI y línea base» en `CONTRIBUTING.md`).
 - Un tag `v*` dispara el workflow de release, que empaqueta los instaladores de cada sistema
   (`.AppImage`/`.deb`, `.msi`/`.exe`, `.dmg` universal) con `tauri-action`.

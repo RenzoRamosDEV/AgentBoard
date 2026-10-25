@@ -174,3 +174,26 @@ Notas de la herramienta:
   (≥ 20 de 24) y queda como seguimiento. Las líneas que el test añade a una sesión existente
   repiten su `cwd`, rama y modelo guardados: con valores distintos repartidos entre archivos, esos
   campos dependen del orden de lectura también en el escaneo completo incremental.
+
+### Paso 4: `data:changed` con throttle (D5)
+
+`bench-fast`, `200m`, tres ejecuciones (load 1,5–8,5: carga ajena en la máquina). Estructural:
+**se conserva**.
+
+| Medida | Paso 3 | Paso 4 |
+|---|---|---|
+| `watch`: evento → dato visible (mediana / p95) | 569 ms | 574 ms (571–577) / 579–595 ms (+1 %, dentro del ruido con más carga) |
+| `watch --events 500`: avisos / relecturas / escaneos completos | 500 / 500 / 0 | **4** / 500 / 0 |
+| Separación mínima entre avisos | 3,5 ms | **1 000,1 ms** |
+
+- `perf_scan --phase watch` escucha ahora el notificador real (`data:changed`) en lugar de
+  `on_done`.
+- Un `COMMIT` sin cambios (p. ej. media línea) sube la generación pero no avisa.
+- La limpieza de D10 (log borrado, rotado o truncado) confirma su propia transacción fuera de los
+  lotes: ahora avisa con `Touched::everything()` (antes no subía la generación; un log borrado no
+  habría refrescado la interfaz sin un lote posterior).
+- Los días de las llamadas sumadas por `Deltas` no pasan por `dirty_keys`: se anotan en una tabla
+  temporal del escritor (`temp.touched_days`) que `derived::refresh` lee y vacía.
+- Tarea 4.4: la comprobación manual en `npm run tauri dev` no se hizo (sesión sin interacción
+  gráfica); la cubren `perf_scan --phase watch` (vigilante, ingesta y notificador reales) y los
+  tests de suscripción del frontend.

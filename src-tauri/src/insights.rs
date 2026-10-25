@@ -339,21 +339,8 @@ const BUILD_KEYS: &[&str] = &[
     "cargo check",
 ];
 
-#[cfg(test)]
-thread_local! {
-    static CLASSIFY_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Veces que este hilo ha clasificado un turno (para los tests).
-#[cfg(test)]
-pub fn classify_calls() -> usize {
-    CLASSIFY_CALLS.with(|c| c.get())
-}
-
 /// Actividad de un turno según sus herramientas y la intención de su prompt.
 pub fn classify_turn(t: &TurnStats) -> &'static str {
-    #[cfg(test)]
-    CLASSIFY_CALLS.with(|c| c.set(c.get() + 1));
     let intent = t.intent.as_deref();
     if t.has_edits() {
         return match intent {
@@ -589,149 +576,8 @@ pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<Act
     activity_daily_from(conn, f, tz, &turn_stats(conn, f)?)
 }
 
-/// `activity_daily` con los turnos ya calculados (`turn_stats` del mismo filtro). Con días locales
-/// completos de la zona de la caché agrupa las llamadas en SQL por su día; si no, las recorre.
+/// `activity_daily` con los turnos ya calculados (`turn_stats` del mismo filtro).
 pub fn activity_daily_from(
-    conn: &Connection,
-    f: &Filter,
-    tz: &str,
-    turns: &HashMap<String, TurnStats>,
-) -> Result<Vec<ActivityDay>> {
-    match crate::queries::source(conn, f, Some(tz))? {
-        src @ crate::queries::Source::Days { .. } => {
-            let (w, args) = src.where_sql(f, "c.day");
-            activity_daily_grouped(conn, f, tz, turns, &w, &args)
-        }
-        crate::queries::Source::Detail => activity_daily_detail(conn, f, tz, turns),
-    }
-}
-
-/// Clasificación de cada turno, calculada una vez.
-struct Classes<'a> {
-    turns: &'a HashMap<String, TurnStats>,
-    memo: HashMap<&'a str, &'static str>,
-}
-
-impl<'a> Classes<'a> {
-    fn new(turns: &'a HashMap<String, TurnStats>) -> Self {
-        Classes {
-            turns,
-            memo: HashMap::new(),
-        }
-    }
-
-    fn of(&mut self, id: &str) -> Option<&'static str> {
-        let turns: &'a HashMap<String, TurnStats> = self.turns;
-        let (key, t) = turns.get_key_value(id)?;
-        Some(
-            *self
-                .memo
-                .entry(key.as_str())
-                .or_insert_with(|| classify_turn(t)),
-        )
-    }
-}
-
-/// Lo acumulado por (día local, actividad): coste y turnos.
-type DailyAcc = BTreeMap<(i64, String), (f64, i64)>;
-
-/// Cada turno cuenta una vez: en el día de su primera llamada del periodo o, sin llamadas, en el
-/// de su propia fecha si cae dentro del periodo.
-fn count_turns(
-    acc: &mut DailyAcc,
-    f: &Filter,
-    classes: &mut Classes,
-    first_call: &HashMap<String, i64>,
-    day_of: &dyn Fn(i64) -> i64,
-) {
-    let turns = classes.turns;
-    for (id, t) in turns {
-        let day = match first_call.get(id) {
-            Some(ts) => day_of(*ts),
-            None if t.ts > 0
-                && f.from.is_none_or(|from| t.ts >= from)
-                && f.to.is_none_or(|to| t.ts < to) =>
-            {
-                day_of(t.ts)
-            }
-            None => continue,
-        };
-        let class = classes.of(id).unwrap_or_default();
-        acc.entry((day, class.to_string())).or_default().1 += 1;
-    }
-}
-
-fn into_days(acc: DailyAcc) -> Vec<ActivityDay> {
-    acc.into_iter()
-        .map(|((ts, activity), (cost_usd, turns))| ActivityDay {
-            ts,
-            activity,
-            cost_usd,
-            turns,
-        })
-        .collect()
-}
-
-/// Por agregados: las llamadas sumadas en SQL por (turno, día, actividad) y, sin turno, por
-/// (día, actividad); cada día se convierte a su medianoche local una vez.
-fn activity_daily_grouped(
-    conn: &Connection,
-    f: &Filter,
-    tz: &str,
-    turns: &HashMap<String, TurnStats>,
-    w: &str,
-    args: &[rusqlite::types::Value],
-) -> Result<Vec<ActivityDay>> {
-    let zone = crate::tz::parse(tz);
-    let mut midnights: HashMap<i64, i64> = HashMap::new();
-    let mut day_of = |day: i64, ts: i64| {
-        *midnights
-            .entry(day)
-            .or_insert_with(|| crate::tz::day_start(ts, &zone))
-    };
-    let mut classes = Classes::new(turns);
-    let mut acc = DailyAcc::new();
-    let mut first_call: HashMap<String, i64> = HashMap::new();
-    let mut stmt = conn.prepare(&format!(
-        "SELECT c.turn_id, c.day, c.activity, SUM(c.cost_usd), MIN(c.ts)
-         FROM calls c JOIN sessions s ON s.id = c.session_id
-         WHERE {w} AND c.turn_id IS NOT NULL GROUP BY c.turn_id, c.day, c.activity"
-    ))?;
-    let mut rows = stmt.query(params_from_iter(args.iter()))?;
-    while let Some(r) = rows.next()? {
-        let turn_id: String = r.get(0)?;
-        let min_ts: i64 = r.get(4)?;
-        let act = classes.of(&turn_id).map(str::to_string).unwrap_or_else(|| {
-            r.get::<_, Option<String>>(2)
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "conversation".into())
-        });
-        acc.entry((day_of(r.get::<_, i64>(1)?, min_ts), act))
-            .or_default()
-            .0 += r.get::<_, f64>(3)?;
-        let e = first_call.entry(turn_id).or_insert(min_ts);
-        *e = (*e).min(min_ts);
-    }
-    let mut stmt = conn.prepare(&format!(
-        "SELECT c.day, COALESCE(c.activity, 'conversation'), SUM(c.cost_usd), MIN(c.ts)
-         FROM calls c JOIN sessions s ON s.id = c.session_id
-         WHERE {w} AND c.turn_id IS NULL GROUP BY c.day, 2"
-    ))?;
-    let mut rows = stmt.query(params_from_iter(args.iter()))?;
-    while let Some(r) = rows.next()? {
-        acc.entry((day_of(r.get::<_, i64>(0)?, r.get::<_, i64>(3)?), r.get(1)?))
-            .or_default()
-            .0 += r.get::<_, f64>(2)?;
-    }
-    let local = |ts: i64| crate::tz::day_start(ts, &zone);
-    count_turns(&mut acc, f, &mut classes, &first_call, &local);
-    Ok(into_days(acc))
-}
-
-/// Por detalle: recorre las llamadas del filtro (periodos que no son días completos de la zona
-/// de la caché u otra zona). El gasto se fecha por el día de cada llamada.
-fn activity_daily_detail(
     conn: &Connection,
     f: &Filter,
     tz: &str,
@@ -739,8 +585,8 @@ fn activity_daily_detail(
 ) -> Result<Vec<ActivityDay>> {
     let zone = crate::tz::parse(tz);
     let day_of = |ts: i64| crate::tz::day_start(ts, &zone);
-    let mut classes = Classes::new(turns);
-    let mut acc = DailyAcc::new();
+    let mut acc: BTreeMap<(i64, String), (f64, i64)> = BTreeMap::new();
+
     let (w, args) = f.sql("c.ts");
     let mut stmt = conn.prepare(&format!(
         "SELECT c.turn_id, c.ts, c.cost_usd, c.activity FROM call_costs c JOIN sessions s ON s.id = c.session_id WHERE {w}"
@@ -754,9 +600,9 @@ fn activity_daily_detail(
         let cost: f64 = r.get(2)?;
         let activity: Option<String> = r.get(3)?;
         let act = turn_id
-            .as_deref()
-            .and_then(|id| classes.of(id))
-            .map(str::to_string)
+            .as_ref()
+            .and_then(|id| turns.get(id))
+            .map(|t| classify_turn(t).to_string())
             .unwrap_or_else(|| activity.unwrap_or_else(|| "conversation".into()));
         acc.entry((day_of(ts), act)).or_default().0 += cost;
         if let Some(id) = turn_id {
@@ -764,8 +610,32 @@ fn activity_daily_detail(
             *e = (*e).min(ts);
         }
     }
-    count_turns(&mut acc, f, &mut classes, &first_call, &day_of);
-    Ok(into_days(acc))
+    // Cada turno cuenta una vez: en el día de su primera llamada o, sin llamadas, en el de
+    // su propia fecha si cae dentro del periodo.
+    for (id, t) in turns {
+        let day = match first_call.get(id) {
+            Some(ts) => day_of(*ts),
+            None if t.ts > 0
+                && f.from.is_none_or(|from| t.ts >= from)
+                && f.to.is_none_or(|to| t.ts < to) =>
+            {
+                day_of(t.ts)
+            }
+            None => continue,
+        };
+        acc.entry((day, classify_turn(t).to_string()))
+            .or_default()
+            .1 += 1;
+    }
+    Ok(acc
+        .into_iter()
+        .map(|((ts, activity), (cost_usd, turns))| ActivityDay {
+            ts,
+            activity,
+            cost_usd,
+            turns,
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -810,190 +680,6 @@ mod tests {
             .iter()
             .any(|d| d.activity == "coding" && (d.cost_usd - 3.0).abs() < 1e-9));
         assert_eq!(daily.iter().map(|d| d.turns).sum::<i64>(), 1);
-    }
-
-    // ------------------------------------------------------------ activity_daily por agregados (D7)
-
-    /// 2026-10-20T22:00:00Z: medianoche del 21 en Madrid.
-    const MIDNIGHT: i64 = 1_792_533_600_000;
-    const DAY: i64 = 86_400_000;
-
-    /// Dos agentes, dos proyectos y una sesión sin proyecto; turnos que cruzan días y el límite
-    /// de los periodos, llamadas con y sin turno y herramientas que cambian la clasificación.
-    fn rich() -> Connection {
-        let conn = crate::db::open_in_memory().unwrap();
-        crate::db::set_cache_tz(&conn, "Europe/Madrid").unwrap();
-        conn.execute_batch(
-            "INSERT INTO agents VALUES ('a','A','',0),('b','B','',0);
-             INSERT INTO projects (id,name,cwd,repo_root) VALUES (1,'web','/w','/w'),(2,'api','/a','/a');
-             INSERT INTO sessions (id,agent_id,project_id,started_at,ended_at) VALUES
-               ('s0','a',1,0,0),('s1','a',2,0,0),('s2','b',NULL,0,0),('s3','b',1,0,0);",
-        )
-        .unwrap();
-        let tools = ["Edit", "Bash", "Read", "Task"];
-        for k in 0..14i64 {
-            let ts = MIDNIGHT - DAY + k * 7 * 3_600_000;
-            conn.execute(
-                "INSERT INTO turns (id, session_id, ts, intent) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![
-                    format!("t{k}"),
-                    format!("s{}", k % 4),
-                    ts,
-                    (k % 3 == 0).then_some("debug")
-                ],
-            )
-            .unwrap();
-            for j in 0..(k % 3) {
-                conn.execute(
-                    "INSERT INTO tool_calls (call_id,message_id,session_id,ts,tool,target,is_error,turn_id)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                    rusqlite::params![
-                        format!("u{k}-{j}"),
-                        format!("x{k}"),
-                        format!("s{}", k % 4),
-                        ts + j,
-                        tools[((k + j) % 4) as usize],
-                        format!("f{}", j % 2),
-                        k % 5 == 1,
-                        format!("t{k}")
-                    ],
-                )
-                .unwrap();
-            }
-        }
-        for i in 0..240i64 {
-            let ts = MIDNIGHT - DAY + i * 37 * 60_000;
-            let turn = (i % 5 != 0).then(|| format!("t{}", (i * 14 / 240).min(13)));
-            let activity = ["coding", "conversation", "testing"][(i % 3) as usize];
-            conn.execute(
-                "INSERT INTO calls (message_id,session_id,ts,model,input_tokens,output_tokens,turn_id,activity)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                rusqlite::params![
-                    format!("m{i}"),
-                    format!("s{}", i % 4),
-                    ts,
-                    if i % 2 == 0 { "claude-sonnet-4-5" } else { "claude-haiku-4-5" },
-                    1000 + i * 13,
-                    50 + i,
-                    turn,
-                    (i % 4 != 0).then_some(activity)
-                ],
-            )
-            .unwrap();
-        }
-        crate::derived::refresh(&conn).unwrap();
-        conn
-    }
-
-    fn partitions() -> Vec<(&'static str, Filter, &'static str)> {
-        let span = |from: i64, to: i64| Filter {
-            from: Some(from),
-            to: Some(to),
-            ..Default::default()
-        };
-        vec![
-            ("todo", Filter::default(), "Europe/Madrid"),
-            (
-                "días completos",
-                span(MIDNIGHT, MIDNIGHT + 2 * DAY),
-                "Europe/Madrid",
-            ),
-            (
-                "mitad de día",
-                span(MIDNIGHT + 5 * 3_600_000, MIDNIGHT + DAY),
-                "Europe/Madrid",
-            ),
-            ("otra zona", span(MIDNIGHT, MIDNIGHT + DAY), "UTC"),
-            (
-                "agente y proyecto",
-                Filter {
-                    agents: Some(vec!["a".into()]),
-                    projects: Some(vec![1]),
-                    ..span(MIDNIGHT - DAY, MIDNIGHT + DAY)
-                },
-                "Europe/Madrid",
-            ),
-            (
-                "sin proyecto",
-                Filter {
-                    no_project: true,
-                    ..Default::default()
-                },
-                "Europe/Madrid",
-            ),
-            (
-                "turno que cruza el límite",
-                span(MIDNIGHT + DAY, MIDNIGHT + 3 * DAY),
-                "Europe/Madrid",
-            ),
-        ]
-    }
-
-    fn same(a: &[ActivityDay], b: &[ActivityDay], what: &str) {
-        assert_eq!(a.len(), b.len(), "{what}: {a:?}\n{b:?}");
-        for (x, y) in a.iter().zip(b) {
-            assert_eq!(
-                (x.ts, &x.activity, x.turns),
-                (y.ts, &y.activity, y.turns),
-                "{what}"
-            );
-            assert!(
-                (x.cost_usd - y.cost_usd).abs() <= 1e-9 * x.cost_usd.abs().max(1.0),
-                "{what}: {x:?} {y:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn por_agregados_y_por_detalle_dan_lo_mismo() {
-        let conn = rich();
-        let mut aggregated = 0;
-        for (name, f, tz) in partitions() {
-            let turns = turn_stats(&conn, &f).unwrap();
-            let got = activity_daily(&conn, &f, tz).unwrap();
-            let detail = activity_daily_detail(&conn, &f, tz, &turns).unwrap();
-            assert!(
-                !detail.is_empty() || name == "turno que cruza el límite",
-                "{name}"
-            );
-            same(&got, &detail, name);
-            aggregated += usize::from(matches!(
-                crate::queries::source(&conn, &f, Some(tz)).unwrap(),
-                crate::queries::Source::Days { .. }
-            ));
-        }
-        assert!(aggregated >= 4, "{aggregated}");
-    }
-
-    #[test]
-    fn por_agregados_agrupa_en_sql_y_no_lee_una_fila_por_llamada() {
-        let conn = rich();
-        let log = crate::db::trace::start(&conn);
-        activity_daily(&conn, &Filter::default(), "Europe/Madrid").unwrap();
-        let sql: Vec<String> = crate::db::trace::take(log)
-            .into_iter()
-            .map(|e| e.sql)
-            .collect();
-        let daily: Vec<&String> = sql
-            .iter()
-            .filter(|s| s.contains("FROM calls") || s.contains("FROM call_costs"))
-            .collect();
-        assert!(!daily.is_empty());
-        assert!(
-            daily.iter().all(|s| s.contains("GROUP BY")),
-            "una fila por llamada: {daily:?}"
-        );
-    }
-
-    #[test]
-    fn cada_turno_se_clasifica_una_vez() {
-        let conn = rich();
-        for (name, f, tz) in partitions() {
-            let turns = turn_stats(&conn, &f).unwrap().len();
-            let before = classify_calls();
-            activity_daily(&conn, &f, tz).unwrap();
-            assert_eq!(classify_calls() - before, turns, "{name}");
-        }
     }
 
     fn turn(intent: Option<&str>, tools: &[(&str, &str, bool)]) -> TurnStats {

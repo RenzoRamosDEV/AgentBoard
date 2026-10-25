@@ -6,8 +6,8 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 
 ## 1. Perfil de desarrollo (D4)
 
-- [ ] 1.1 Medir la partida: `touch src-tauri/src/lib.rs && time cargo build --workspace` tres veces (mediana) y `time cargo test --workspace`; anotar en design.md («Desviaciones»)
-- [ ] 1.2 Añadir `[profile.dev.package."*"] opt-level = 3` y `[profile.dev] opt-level = 1`; repetir la medición de 1.1; conservar `opt-level = 1` solo si la recompilación incremental no crece > 20 %, si no quitarla; anotar cifras y decisión en «Desviaciones»; verificar `cargo test --workspace` en verde y que `[profile.release]` no cambia (`git diff src-tauri/Cargo.toml`)
+- [x] 1.1 Medir la partida: `touch src-tauri/src/lib.rs && time cargo build --workspace` tres veces (mediana) y `time cargo test --workspace`; anotar en design.md («Desviaciones»)
+- [x] 1.2 Añadir `[profile.dev.package."*"] opt-level = 3` y `[profile.dev] opt-level = 1`; repetir la medición de 1.1; conservar `opt-level = 1` solo si la recompilación incremental no crece > 20 %, si no quitarla; anotar cifras y decisión en «Desviaciones»; verificar `cargo test --workspace` en verde y que `[profile.release]` no cambia (`git diff src-tauri/Cargo.toml`)
 
 ## 2. Script de comparación (D2)
 

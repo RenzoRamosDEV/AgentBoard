@@ -127,4 +127,13 @@ Rama propia del script de comparación (`scripts/bench-compare.py`): mutador de 
 
 ## Desviaciones durante la implementación
 
-<!-- Se rellena durante la implementación: medición de D4, primera línea base (commit, CPU), mutación (D7). -->
+### D4: medición del perfil de desarrollo (tareas 1.1–1.2)
+
+Distrobox `agentburn-dev`, Ryzen 5 Pro 7535U con carga variable, compilación ya caliente; `touch src-tauri/src/lib.rs && cargo build --workspace` tres veces.
+
+| Perfil dev | Recompilación incremental (3 tandas) | Mediana | `touch` + `cargo test --workspace` |
+|---|---|---|---|
+| Partida (sin `[profile.dev]`) | 7,12 / 5,44 / 5,27 s | 5,44 s | 25,8 s |
+| `opt-level = 1` + dependencias `opt-level = 3` | 5,70 / 6,34 / 5,07 s | 5,70 s | 20,3 s |
+
++4,8 % en la mediana, por debajo del 20 %: se conserva `opt-level = 1`. `cargo test --workspace` en verde (265 + 70 tests); `[profile.release]` sin cambios (`git diff src-tauri/Cargo.toml` solo añade las dos secciones dev).

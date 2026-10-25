@@ -35,6 +35,12 @@ tempfile = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

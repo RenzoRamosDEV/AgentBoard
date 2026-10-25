@@ -37,13 +37,30 @@ binario nativo para Linux, Windows y macOS.
   modelo, proyecto, actividad, herramienta…), siempre respetando el filtro común.
 - **Precios.** `pricing.rs` guarda el precio por modelo (USD por millón de tokens) y calcula
   coste y ahorro por caché. Los modelos sin precio conocido cuentan como 0.
-- **Vigilante en vivo.** `watcher.rs` usa el crate `notify` para observar las carpetas de logs y
-  releer al vuelo cuando algo cambia, agrupando ráfagas de escrituras (debounce).
+- **Vigilante en vivo.** `watcher.rs` usa el crate `notify` para observar las carpetas de logs.
+  Descarta los eventos de solo acceso y las rutas que ningún provider reconoce (los `-wal`/`-shm`
+  de una base SQLite cuentan como la base), agrupa los eventos **por archivo** (200 ms de calma,
+  1 s como máximo para un log que no para de crecer) y pide al hilo de ingesta la **relectura
+  dirigida** de esos archivos (`ingest::scan_paths`: misma tubería que el escaneo completo, sin
+  recorrer las raíces; la limpieza de archivos borrados, rotados o truncados se aplica a ellos y a
+  sus archivos relacionados). No hay sondeo: sin eventos ningún hilo se despierta. Una carpeta de
+  logs que aún no existe se espera vigilando su antepasado existente más profundo; al aparecer se
+  vigila entera y se leen los archivos que ya tenga. Solo una raíz que existe pero no se puede
+  vigilar (p. ej. `max_user_watches`) se relee cada 30 s. Si el SO pierde eventos, escaneo
+  completo.
+- **Eventos a la interfaz.** Tras cada transacción con cambios, el hilo de ingesta pasa la
+  generación y lo cambiado (agentes y días) al notificador (`notifier.rs`), que emite
+  `data:changed { generation, agents, days }` como mucho una vez por segundo: el primero tras un
+  segundo de calma sale al momento y los siguientes se agrupan. No lleva filas: la interfaz pide
+  los datos que muestra. Listas vacías significan «puede haber cambiado todo» (precios, limpieza,
+  reconstrucción). Con cada aviso se refrescan también la bandeja y los avisos de presupuesto.
+  `ingest://done` (con sus estadísticas) queda solo para el fin del escaneo inicial y del de una
+  reconstrucción, que es lo que espera «Reconstruir caché».
 - **Trazas.** `telemetry.rs` configura `tracing`. Por defecto el nivel es `warn`: solo salen
   avisos y errores por stderr. Con la variable `AGENTBOARD_LOG` (sintaxis de `EnvFilter`, p. ej.
   `AGENTBOARD_LOG=debug` o `AGENTBOARD_LOG=agentboard_lib::ingest=debug`) se activan los spans
   del escaneo, la ingesta por archivo, la transacción de inserción, los comandos, las consultas
-  y la emisión de `ingest://done`, cada uno con su duración (`time.busy`). Un valor no válido
+  y la emisión de `ingest://done` y `data:changed`, cada uno con su duración (`time.busy`). Un valor no válido
   se ignora (queda `warn`). Las trazas van siempre a stderr, nunca a stdout (el servidor MCP
   usa stdout para JSON-RPC).
 

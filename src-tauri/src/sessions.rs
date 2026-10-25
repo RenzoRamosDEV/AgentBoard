@@ -1435,7 +1435,10 @@ mod tests {
         // Un turno justo en la compactación cuenta después; la razón es después / antes.
         assert_eq!(
             after_compaction(&[(0, 2.0), (10, 4.0), (20, 4.0)], &[10]),
-            Some(AfterCompaction { k: 1, ratio: Some(2.0) })
+            Some(AfterCompaction {
+                k: 1,
+                ratio: Some(2.0)
+            })
         );
     }
 }

@@ -173,11 +173,29 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
             );
         }
     }
+    // Identidad y tamaño de cada archivo JSONL, una sola vez: los usan la limpieza y el plan.
+    let seen: Vec<Option<(String, i64)>> = found
+        .iter()
+        .map(|(i, path)| {
+            (providers[*i].source() == Source::Jsonl)
+                .then(|| {
+                    fs::metadata(path)
+                        .ok()
+                        .map(|m| (file_identity(&m), m.len() as i64))
+                })
+                .flatten()
+        })
+        .collect();
+    let index: HashMap<&std::ffi::OsStr, usize> = found
+        .iter()
+        .enumerate()
+        .map(|(k, (_, path))| (path.as_os_str(), k))
+        .collect();
     let states = {
         let conn = &mut *db.conn;
         register_agents(conn, providers)?;
         let tracked = load_tracked(conn)?;
-        let states = if forget_stale_files(conn, providers, &found, &tracked)? {
+        let states = if forget_stale_files(conn, providers, &found, &seen, &index, &tracked)? {
             load_file_states(conn)?
         } else {
             tracked
@@ -199,11 +217,9 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
     };
     let mut stats = ScanStats::default();
     let mut jobs = Vec::new();
-    for (i, path) in found {
+    for ((i, path), seen) in found.into_iter().zip(seen) {
         // Los archivos sin cambios se descartan aquí, sin abrirlos ni ocupar un lector.
-        if providers[i].source() == Source::Jsonl
-            && is_unchanged(&path, states.get(path.to_string_lossy().as_ref()))
-        {
+        if is_unchanged(seen.as_ref(), states.get(path.to_string_lossy().as_ref())) {
             stats.files += 1;
         } else {
             jobs.push(Job { provider: i, path });
@@ -484,24 +500,21 @@ fn forget_stale_files(
     conn: &mut Connection,
     providers: &[Box<dyn Provider>],
     found: &[(usize, PathBuf)],
+    seen: &[Option<(String, i64)>],
+    index: &HashMap<&std::ffi::OsStr, usize>,
     tracked: &[Tracked],
 ) -> Result<bool> {
-    let present: HashMap<String, usize> = found
-        .iter()
-        .map(|(i, path)| (path.to_string_lossy().into_owned(), *i))
-        .collect();
     let agents: Vec<&str> = providers.iter().map(|p| p.id()).collect();
     let (mut gone, mut changed) = (Vec::new(), Vec::new());
     for t in tracked {
         if !agents.contains(&t.agent.as_str()) {
             continue;
         }
-        match present.get(&t.path) {
+        match index.get(std::ffi::OsStr::new(&t.path)) {
             None => gone.push(t.id),
-            Some(i) if providers[*i].source() == Source::Jsonl => {
-                let replaced = fs::metadata(&t.path).is_ok_and(|m| {
-                    (!t.file_id.is_empty() && file_identity(&m) != t.file_id)
-                        || (m.len() as i64) < t.offset
+            Some(k) if providers[found[*k].0].source() == Source::Jsonl => {
+                let replaced = seen[*k].as_ref().is_some_and(|(identity, len)| {
+                    (!t.file_id.is_empty() && *identity != t.file_id) || *len < t.offset
                 });
                 if replaced {
                     changed.push(t.id);
@@ -571,12 +584,11 @@ pub fn load_file_states(conn: &Connection) -> Result<HashMap<String, FileState>>
 
 /// Misma identidad y nada tras el offset guardado. Si no se puede consultar, no se da por
 /// igual: la lectura dirá el error.
-fn is_unchanged(path: &Path, prev: Option<&FileState>) -> bool {
-    let Some(prev) = prev else {
-        return false;
-    };
-    fs::metadata(path)
-        .is_ok_and(|m| file_identity(&m) == prev.file_id && m.len() as i64 == prev.offset)
+fn is_unchanged(seen: Option<&(String, i64)>, prev: Option<&FileState>) -> bool {
+    match (seen, prev) {
+        (Some((identity, len)), Some(prev)) => *identity == prev.file_id && *len == prev.offset,
+        _ => false,
+    }
 }
 
 /// Lo nuevo de un archivo, ya parseado y listo para escribir.

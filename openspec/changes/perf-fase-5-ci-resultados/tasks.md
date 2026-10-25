@@ -22,13 +22,13 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 
 ## 4. Línea base en el runner (D1)
 
-- [ ] 4.1 Documentar en `CONTRIBUTING.md` («Benchmarks en CI y línea base»: qué compara, cómo leer el fallo, cómo descargar `perf-baseline` con `gh run download <id> -n perf-baseline` y versionarlo como `docs/perf/baseline.json`) y mencionar el job en «Integración continua» de `CONTRIBUTING.md` y de `docs/wiki/Arquitectura.md`; verificar que los comandos documentados coinciden con los del job
+- [x] 4.1 Documentar en `CONTRIBUTING.md` («Benchmarks en CI y línea base»: qué compara, cómo leer el fallo, cómo descargar `perf-baseline` con `gh run download <id> -n perf-baseline` y versionarlo como `docs/perf/baseline.json`) y mencionar el job en «Integración continua» de `CONTRIBUTING.md` y de `docs/wiki/Arquitectura.md`; verificar que los comandos documentados coinciden con los del job
 - [ ] 4.2 Primera línea base: ejecutar el workflow en la rama (push o `gh workflow run ci.yml --ref perf/rendimiento-fluido`), comprobar que `bench` falla con «no hay línea base» y publica `perf-baseline`, versionar el artefacto como `docs/perf/baseline.json` (commit `perf(ci): …`) y verificar que la siguiente ejecución de `bench` queda en verde; anotar commit, runner y CPU en «Desviaciones». Si no hay acceso a CI desde el entorno, dejar la tarea pendiente y avisar al usuario de que este paso es manual
 
 ## 5. Documentación y resultados (D5, D6)
 
 - [x] 5.1 Añadir a `docs/wiki/Arquitectura.md` la sección «Hilos y canales de la ingesta» con el diagrama Mermaid de D5; verificar que cada nodo existe en el código (`watcher.rs`, `Job::Rescan`, `ingest_thread.rs`, `derived::refresh`, `notifier.rs`, `data:changed`, `src/lib/query.ts`, `get_dashboard_snapshot`, `ReadPool`) y que el bloque Mermaid es sintácticamente válido (p. ej. `npx -y @mermaid-js/mermaid-cli` puntual o vista previa de GitHub)
-- [ ] 5.2 Añadir a `CONTRIBUTING.md` la guía «Cómo perfilar» de D5 enlazando el diagrama; verificar ejecutando en local `AGENTBOARD_LOG=debug cargo run --example scan` (unos segundos), `perf_scan --fixtures target/perf-fixtures/50m --phase queries` con `bench-fast` y `node scripts/perf-ui.mjs --runs=1`
+- [x] 5.2 Añadir a `CONTRIBUTING.md` la guía «Cómo perfilar» de D5 enlazando el diagrama; verificar ejecutando en local `AGENTBOARD_LOG=debug cargo run --example scan` (unos segundos), `perf_scan --fixtures target/perf-fixtures/50m --phase queries` con `bench-fast` y `node scripts/perf-ui.mjs --runs=1`
 - [ ] 5.3 Escribir `docs/perf/RESULTS.md` (D6): tabla por presupuesto con antes, después, estado y sección de origen en `BASELINE.md`, reproducción, «Lo que no se hizo o no se cumplió» con cifra y motivo, y próximos pasos; enlazarlo desde `README.md` («Desarrollo») y desde el inicio de `BASELINE.md`; verificar cada cifra contra `BASELINE.md` y que el documento no presenta como cumplido nada que `BASELINE.md` da como no cumplido
 
 ## 6. Comprobaciones finales

@@ -159,3 +159,7 @@ En distrobox, mismos comandos que el job: `gen-fixtures.py 50m` (1,4 s, 397 arch
 ### Diagrama de hilos y canales (tarea 5.1)
 
 Nodos comprobados en el código: `watcher.rs` (`QUIET` 150 ms, `MAX_WAIT` 1 s, `mpsc` desde el callback de `notify`), `Job::Rescan`/`Job::Scan` por el `mpsc` de `IngestThread`, `derived::refresh` dentro de la transacción de cada lote (`ingest.rs`, devuelve `Touched`), `notifier::INTERVAL` 1 s, `emit("data:changed")` en `lib.rs`, `lib/live.ts` → `setGeneration`, `lib/query.ts`, `get_dashboard_snapshot` (`commands.rs`) y `ReadPool` (`db.rs`). Validación de Mermaid: `npx @mermaid-js/mermaid-cli` no se pudo ejecutar (descarga de código externo denegada en este entorno); se comprobó la gramática con un analizador propio de las líneas (`flowchart TD`, 11 nodos, todas las aristas entre nodos declarados, etiquetas entre comillas). Queda pendiente ver la vista previa de GitHub tras el push.
+
+### Guía «Cómo perfilar» (tareas 4.1 y 5.2)
+
+Comprobado en local: `AGENTBOARD_LOG=debug cargo run --example scan` (código 0, 988 líneas de trazas; con `| head` sale 101 por la tubería cerrada, no por el ejemplo), `perf_scan --fixtures target/perf-fixtures/50m --phase queries` con `bench-fast` (código 0; RSS pico 40,8 MiB) y `node scripts/perf-ui.mjs --runs=1` (código 0; S1 en caché 33,3 ms, S2 en frío 133,3 ms, S5 133,2 ms, iguales a la Fase 4). Los comandos de «Benchmarks en CI y línea base» son los del job, en el mismo orden. La sección «Integración continua» de `CONTRIBUTING.md` y la de `docs/wiki/Arquitectura.md` mencionan el job `bench`.

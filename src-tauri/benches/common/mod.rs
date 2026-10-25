@@ -751,11 +751,36 @@ pub fn value_hash(v: &serde_json::Value) -> u64 {
     hash_into(FNV_OFFSET, v)
 }
 
+/// mtime (ms) con la que se grabaron los golden para los archivos del fixture de Cursor: sus
+/// líneas no llevan fecha y se fechan desde el mtime, que tras un `git checkout` es la hora del
+/// checkout. Git no versiona el mtime, así que fijarlo no cambia el repositorio.
+const CURSOR_FIXTURE_MTIMES: &[(&str, u64)] = &[
+    (
+        "-home-dev-Proyectos-demo/agent-transcripts/1031d227-0c67-4e17-8954-0b6e2b3322f0/1031d227-0c67-4e17-8954-0b6e2b3322f0.jsonl",
+        1_790_342_056_078,
+    ),
+    (
+        "-home-dev-Proyectos-demo/agent-transcripts/1031d227-0c67-4e17-8954-0b6e2b3322f0/subagents/sub-1.jsonl",
+        1_790_342_056_080,
+    ),
+];
+
+fn pin_cursor_fixture_mtimes(projects: &Path) -> Result<()> {
+    for (rel, ms) in CURSOR_FIXTURE_MTIMES {
+        std::fs::File::options()
+            .write(true)
+            .open(projects.join(rel))?
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_millis(*ms))?;
+    }
+    Ok(())
+}
+
 /// Proveedores sobre los fixtures versionados (`tests/fixtures`); OpenCode necesita su base, que
-/// se crea en `scratch` a partir del SQL versionado.
+/// se crea en `scratch` a partir del SQL versionado, y Cursor sus mtimes fijas.
 pub fn versioned_fixture_providers(scratch: &Path) -> Result<Vec<Box<dyn Provider>>> {
     use agentboard_lib::providers::opencode::OpenCode;
     let fx = manifest_dir().join("../tests/fixtures");
+    pin_cursor_fixture_mtimes(&fx.join("cursor/projects"))?;
     let oc_root = scratch.join("opencode");
     std::fs::create_dir_all(&oc_root)?;
     let sql = std::fs::read_to_string(fx.join("opencode/opencode.sql"))?;

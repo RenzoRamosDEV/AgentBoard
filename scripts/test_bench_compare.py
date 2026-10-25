@@ -291,6 +291,72 @@ class Capture(Base):
         self.assertIn("no hay resultados de criterion", err)
 
 
+class CaptureFile(Base):
+    def capture(self, out_path: Path, runner: str = "ubuntu-22.04"):
+        return self.run_main(
+            "capture",
+            "--criterion-dir",
+            str(self.crit),
+            "--out",
+            str(out_path),
+            "--runner",
+            runner,
+        )
+
+    def test_crea_carpetas_anidadas_y_sobrescribe(self):
+        write_bench(self.crit, "parse_line/codex", 100.0)
+        out_path = self.tmp / "a" / "b" / "candidate.json"
+        self.assertEqual(self.capture(out_path)[0], 0)
+        write_bench(self.crit, "parse_line/codex", 200.0)
+        self.assertEqual(self.capture(out_path)[0], 0)
+        self.assertEqual(
+            json.loads(out_path.read_text())["benchmarks"], {"parse_line/codex": 200.0}
+        )
+
+    def test_json_legible_sin_escapar(self):
+        write_bench(self.crit, "parse_line/codex", 100.0)
+        out_path = self.tmp / "candidate.json"
+        self.capture(out_path, runner="portátil")
+        text = out_path.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith('{\n  "version": 1,'), text[:40])
+        self.assertIn('"runner": "portátil"', text)
+
+
+class CpuModel(Base):
+    def test_lee_el_modelo_completo_de_cpuinfo(self):
+        cpuinfo = self.tmp / "cpuinfo"
+        cpuinfo.write_text(
+            "processor\t: 0\nvendor_id\t: X\n"
+            "model name\t: Intel(R) Xeon(R) CPU @ 2.80GHz: rev 2\n"
+        )
+        self.assertEqual(
+            self.mod.cpu_model(cpuinfo), "Intel(R) Xeon(R) CPU @ 2.80GHz: rev 2"
+        )
+
+    def test_sin_cpuinfo_o_sin_modelo(self):
+        empty = self.tmp / "vacio"
+        empty.write_text("processor\t: 0\n")
+        self.assertEqual(self.mod.cpu_model(self.tmp / "no-existe"), "desconocida")
+        self.assertEqual(self.mod.cpu_model(empty), "desconocida")
+
+
+class Cli(Base):
+    def test_argumentos_obligatorios(self):
+        cases = [
+            [],
+            ["capture", "--out", "x.json"],
+            ["capture", "--criterion-dir", "d"],
+            ["compare", "--baseline", "b.json"],
+            ["compare", "--criterion-dir", "d"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as ctx:
+                        self.mod.main(argv)
+                self.assertEqual(ctx.exception.code, 2)
+
+
 class GoldenReport(Base):
     def test_informe_markdown(self):
         doc = baseline_doc(

@@ -13,7 +13,7 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 
 - [x] 2.1 Tests en rojo en `scripts/test_bench_compare.py` (`unittest`, árbol falso de criterion en un directorio temporal con `new/`, `base/` y `change/`): lectura por `full_id` (incluido `summary_queries/breakdown(project)`) e ignorando `base/`/`change/`; `compare` con mejora, igual, +19,99 %, exactamente +20 % (pasa), +20,01 % y +25 % (fallan, código 1, mensaje con nombre, ambos valores y porcentaje); bench de la línea base ausente (código 1, pide actualizar la línea base); bench nuevo («sin línea base», código 0); sin archivo de línea base, carpeta sin resultados y JSON mal formado (código 2); aviso de CPU distinta sin fallar; `capture` escribe `version`, `statistic`, `unit`, `captured` y `benchmarks`, y su salida usada como línea base da código 0; golden del informe Markdown en `scripts/__golden__/bench-report.md`; verificar con `python3 -m unittest scripts/test_bench_compare.py` que fallan
 - [x] 2.2 Implementar `scripts/bench-compare.py` (solo biblioteca estándar, subcomandos `capture` y `compare`, `--threshold` 0,20 por defecto); verificar 2.1 en verde y, en local sobre `src-tauri/target/criterion` real, que `capture` + `compare` contra su propia salida da código 0
-- [ ] 2.3 Mutación dirigida (D7) del script con un mutador de operadores propio, corte a 3 min; verificar > 95 % o supervivientes equivalentes justificados en «Desviaciones»
+- [x] 2.3 Mutación dirigida (D7) del script con un mutador de operadores propio, corte a 3 min; verificar > 95 % o supervivientes equivalentes justificados en «Desviaciones»
 
 ## 3. Job de benchmarks en CI (D1, D3)
 

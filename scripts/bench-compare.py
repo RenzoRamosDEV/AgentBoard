@@ -64,9 +64,9 @@ def load_baseline(path: Path) -> dict:
     return doc
 
 
-def cpu_model() -> str:
+def cpu_model(cpuinfo: Path = Path("/proc/cpuinfo")) -> str:
     try:
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
+        for line in cpuinfo.read_text().splitlines():
             if line.startswith("model name"):
                 return line.split(":", 1)[1].strip()
     except OSError:

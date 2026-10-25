@@ -136,4 +136,11 @@ Distrobox `agentburn-dev`, Ryzen 5 Pro 7535U con carga variable, compilación ya
 | Partida (sin `[profile.dev]`) | 7,12 / 5,44 / 5,27 s | 5,44 s | 25,8 s |
 | `opt-level = 1` + dependencias `opt-level = 3` | 5,70 / 6,34 / 5,07 s | 5,70 s | 20,3 s |
 
-+4,8 % en la mediana, por debajo del 20 %: se conserva `opt-level = 1`. `cargo test --workspace` en verde (265 + 70 tests); `[profile.release]` sin cambios (`git diff src-tauri/Cargo.toml` solo añade las dos secciones dev).
++4,8 % en la mediana, por debajo del 20 %: se conserva `opt-level = 1`. `cargo test --workspace` en verde (265 + 62 tests); `[profile.release]` sin cambios (`git diff src-tauri/Cargo.toml` solo añade las dos secciones dev).
+
+### D7: mutación de `scripts/bench-compare.py` (tarea 2.3)
+
+`mutmut` y `cosmic-ray` no están instalados (sin red para instalarlos sin dependencias nuevas), así que se usó un mutador de operadores propio sobre el AST (fuera del repositorio): comparaciones (`>`↔`>=`, `<`↔`<=`, `==`↔`!=`, `in`↔`not in`, `is`↔`is not`), constantes numéricas (`0`→`1`, resto→`0`), booleanos, `and`↔`or`, quitar `not`, aritmética (`+`↔`-`, `*`↔`/`), `return x`→`return None` y negar la condición de las expresiones condicionales; un mutante por sitio, la suite completa por mutante, corte a 3 min.
+
+- Primera pasada: 62 mutantes, 49 muertos (79,0 %, 8,8 s). Huecos reales: `cpu_model` sin test (se le inyecta la ruta de `cpuinfo` con `/proc/cpuinfo` por defecto), el formato legible del JSON capturado (`indent`, `ensure_ascii`), la creación de carpetas anidadas y la sobrescritura de la candidata, y los argumentos obligatorios de la CLI. Se añadieron 5 tests (22 en total).
+- Segunda pasada: 62 mutantes, 61 muertos (**98,4 %**, 9,7 s). Superviviente equivalente: `__doc__.splitlines()[0]` → `[1]` en la descripción de `argparse`; solo cambia el texto de `--help`.

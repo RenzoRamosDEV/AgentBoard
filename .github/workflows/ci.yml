@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   frontend:
@@ -56,3 +57,60 @@ jobs:
         run: cargo build --manifest-path src-tauri/Cargo.toml --workspace --bins
       - name: Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
+
+  bench:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencias del sistema (WebKitGTK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Los benches enlazan agentboard_lib, cuyo `generate_context!` necesita ../dist.
+      - name: Frontend (genera dist)
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: bench
+      - name: Tests del comparador
+        run: python3 -m unittest scripts/test_bench_compare.py
+      - name: Fixture sintético de 50 MB
+        run: python3 scripts/gen-fixtures.py 50m
+      # Sin resultados de ejecuciones anteriores que pudiera restaurar la caché.
+      - name: Limpiar resultados de criterion
+        run: rm -rf src-tauri/target/criterion
+      - name: Benchmarks (bench-fast)
+        run: cargo bench --manifest-path src-tauri/Cargo.toml --profile bench-fast --bench parse_line --bench ingest_file --bench summary_queries
+      # La candidata se captura antes de comparar para que exista aunque la comparación falle.
+      - name: Línea base candidata
+        if: always()
+        run: >-
+          python3 scripts/bench-compare.py capture
+          --criterion-dir src-tauri/target/criterion
+          --out src-tauri/target/baseline-candidate.json
+          --commit "${{ github.sha }}"
+          --runner ubuntu-22.04
+          --profile bench-fast
+      - name: Publicar la línea base candidata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline
+          path: src-tauri/target/baseline-candidate.json
+          if-no-files-found: warn
+      # `shell: bash` activa pipefail: el código de salida del comparador no se pierde en el `tee`.
+      - name: Comparar con docs/perf/baseline.json
+        shell: bash
+        run: >-
+          python3 scripts/bench-compare.py compare
+          --criterion-dir src-tauri/target/criterion
+          --baseline docs/perf/baseline.json
+          | tee -a "$GITHUB_STEP_SUMMARY"

@@ -144,3 +144,10 @@ Distrobox `agentburn-dev`, Ryzen 5 Pro 7535U con carga variable, compilación ya
 
 - Primera pasada: 62 mutantes, 49 muertos (79,0 %, 8,8 s). Huecos reales: `cpu_model` sin test (se le inyecta la ruta de `cpuinfo` con `/proc/cpuinfo` por defecto), el formato legible del JSON capturado (`indent`, `ensure_ascii`), la creación de carpetas anidadas y la sobrescritura de la candidata, y los argumentos obligatorios de la CLI. Se añadieron 5 tests (22 en total).
 - Segunda pasada: 62 mutantes, 61 muertos (**98,4 %**, 9,7 s). Superviviente equivalente: `__doc__.splitlines()[0]` → `[1]` en la descripción de `argparse`; solo cambia el texto de `--help`.
+
+### D3: dos pasos añadidos al job `bench` (tarea 3.1)
+
+- `rm -rf src-tauri/target/criterion` antes de `cargo bench`: `rust-cache` restaura `target/` y unos `new/` de una ejecución anterior ocultarían un benchmark eliminado o renombrado (no saldría «AUSENTE»).
+- `shell: bash` en el paso de comparación: el shell por defecto de `run` es `bash -e` sin `pipefail`, y el `| tee -a "$GITHUB_STEP_SUMMARY"` se tragaría el código 1/2 del comparador.
+
+`actionlint .github/workflows/ci.yml` y `yaml.safe_load` sin errores; los jobs `frontend` y `rust` no cambian.

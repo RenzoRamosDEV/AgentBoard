@@ -35,8 +35,8 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 6. Agrupaciones y gráficos (D7)
 
-- [ ] 6.1 Tests en rojo: extraer y probar como funciones puras las derivaciones de `RankingCard` (cabeza y «Otros» con métrica suma y de tasa, `limit` 1/2/n), `EvolutionCard` (ranking de claves, `maxKeys`, pilas por cubo) y las pilas de `DailyPanel`/`ActivityFull`/`Overview`, con golden de sus salidas sobre los datos del mock en `src/views/__tests__/__golden__/derivaciones.json` grabado con el código de hoy; test del invariante de animaciones (D7); verificar que fallan
-- [ ] 6.2 Implementar D7 (`useMemo` por dato y métrica, `memo` en `Charts.tsx`, sin `sort` fuera de memos en `Section.tsx`, `sections.tsx`, `panels.tsx` y `Overview.tsx`); verificar 6.1 con el golden sin regrabar, `npm test`, `npm run build`, el aspecto, y medir aplicando la regla
+- [x] 6.1 Tests en rojo: extraer y probar como funciones puras las derivaciones de `RankingCard` (cabeza y «Otros» con métrica suma y de tasa, `limit` 1/2/n), `EvolutionCard` (ranking de claves, `maxKeys`, pilas por cubo) y las pilas de `DailyPanel`/`ActivityFull`/`Overview`, con golden de sus salidas sobre los datos del mock en `src/views/__tests__/__golden__/derivaciones.json` grabado con el código de hoy; test del invariante de animaciones (D7); verificar que fallan
+- [x] 6.2 Implementar D7 (`useMemo` por dato y métrica, `memo` en `Charts.tsx`, sin `sort` fuera de memos en `Section.tsx`, `sections.tsx`, `panels.tsx` y `Overview.tsx`); verificar 6.1 con el golden sin regrabar, `npm test`, `npm run build`, el aspecto, y medir aplicando la regla
 
 ## 7. Cubo temporal en Rust (D8)
 

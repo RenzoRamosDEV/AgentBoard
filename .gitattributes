@@ -1,0 +1,6 @@
+# Los golden y los fixtures se comparan byte a byte: en Windows, core.autocrlf los pasaría a CRLF
+# al hacer checkout y la salida de los tests (LF) dejaría de coincidir.
+src-tauri/tests/golden/** text eol=lf
+scripts/__golden__/** text eol=lf
+src/**/__golden__/** text eol=lf
+tests/fixtures/** text eol=lf

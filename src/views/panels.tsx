@@ -2,7 +2,7 @@
  * Cada apartado como par tabla + gráfico, reutilizado por la vista general (recortado)
  * y por la vista ampliada (completo).
  */
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { ActivityRow, BreakdownRow, Point } from "../lib/api";
 import { activityColor, activityLabel, agentColor, fmt, modelName } from "../lib/format";
 import type { DashboardData } from "../lib/useData";
@@ -120,126 +120,123 @@ const metricOf = (m: DailyMetric) => ({
 export function DailyFull({ data }: { data: DashboardData }) {
   const [metric, setMetric] = useState<DailyMetric>("cost");
   const [split, setSplit] = useState<DailySplit>("total");
-  const { m, points, legend, splitNote, cumulative, acc, hourPoints, busiest, columns, rows } = useMemo(() => {
-    const m = metricOf(metric);
-    const days = dayPoints(data.daily, data.filter);
-    const b = bucketing(data.daily, data.filter);
-    // Totales por cubo (día o mes) para la métrica elegida.
-    const byDay = new Map<number, { costUsd: number; calls: number; sessions: number; outputTokens: number }>();
-    for (const p of data.daily) {
-      const e = byDay.get(b.key(p.ts)) ?? { costUsd: 0, calls: 0, sessions: 0, outputTokens: 0 };
-      e.costUsd += p.costUsd;
-      e.calls += p.calls;
-      e.sessions += p.sessions;
-      e.outputTokens += p.outputTokens;
-      byDay.set(b.key(p.ts), e);
-    }
+  const m = metricOf(metric);
+  const days = dayPoints(data.daily, data.filter);
+  const b = bucketing(data.daily, data.filter);
+  // Totales por cubo (día o mes) para la métrica elegida.
+  const byDay = new Map<number, { costUsd: number; calls: number; sessions: number; outputTokens: number }>();
+  for (const p of data.daily) {
+    const e = byDay.get(b.key(p.ts)) ?? { costUsd: 0, calls: 0, sessions: 0, outputTokens: 0 };
+    e.costUsd += p.costUsd;
+    e.calls += p.calls;
+    e.sessions += p.sessions;
+    e.outputTokens += p.outputTokens;
+    byDay.set(b.key(p.ts), e);
+  }
 
-    // Series apiladas por agente o actividad.
-    const seriesByDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
-    const legend = new Map<string, { label: string; color: string }>();
-    if (split === "agent") {
-      const order = data.agents.map((a) => a.key);
-      for (const s of data.dailyByAgent) {
-        const color = agentColor(s.key, Math.max(order.indexOf(s.key), 0));
-        legend.set(s.key, { label: s.label, color });
-        const list = seriesByDay.get(b.key(s.ts)) ?? [];
-        const cur = list.find((x) => x.key === s.key);
-        if (cur) cur.value += m.value(s);
-        else list.push({ key: s.key, label: s.label, value: m.value(s), color });
-        seriesByDay.set(b.key(s.ts), list);
-      }
-    } else if (split === "activity") {
-      for (const d of data.activityDaily) {
-        const color = activityColor(d.activity);
-        legend.set(d.activity, { label: activityLabel(d.activity), color });
-        const list = seriesByDay.get(b.key(d.ts)) ?? [];
-        // La actividad se calcula por turno: coste o turnos (no hay tokens por actividad).
-        const cur = list.find((x) => x.key === d.activity);
-        if (cur) cur.value += metric === "cost" ? d.costUsd : d.turns;
-        else list.push({ key: d.activity, label: activityLabel(d.activity), value: metric === "cost" ? d.costUsd : d.turns, color });
-        seriesByDay.set(b.key(d.ts), list);
-      }
+  // Series apiladas por agente o actividad.
+  const seriesByDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
+  const legend = new Map<string, { label: string; color: string }>();
+  if (split === "agent") {
+    const order = data.agents.map((a) => a.key);
+    for (const s of data.dailyByAgent) {
+      const color = agentColor(s.key, Math.max(order.indexOf(s.key), 0));
+      legend.set(s.key, { label: s.label, color });
+      const list = seriesByDay.get(b.key(s.ts)) ?? [];
+      const cur = list.find((x) => x.key === s.key);
+      if (cur) cur.value += m.value(s);
+      else list.push({ key: s.key, label: s.label, value: m.value(s), color });
+      seriesByDay.set(b.key(s.ts), list);
     }
-    const points = days.map((d) => {
-      const p = byDay.get(d.ts);
-      const stack = seriesByDay.get(d.ts)?.sort((a, b) => b.value - a.value);
-      const value = split === "total" ? (p ? m.value(p) : 0) : (stack ?? []).reduce((a, s) => a + s.value, 0);
-      return {
-        ts: d.ts,
-        value,
-        stack: split === "total" ? undefined : stack ?? [],
-        tooltip: (
-          <>
-            <b>{b.label(d.ts)}</b>
-            <div>{m.format(value)}</div>
-            {p && split === "total" && !b.monthly && (
-              <div className="muted">
-                {t("{n} llamadas", { n: fmt.int(p.calls) })} · {t("{n} sesiones", { n: fmt.int(p.sessions) })}
-              </div>
-            )}
-            {stack?.slice(0, 5).map((s) => (
-              <div key={s.key} className="muted">
-                {s.label}: {m.format(s.value)}
-              </div>
-            ))}
-          </>
-        ),
-      };
-    });
-    const splitNote = split === "activity" && metric !== "cost" ? t("Por actividad se cuentan turnos, no llamadas ni tokens.") : null;
-
-    // Acumulado del periodo.
-    let acc = 0;
-    const cumulative = days.map((d) => {
-      const p = byDay.get(d.ts);
-      acc += p ? m.value(p) : 0;
-      return {
-        ts: d.ts,
-        value: acc,
-        tooltip: (
-          <>
-            <b>{b.label(d.ts)}</b>
-            <div>{t("Acumulado: {v}", { v: m.format(acc) })}</div>
-            <div className="muted">{t(b.monthly ? "Ese mes: {v}" : "Ese día: {v}", { v: m.format(p ? m.value(p) : 0) })}</div>
-          </>
-        ),
-      };
-    });
-
-    // Reparto por hora del día (hora local).
-    const hours = Array.from({ length: 24 }, (_, h) => ({ h, value: 0, calls: 0 }));
-    for (const p of data.hourly) {
-      const h = new Date(p.ts).getHours();
-      hours[h].value += m.value(p);
-      hours[h].calls += p.calls;
+  } else if (split === "activity") {
+    for (const d of data.activityDaily) {
+      const color = activityColor(d.activity);
+      legend.set(d.activity, { label: activityLabel(d.activity), color });
+      const list = seriesByDay.get(b.key(d.ts)) ?? [];
+      // La actividad se calcula por turno: coste o turnos (no hay tokens por actividad).
+      const cur = list.find((x) => x.key === d.activity);
+      if (cur) cur.value += metric === "cost" ? d.costUsd : d.turns;
+      else list.push({ key: d.activity, label: activityLabel(d.activity), value: metric === "cost" ? d.costUsd : d.turns, color });
+      seriesByDay.set(b.key(d.ts), list);
     }
-    const hourPoints = hours.map((x) => ({
-      ts: x.h,
-      value: x.value,
+  }
+  const points = days.map((d) => {
+    const p = byDay.get(d.ts);
+    const stack = seriesByDay.get(d.ts)?.sort((a, b) => b.value - a.value);
+    const value = split === "total" ? (p ? m.value(p) : 0) : (stack ?? []).reduce((a, s) => a + s.value, 0);
+    return {
+      ts: d.ts,
+      value,
+      stack: split === "total" ? undefined : stack ?? [],
       tooltip: (
         <>
-          <b>{String(x.h).padStart(2, "0")}:00 – {String((x.h + 1) % 24).padStart(2, "0")}:00</b>
-          <div>{m.format(x.value)}</div>
-          <div className="muted">{t("{n} llamadas", { n: fmt.int(x.calls) })}</div>
+          <b>{b.label(d.ts)}</b>
+          <div>{m.format(value)}</div>
+          {p && split === "total" && !b.monthly && (
+            <div className="muted">
+              {t("{n} llamadas", { n: fmt.int(p.calls) })} · {t("{n} sesiones", { n: fmt.int(p.sessions) })}
+            </div>
+          )}
+          {stack?.slice(0, 5).map((s) => (
+            <div key={s.key} className="muted">
+              {s.label}: {m.format(s.value)}
+            </div>
+          ))}
         </>
       ),
-    }));
-    const busiest = hours.reduce((a, b) => (b.value > a.value ? b : a), hours[0]);
+    };
+  });
+  const splitNote = split === "activity" && metric !== "cost" ? t("Por actividad se cuentan turnos, no llamadas ni tokens.") : null;
 
-    const columns: Column<Point>[] = [
-      { header: t("Día"), cell: (p) => fmt.date(p.ts), width: "120px", className: "secondary" },
-      { header: t("Coste"), cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
-      { header: t("Llamadas"), cell: (p) => fmt.int(p.calls), align: "right" },
-      { header: t("Sesiones"), cell: (p) => fmt.int(p.sessions), align: "right", className: "secondary" },
-      { header: t("Entrada"), cell: (p) => fmt.compact(p.inputTokens + p.cacheRead + p.cacheWrite), align: "right", className: "secondary" },
-      { header: t("Salida"), cell: (p) => fmt.compact(p.outputTokens), align: "right", className: "secondary" },
-      { header: t("Cache hit"), cell: (p) => { const total = p.inputTokens + p.cacheRead + p.cacheWrite; return total ? fmt.pct(p.cacheRead / total) : "–"; }, align: "right", width: "72px", className: "secondary" },
-      barColumn(t("Reparto del coste"), data.daily, (p) => p.costUsd, "var(--accent)"),
-    ];
-    const rows = [...data.daily].reverse();
-    return { m, points, legend, splitNote, cumulative, acc, hourPoints, busiest, columns, rows };
-  }, [data, metric, split]);
+  // Acumulado del periodo.
+  let acc = 0;
+  const cumulative = days.map((d) => {
+    const p = byDay.get(d.ts);
+    acc += p ? m.value(p) : 0;
+    return {
+      ts: d.ts,
+      value: acc,
+      tooltip: (
+        <>
+          <b>{b.label(d.ts)}</b>
+          <div>{t("Acumulado: {v}", { v: m.format(acc) })}</div>
+          <div className="muted">{t(b.monthly ? "Ese mes: {v}" : "Ese día: {v}", { v: m.format(p ? m.value(p) : 0) })}</div>
+        </>
+      ),
+    };
+  });
+
+  // Reparto por hora del día (hora local).
+  const hours = Array.from({ length: 24 }, (_, h) => ({ h, value: 0, calls: 0 }));
+  for (const p of data.hourly) {
+    const h = new Date(p.ts).getHours();
+    hours[h].value += m.value(p);
+    hours[h].calls += p.calls;
+  }
+  const hourPoints = hours.map((x) => ({
+    ts: x.h,
+    value: x.value,
+    tooltip: (
+      <>
+        <b>{String(x.h).padStart(2, "0")}:00 – {String((x.h + 1) % 24).padStart(2, "0")}:00</b>
+        <div>{m.format(x.value)}</div>
+        <div className="muted">{t("{n} llamadas", { n: fmt.int(x.calls) })}</div>
+      </>
+    ),
+  }));
+  const busiest = hours.reduce((a, b) => (b.value > a.value ? b : a), hours[0]);
+
+  const columns: Column<Point>[] = [
+    { header: t("Día"), cell: (p) => fmt.date(p.ts), width: "120px", className: "secondary" },
+    { header: t("Coste"), cell: (p) => cost(p.costUsd), align: "right", className: "cost" },
+    { header: t("Llamadas"), cell: (p) => fmt.int(p.calls), align: "right" },
+    { header: t("Sesiones"), cell: (p) => fmt.int(p.sessions), align: "right", className: "secondary" },
+    { header: t("Entrada"), cell: (p) => fmt.compact(p.inputTokens + p.cacheRead + p.cacheWrite), align: "right", className: "secondary" },
+    { header: t("Salida"), cell: (p) => fmt.compact(p.outputTokens), align: "right", className: "secondary" },
+    { header: t("Cache hit"), cell: (p) => { const total = p.inputTokens + p.cacheRead + p.cacheWrite; return total ? fmt.pct(p.cacheRead / total) : "–"; }, align: "right", width: "72px", className: "secondary" },
+    barColumn(t("Reparto del coste"), data.daily, (p) => p.costUsd, "var(--accent)"),
+  ];
+  const rows = [...data.daily].reverse();
 
   return (
     <>

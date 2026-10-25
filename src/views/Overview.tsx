@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { t } from "../lib/i18n";
 import { activityColor, activityLabel, agentColor, fmt } from "../lib/format";
 import { PERIODS, projectMonth, type Period } from "../lib/period";
@@ -10,7 +9,6 @@ import { Panel } from "../components/Panel";
 import { Columns, Legend, ShareBar } from "../components/Charts";
 import { bucketing, dayPoints, ModelPanel } from "./panels";
 import { TodayLive } from "./TodayLive";
-import { rankKeys, stacksByBucket } from "./derive";
 
 
 export function periodLabel(period: Period) {
@@ -41,38 +39,51 @@ export function summaryKpis(data: DashboardData, budget: number | null): Kpi[] {
 
 /** Coste por día apilado por agente, con los días sin actividad a cero. */
 export function DailyByAgent({ data, height = 250 }: { data: DashboardData; height?: number }) {
-  const { legend, points, prev } = useMemo(() => {
-    const order = data.agents.map((a) => a.key);
-    const color = (key: string) => agentColor(key, Math.max(order.indexOf(key), 0));
-    const b = bucketing(data.daily, data.filter);
-    const byDay = stacksByBucket(data.dailyByAgent, (s) => b.key(s.ts), (s) => s.key, (s) => s.label, (s) => s.costUsd, (s) => color(s.key));
-    // Leyenda: los agentes que aparecen en el gráfico, con su total del periodo.
-    const legend = rankKeys(data.dailyByAgent, (s) => s.costUsd, (s) => s.label).map((x) => ({ label: `${x.label} · ${fmt.usd(x.value)}`, color: color(x.key) }));
-    // Periodo anterior alineado día a día (el día i del periodo con el día i del anterior).
-    const prev = data.prev ? dayPoints(data.prev.daily, data.prev.filter).map((d) => d.value) : undefined;
-    const points = dayPoints(data.daily, data.filter).map((d, i) => {
-      const stack = (byDay.get(d.ts) ?? []).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
-      const value = stack.reduce((a, x) => a + x.value, 0);
-      return {
-        ts: d.ts,
-        value,
-        stack,
-        tooltip: (
-          <>
-            <b>{b.label(d.ts)}</b>
-            <div>{fmt.usd(value)}</div>
-            {stack.map((x) => (
-              <div key={x.key} className="muted">
-                {x.label}: {fmt.usd(x.value)}
-              </div>
-            ))}
-            {prev && prev[i] != null && <div className="muted">{t("Periodo anterior: {v}", { v: fmt.usd(prev[i]) })}</div>}
-          </>
-        ),
-      };
-    });
-    return { legend, points, prev };
-  }, [data]);
+  const order = data.agents.map((a) => a.key);
+  const color = (key: string) => agentColor(key, Math.max(order.indexOf(key), 0));
+  const b = bucketing(data.daily, data.filter);
+  const byDay = new Map<number, { key: string; label: string; value: number; color: string }[]>();
+  for (const s of data.dailyByAgent) {
+    const day = b.key(s.ts);
+    const list = byDay.get(day) ?? [];
+    const cur = list.find((x) => x.key === s.key);
+    if (cur) cur.value += s.costUsd;
+    else list.push({ key: s.key, label: s.label, value: s.costUsd, color: color(s.key) });
+    byDay.set(day, list);
+  }
+  // Leyenda: los agentes que aparecen en el gráfico, con su total del periodo.
+  const totals = new Map<string, { label: string; value: number }>();
+  for (const s of data.dailyByAgent) {
+    const cur = totals.get(s.key) ?? { label: s.label, value: 0 };
+    cur.value += s.costUsd;
+    totals.set(s.key, cur);
+  }
+  const legend = [...totals.entries()]
+    .sort((a, b) => b[1].value - a[1].value)
+    .map(([key, x]) => ({ label: `${x.label} · ${fmt.usd(x.value)}`, color: color(key) }));
+  // Periodo anterior alineado día a día (el día i del periodo con el día i del anterior).
+  const prev = data.prev ? dayPoints(data.prev.daily, data.prev.filter).map((d) => d.value) : undefined;
+  const points = dayPoints(data.daily, data.filter).map((d, i) => {
+    const stack = (byDay.get(d.ts) ?? []).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+    const value = stack.reduce((a, x) => a + x.value, 0);
+    return {
+      ts: d.ts,
+      value,
+      stack,
+      tooltip: (
+        <>
+          <b>{b.label(d.ts)}</b>
+          <div>{fmt.usd(value)}</div>
+          {stack.map((x) => (
+            <div key={x.key} className="muted">
+              {x.label}: {fmt.usd(x.value)}
+            </div>
+          ))}
+          {prev && prev[i] != null && <div className="muted">{t("Periodo anterior: {v}", { v: fmt.usd(prev[i]) })}</div>}
+        </>
+      ),
+    };
+  });
   return (
     <div className="chart-box">
       <Legend items={legend} />

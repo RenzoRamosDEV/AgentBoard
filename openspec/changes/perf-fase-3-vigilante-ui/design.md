@@ -305,6 +305,6 @@ sin el final del periodo; archivo relacionado que tampoco existe) y se repitió 
 alcance afectado. Queda **1 superviviente justificado**: `under_root → true` en `watcher.rs` es
 equivalente en resultado (`recognized` vuelve a exigir la raíz); solo evita recorrer carpetas
 creadas fuera de las raíces (p. ej. bajo el `~` vigilado sin recursión), un coste que los tests no
-observan. Puntuación sobre los mutantes viables examinados: 1 superviviente de 76 (98,7 %). El
+observan. Puntuación sobre los mutantes viables examinados: 1 superviviente de 75 (98,7 %). El
 mutante con tiempo agotado (`Sink::committed → Ok(())`) es detectado: sin el aviso el test espera el
 cambio hasta el límite.

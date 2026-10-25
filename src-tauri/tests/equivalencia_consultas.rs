@@ -56,10 +56,32 @@ fn golden_of(
         .unwrap()
         .with(common::query_golden)
         .unwrap();
+    out = windows_paths(out);
     for (i, dir) in volatile.iter().enumerate() {
-        out = out.replace(&dir.display().to_string(), &format!("<raiz{i}>"));
+        out = out.replace(&slashes(&dir.display().to_string()), &format!("<raiz{i}>"));
     }
     out
+}
+
+/// En Windows las rutas llevan `\` (escapada en el JSON): se pasan a `/` como en los golden.
+#[cfg(windows)]
+fn windows_paths(out: String) -> String {
+    out.replace("\\\\", "/")
+}
+
+#[cfg(windows)]
+fn slashes(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+#[cfg(not(windows))]
+fn windows_paths(out: String) -> String {
+    out
+}
+
+#[cfg(not(windows))]
+fn slashes(path: &str) -> String {
+    path.to_string()
 }
 
 /// Los dos modos de la caché: en memoria compartida y en un archivo en disco.

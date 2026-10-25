@@ -8,6 +8,7 @@ pub mod findings;
 pub mod ingest;
 pub mod ingest_thread;
 pub mod insights;
+pub mod notifier;
 pub mod pricing;
 pub mod providers;
 pub mod queries;
@@ -67,43 +68,51 @@ pub fn run() {
             .visible(false)
             .build()?;
 
-            // Refresca la bandeja (tooltip y menú) y los avisos de presupuesto tras cada escaneo.
+            // Refresca la bandeja (tooltip y menú) y los avisos de presupuesto: al terminar el
+            // escaneo inicial y con cada `data:changed` (como mucho uno por segundo).
             let refresh_alerts = {
                 let app = app.handle().clone();
                 let readers = readers.clone();
                 let alerts = alerts.clone();
                 let tray = tray.clone();
-                move || {
+                Arc::new(move || {
                     if let Ok(pool) = commands::current(&readers) {
                         alerts.refresh(&app, &pool, &tray);
                         tray::refresh(&app, &pool, &tray);
                     }
-                }
+                })
+            };
+
+            // Aviso de datos cambiados a la interfaz, con throttle de 1 por segundo.
+            let changes = {
+                let handle = app.handle().clone();
+                let refresh_alerts = refresh_alerts.clone();
+                notifier::spawn(move |payload| {
+                    tracing::debug_span!("emit.data_changed", generation = payload.generation)
+                        .in_scope(|| handle.emit("data:changed", &payload))
+                        .ok();
+                    refresh_alerts();
+                })
             };
 
             // Hilo de ingesta: escaneo inicial y relecturas del vigilante, fuera de la interfaz.
+            // `ingest://done` solo marca el fin del escaneo inicial (o del de una reconstrucción).
             let handle = app.handle().clone();
-            let ingest = IngestThread::spawn(
+            let ingest = IngestThread::spawn_with_changes(
                 storage,
                 readers.clone(),
                 || settings::load().price_overrides,
                 providers::all(),
                 generation.clone(),
-                move |origen, stats| match origen {
-                    Origen::EscaneoInicial => {
+                move |origen, stats| {
+                    if origen == Origen::EscaneoInicial {
                         tracing::debug_span!("emit.ingest_done", origen = "escaneo_inicial")
                             .in_scope(|| handle.emit("ingest://done", stats))
                             .ok();
                         refresh_alerts();
                     }
-                    Origen::Vigilante if stats.records > 0 => {
-                        tracing::debug_span!("emit.ingest_done", origen = "vigilante")
-                            .in_scope(|| handle.emit("ingest://done", ()))
-                            .ok();
-                        refresh_alerts();
-                    }
-                    Origen::Vigilante => {}
                 },
+                move |generation, touched| changes.send(generation, touched.clone()),
             );
             ingest.request(Origen::EscaneoInicial);
             app.manage(AppState {

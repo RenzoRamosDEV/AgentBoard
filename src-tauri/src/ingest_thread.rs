@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use crate::db::{CacheMode, ReadPool, SharedReaders, Storage};
+use crate::derived::Touched;
 use crate::ingest::{self, BatchHooks, ScanStats};
 use crate::providers::Provider;
 use crate::settings::PriceOverride;
@@ -112,6 +113,20 @@ struct WriterState {
     storage: Storage,
     readers: SharedReaders,
     prices: Box<dyn Fn() -> Vec<PriceOverride> + Send>,
+    on_change: Box<OnChange>,
+}
+
+/// Aviso tras cada transacción confirmada con cambios: generación nueva y lo que cambió.
+type OnChange = dyn FnMut(u64, &Touched) + Send;
+
+impl WriterState {
+    /// Sube la generación y, si cambió algo, avisa.
+    fn changed(&mut self, generation: &DataGeneration, touched: &Touched) {
+        generation.bump();
+        if !touched.is_empty() {
+            (self.on_change)(generation.get(), touched);
+        }
+    }
 }
 
 pub struct IngestThread;
@@ -128,11 +143,34 @@ impl IngestThread {
         generation: Arc<DataGeneration>,
         on_done: impl FnMut(Origen, &ScanStats) + Send + 'static,
     ) -> IngestHandle {
+        Self::spawn_with_changes(
+            storage,
+            readers,
+            prices,
+            providers,
+            generation,
+            on_done,
+            |_, _| {},
+        )
+    }
+
+    /// `spawn` avisando a `on_change` tras cada transacción confirmada con cambios, con la
+    /// generación nueva y lo que cambió.
+    pub fn spawn_with_changes(
+        storage: Storage,
+        readers: SharedReaders,
+        prices: impl Fn() -> Vec<PriceOverride> + Send + 'static,
+        providers: Vec<Box<dyn Provider>>,
+        generation: Arc<DataGeneration>,
+        on_done: impl FnMut(Origen, &ScanStats) + Send + 'static,
+        on_change: impl FnMut(u64, &Touched) + Send + 'static,
+    ) -> IngestHandle {
         let (tx, rx) = mpsc::channel();
         let state = WriterState {
             storage,
             readers,
             prices: Box::new(prices),
+            on_change: Box::new(on_change),
         };
         std::thread::spawn(move || run(rx, state, &providers, &generation, on_done));
         IngestHandle(tx)
@@ -145,11 +183,21 @@ struct Between<'a> {
     rx: &'a Receiver<Job>,
     generation: &'a DataGeneration,
     deferred: &'a mut VecDeque<Job>,
+    on_change: &'a mut dyn FnMut(u64, &Touched),
+}
+
+impl Between<'_> {
+    fn changed(&mut self, touched: &Touched) {
+        self.generation.bump();
+        if !touched.is_empty() {
+            (self.on_change)(self.generation.get(), touched);
+        }
+    }
 }
 
 impl BatchHooks for Between<'_> {
-    fn committed(&mut self, conn: &mut Connection) -> Result<()> {
-        self.generation.bump();
+    fn committed(&mut self, conn: &mut Connection, touched: &Touched) -> Result<()> {
+        self.changed(touched);
         self.waiting(conn)
     }
 
@@ -157,7 +205,9 @@ impl BatchHooks for Between<'_> {
         while let Ok(job) = self.rx.try_recv() {
             match job {
                 Job::AplicarPrecios(overrides, reply) => {
-                    apply_prices(conn, &overrides, self.generation, &reply)
+                    if apply_prices(conn, &overrides, &reply) {
+                        self.changed(&Touched::everything());
+                    }
                 }
                 other => self.deferred.push_back(other),
             }
@@ -166,19 +216,15 @@ impl BatchHooks for Between<'_> {
     }
 }
 
-fn apply_prices(
-    conn: &Connection,
-    overrides: &[PriceOverride],
-    generation: &DataGeneration,
-    reply: &Reply,
-) {
+/// Aplica los precios y responde; devuelve si se confirmaron.
+fn apply_prices(conn: &Connection, overrides: &[PriceOverride], reply: &Reply) -> bool {
     let result = crate::pricing::apply_overrides(conn, overrides);
-    if result.is_ok() {
-        generation.bump();
-    } else if let Err(e) = &result {
+    if let Err(e) = &result {
         tracing::error!("agentboard: no se pudieron aplicar los precios: {e:#}");
     }
+    let ok = result.is_ok();
     let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+    ok
 }
 
 /// Vacía la caché: crea la base nueva (borrando antes los archivos si había caché en disco),
@@ -201,7 +247,7 @@ fn rebuild(
         Err(poisoned) => *poisoned.into_inner() = pool,
     }
     state.storage = storage;
-    generation.bump();
+    state.changed(generation, &Touched::everything());
     Ok(())
 }
 
@@ -270,7 +316,9 @@ fn run(
             Job::Scan(origen) => Pending::Full(origen),
             Job::Rescan(paths) => Pending::Paths(paths),
             Job::AplicarPrecios(overrides, reply) => {
-                apply_prices(&state.storage.writer, &overrides, generation, &reply);
+                if apply_prices(&state.storage.writer, &overrides, &reply) {
+                    state.changed(generation, &Touched::everything());
+                }
                 continue;
             }
             Job::Reconstruir(mode, reply) => {
@@ -295,7 +343,9 @@ fn run(
                 Job::Scan(o) => pending = pending.absorb(Pending::Full(o)),
                 Job::Rescan(paths) => pending = pending.absorb(Pending::Paths(paths)),
                 Job::AplicarPrecios(overrides, reply) => {
-                    apply_prices(&state.storage.writer, &overrides, generation, &reply)
+                    if apply_prices(&state.storage.writer, &overrides, &reply) {
+                        state.changed(generation, &Touched::everything());
+                    }
                 }
                 other => later.push_back(other),
             }
@@ -311,6 +361,7 @@ fn run(
             rx: &rx,
             generation,
             deferred: &mut deferred,
+            on_change: &mut *state.on_change,
         };
         let conn = &mut state.storage.writer;
         let result = match &pending {
@@ -483,6 +534,7 @@ mod tests {
             storage: writer,
             readers,
             prices: Box::new(Vec::new),
+            on_change: Box::new(|_, _| {}),
         };
         run(
             rx,
@@ -510,6 +562,7 @@ mod tests {
             storage: writer,
             readers,
             prices: Box::new(Vec::new),
+            on_change: Box::new(|_, _| {}),
         };
         run(
             rx,
@@ -551,6 +604,44 @@ mod tests {
         assert!(done[0].1.full);
         assert_eq!(done[0].1.files, 3);
         assert_eq!(calls(&fx), 3);
+    }
+
+    #[test]
+    fn un_commit_sin_cambios_no_avisa_y_los_precios_avisan_de_todo() {
+        let (fx, storage) = fixture(&[("a.log", "m1\n")]);
+        let readers = readers_of(&storage);
+        let (done_tx, done_rx) = mpsc::channel();
+        let (change_tx, change_rx) = mpsc::channel();
+        let handle = IngestThread::spawn_with_changes(
+            storage,
+            readers,
+            Vec::new,
+            fake(&fx),
+            Default::default(),
+            move |_, s| done_tx.send(s.clone()).unwrap(),
+            move |generation, touched| change_tx.send((generation, touched.clone())).unwrap(),
+        );
+        handle.request(Origen::EscaneoInicial);
+        done_rx.recv_timeout(WAIT).unwrap();
+        let (generation, touched) = change_rx.recv_timeout(WAIT).unwrap();
+        assert!(generation >= 1);
+        assert_eq!(touched.agents, ["fake".to_string()].into());
+        assert!(!touched.all);
+        // Media línea: se lee el archivo y se confirma su estado, pero no hay datos nuevos.
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(fx.root.join("a.log"))
+            .unwrap()
+            .write_all(b"m2")
+            .unwrap();
+        handle.rescan([fx.root.join("a.log")].into());
+        let stats = done_rx.recv_timeout(WAIT).unwrap();
+        assert_eq!(stats.records, 0);
+        assert!(change_rx.try_recv().is_err(), "sin cambios no se avisa");
+        handle.apply_prices(Vec::new()).unwrap();
+        let (_, touched) = change_rx.recv_timeout(WAIT).unwrap();
+        assert!(touched.all, "los precios pueden cambiar todo");
     }
 
     #[test]
@@ -630,10 +721,10 @@ mod tests {
             seen: Vec<(u64, i64)>,
         }
         impl BatchHooks for Check<'_> {
-            fn committed(&mut self, conn: &mut Connection) -> Result<()> {
+            fn committed(&mut self, conn: &mut Connection, touched: &Touched) -> Result<()> {
                 let before = self.inner.generation.get();
                 let visible = calls(self.fx);
-                self.inner.committed(conn)?;
+                self.inner.committed(conn, touched)?;
                 self.seen
                     .push((self.inner.generation.get() - before, visible));
                 Ok(())
@@ -647,6 +738,7 @@ mod tests {
                 rx: &rx,
                 generation: &generation,
                 deferred: &mut deferred,
+                on_change: &mut |_, _| {},
             },
             fx: &fx,
             seen: Vec::new(),

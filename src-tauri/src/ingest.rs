@@ -153,8 +153,9 @@ fn batch_full(records: usize, elapsed: std::time::Duration) -> bool {
 
 /// Avisos al dueño de la conexión entre lotes, sin transacción abierta.
 pub trait BatchHooks {
-    /// Tras confirmar un lote.
-    fn committed(&mut self, conn: &mut Connection) -> Result<()>;
+    /// Tras confirmar un lote, con lo que cambió en él.
+    fn committed(&mut self, conn: &mut Connection, touched: &crate::derived::Touched)
+        -> Result<()>;
     /// Mientras el escritor espera a que los lectores terminen un archivo.
     fn waiting(&mut self, conn: &mut Connection) -> Result<()>;
 }
@@ -166,9 +167,9 @@ struct Sink<'a> {
 }
 
 impl Sink<'_> {
-    fn committed(&mut self) -> Result<()> {
+    fn committed(&mut self, touched: &crate::derived::Touched) -> Result<()> {
         match self.hooks.as_deref_mut() {
-            Some(h) => h.committed(self.conn),
+            Some(h) => h.committed(self.conn, touched),
             None => Ok(()),
         }
     }
@@ -208,26 +209,30 @@ fn scan(db: &mut Sink, providers: &[Box<dyn Provider>], threads: usize) -> Resul
         let conn = &mut *db.conn;
         register_agents(conn, providers)?;
         let tracked = load_tracked(conn)?;
-        let states =
-            if forget_stale_files(conn, providers, &found, &seen, &index, &tracked)?.is_some() {
-                load_file_states(conn)?
-            } else {
-                tracked
-                    .into_iter()
-                    .map(|t| {
-                        (
-                            t.path,
-                            FileState {
-                                file_id: t.file_id,
-                                offset: t.offset,
-                            },
-                        )
-                    })
-                    .collect()
-            };
+        let forgot = forget_stale_files(conn, providers, &found, &seen, &index, &tracked)?;
+        let states = if forgot.is_some() {
+            load_file_states(conn)?
+        } else {
+            tracked
+                .into_iter()
+                .map(|t| {
+                    (
+                        t.path,
+                        FileState {
+                            file_id: t.file_id,
+                            offset: t.offset,
+                        },
+                    )
+                })
+                .collect()
+        };
         forget_unused_projects(conn)?;
-        states
+        (states, forgot.is_some())
     };
+    let (states, forgot) = states;
+    if forgot {
+        db.committed(&crate::derived::Touched::everything())?;
+    }
     let stats = read_and_write(db, providers, found, seen, &states, threads)?;
     Ok(ScanStats {
         full: true,
@@ -244,7 +249,7 @@ fn scan_given(
     let roots: Vec<Vec<PathBuf>> = providers.iter().map(|p| p.log_roots()).collect();
     let mut found = plan_paths(providers, &roots, paths.iter().filter(|p| p.is_file()));
     let mut seen = identities(providers, &found);
-    {
+    let forgot = {
         let conn = &mut *db.conn;
         let tracked = load_tracked_paths(conn, paths.iter())?;
         let index = path_index(&found);
@@ -264,7 +269,13 @@ fn scan_given(
                 seen = identities(providers, &found);
             }
             forget_unused_projects(conn)?;
+            true
+        } else {
+            false
         }
+    };
+    if forgot {
+        db.committed(&crate::derived::Touched::everything())?;
     }
     let states = load_tracked_paths(db.conn, found.iter().map(|(_, p)| p))?
         .into_iter()
@@ -522,7 +533,7 @@ fn write_batch(
     if batch.is_empty() {
         return Ok(());
     }
-    {
+    let touched = {
         let mut tx = db.conn.transaction()?;
         let ctx = WriteContext::load(&tx)?;
         for (i, parsed) in batch.drain(..) {
@@ -541,10 +552,11 @@ fn write_batch(
                 }
             }
         }
-        crate::derived::refresh(&tx)?;
+        let touched = crate::derived::refresh(&tx)?;
         tx.commit()?;
-    }
-    db.committed()
+        touched
+    };
+    db.committed(&touched)
 }
 
 /// Archivos bajo `root`, recursivo, sin seguir enlaces.

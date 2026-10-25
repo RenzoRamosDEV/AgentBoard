@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Coste con el precio vigente en la fecha de cada llamada: la fórmula de la vista `call_costs`
 /// de la migración 0004, con el mismo orden de operaciones (mismo resultado en coma flotante).
@@ -122,14 +122,74 @@ fn refresh_first_calls(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Recalcula lo pendiente. Va dentro de la transacción del llamador, antes de confirmarla.
-pub fn refresh(conn: &Connection) -> Result<()> {
+/// Lo que cambió en una transacción: agentes y días locales (`YYYYMMDD`, zona de la caché).
+/// `all`: puede haber cambiado todo (precios, limpieza, reconstrucción).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Touched {
+    pub agents: BTreeSet<String>,
+    pub days: BTreeSet<i64>,
+    pub all: bool,
+}
+
+impl Touched {
+    pub fn everything() -> Self {
+        Touched {
+            all: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.all && self.agents.is_empty() && self.days.is_empty()
+    }
+
+    pub fn merge(&mut self, other: &Touched) {
+        self.agents.extend(other.agents.iter().cloned());
+        self.days.extend(other.days.iter().copied());
+        self.all |= other.all;
+    }
+}
+
+/// Días de las llamadas y herramientas que el escritor sumó por `Deltas` (no pasan por
+/// `dirty_keys`), hasta el siguiente `refresh`. Tabla temporal: solo la ve el escritor.
+const TOUCHED_DAYS: &str = "CREATE TEMP TABLE IF NOT EXISTS touched_days (day INTEGER PRIMARY KEY)";
+
+const SELECT_TOUCHED_AGENTS: &str = "SELECT DISTINCT s.agent_id FROM dirty_keys k
+     JOIN sessions s ON s.id = k.session_id";
+
+const SELECT_TOUCHED_DAYS: &str = "SELECT day FROM dirty_keys WHERE day <> 0
+     UNION SELECT day FROM temp.touched_days WHERE day <> 0";
+
+/// Agentes y días anotados en esta transacción, antes de vaciar las anotaciones.
+fn touched(conn: &Connection) -> Result<Touched> {
+    let agents = conn
+        .prepare_cached(SELECT_TOUCHED_AGENTS)?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let days = conn
+        .prepare_cached(SELECT_TOUCHED_DAYS)?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    conn.prepare_cached("DELETE FROM temp.touched_days")?
+        .execute([])?;
+    Ok(Touched {
+        agents,
+        days,
+        all: false,
+    })
+}
+
+/// Recalcula lo pendiente y devuelve lo que cambió. Va dentro de la transacción del llamador,
+/// antes de confirmarla.
+pub fn refresh(conn: &Connection) -> Result<Touched> {
+    conn.execute_batch(TOUCHED_DAYS)?;
     let zone = crate::db::cache_zone(conn)?;
     fill_days(conn, "calls", &zone)?;
     conn.prepare_cached(MARK_PENDING_COSTS)?.execute([])?;
     conn.prepare_cached(REFRESH_COSTS)?.execute([])?;
     fill_days(conn, "tool_calls", &zone)?;
     refresh_first_calls(conn)?;
+    let touched = touched(conn)?;
     for sql in [
         DELETE_DAILY,
         INSERT_DAILY,
@@ -139,7 +199,7 @@ pub fn refresh(conn: &Connection) -> Result<()> {
     ] {
         conn.prepare_cached(sql)?.execute([])?;
     }
-    Ok(())
+    Ok(touched)
 }
 
 /// Lo que el escritor de la ingesta inserta, sumado por clave: llamadas por (día, sesión, modelo)
@@ -250,6 +310,20 @@ impl Deltas {
 
     /// Suma lo acumulado a los agregados y anota las sesiones para revisar su primera llamada.
     pub fn apply(&mut self, conn: &Connection) -> Result<()> {
+        let days: BTreeSet<i64> = self
+            .calls
+            .keys()
+            .map(|(day, _, _)| *day)
+            .chain(self.tools.keys().map(|(day, _, _)| *day))
+            .collect();
+        if !days.is_empty() {
+            conn.execute_batch(TOUCHED_DAYS)?;
+            let mut mark =
+                conn.prepare_cached("INSERT OR IGNORE INTO temp.touched_days VALUES (?1)")?;
+            for day in days {
+                mark.execute([day])?;
+            }
+        }
         let mut add = conn.prepare_cached(ADD_DAILY)?;
         for ((day, session, model), c) in self.calls.drain() {
             add.execute(params![
@@ -490,6 +564,58 @@ mod tests {
             );
             deltas.apply(conn).unwrap();
         }
+    }
+
+    #[test]
+    fn refresh_devuelve_los_agentes_y_dias_del_lote() {
+        let conn = base();
+        conn.execute_batch(
+            "INSERT INTO agents VALUES ('b','B','/',0);
+             INSERT INTO sessions (id, agent_id, started_at, ended_at) VALUES ('t0','b',0,0);",
+        )
+        .unwrap();
+        let zone = db::cache_zone(&conn).unwrap();
+        let day = |ts: i64| crate::tz::day_number(ts, &zone);
+        let next = BASE_TS + 2 * 86_400_000;
+        writer_insert(&conn, "m1", "s1", BASE_TS, MODELS[0], 100);
+        writer_insert(&conn, "m2", "t0", next, MODELS[1], 100);
+        let touched = refresh(&conn).unwrap();
+        assert_eq!(
+            touched,
+            Touched {
+                agents: ["a", "b"].map(String::from).into(),
+                days: [day(BASE_TS), day(next)].into(),
+                all: false,
+            }
+        );
+        assert!(refresh(&conn).unwrap().is_empty(), "sin cambios, nada");
+        // Un cambio que va por `dirty_keys` (borrar una llamada) también cuenta.
+        conn.execute("DELETE FROM calls WHERE message_id = 'm2'", [])
+            .unwrap();
+        let touched = refresh(&conn).unwrap();
+        assert_eq!(touched.agents, ["b"].map(String::from).into());
+        assert_eq!(touched.days, [day(next)].into());
+    }
+
+    #[test]
+    fn touched_all_viaja_como_listas_vacias_y_no_esta_vacio() {
+        let all = Touched::everything();
+        assert!(all.all && !all.is_empty());
+        assert!(Touched::default().is_empty());
+        let mut a = Touched {
+            agents: ["x"].map(String::from).into(),
+            days: [1].into(),
+            all: false,
+        };
+        a.merge(&Touched {
+            agents: ["y"].map(String::from).into(),
+            days: [2].into(),
+            all: false,
+        });
+        assert_eq!(a.days, [1, 2].into());
+        assert_eq!(a.agents.len(), 2);
+        a.merge(&all);
+        assert!(a.all);
     }
 
     #[test]

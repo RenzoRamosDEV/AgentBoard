@@ -250,17 +250,13 @@ fn contention(
 
 // ------------------------------------------------------------------ vigilante (watch, idle)
 
-/// Aviso del hilo de ingesta a quien mide: el que hoy refresca la interfaz.
-struct Notice {
-    at: Instant,
-    full: bool,
-    records: usize,
-}
-
-/// Escritor real (hilo de ingesta) tras su escaneo inicial y el vigilante real en marcha.
+/// Escritor real (hilo de ingesta) tras su escaneo inicial, con el vigilante y el notificador
+/// reales en marcha: `changed` recibe el instante de cada `data:changed` y `scans` las
+/// estadísticas de cada relectura del vigilante.
 struct LiveApp {
     readers: db::SharedReaders,
-    notices: std::sync::mpsc::Receiver<Notice>,
+    changed: std::sync::mpsc::Receiver<Instant>,
+    scans: std::sync::mpsc::Receiver<ingest::ScanStats>,
     _ingest: IngestHandle,
 }
 
@@ -274,27 +270,26 @@ fn live_app(args: &common::Args) -> Result<LiveApp> {
     let readers: db::SharedReaders = std::sync::Arc::new(std::sync::RwLock::new(
         std::sync::Arc::new(storage.readers(db::ReadPool::SIZE)?),
     ));
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (scan_tx, scan_rx) = std::sync::mpsc::channel();
+    let (changed_tx, changed_rx) = std::sync::mpsc::channel();
     let (init_tx, init_rx) = std::sync::mpsc::channel();
+    let notifier = agentboard_lib::notifier::spawn(move |_| {
+        let _ = changed_tx.send(Instant::now());
+    });
     let t = Instant::now();
-    let ingest = IngestThread::spawn(
+    let ingest = IngestThread::spawn_with_changes(
         storage,
         readers.clone(),
         Vec::new,
         common::providers(&args.fixtures),
         Default::default(),
-        move |origen, stats| match origen {
-            Origen::EscaneoInicial => {
-                let _ = init_tx.send(stats.clone());
-            }
-            Origen::Vigilante => {
-                let _ = tx.send(Notice {
-                    at: Instant::now(),
-                    full: stats.full,
-                    records: stats.records,
-                });
-            }
+        move |origen, stats| {
+            let _ = match origen {
+                Origen::EscaneoInicial => init_tx.send(stats.clone()),
+                Origen::Vigilante => scan_tx.send(stats.clone()),
+            };
         },
+        move |generation, touched| notifier.send(generation, touched.clone()),
     );
     ingest.request(Origen::EscaneoInicial);
     let stats = init_rx
@@ -316,11 +311,13 @@ fn live_app(args: &common::Args) -> Result<LiveApp> {
         ingest.clone(),
     );
     // Deja que el vigilante registre sus carpetas antes de escribir.
-    std::thread::sleep(Duration::from_secs(1));
-    while rx.try_recv().is_ok() {}
+    std::thread::sleep(Duration::from_secs(2));
+    while changed_rx.try_recv().is_ok() {}
+    while scan_rx.try_recv().is_ok() {}
     Ok(LiveApp {
         readers,
-        notices: rx,
+        changed: changed_rx,
+        scans: scan_rx,
         _ingest: ingest,
     })
 }
@@ -365,17 +362,15 @@ fn watch_isolated(app: &LiveApp, args: &common::Args) -> Result<()> {
     let (guard, session) = live_file(args)?;
     let mut latencies = Vec::new();
     let mut lost = 0;
-    let mut full = 0;
     for i in 0..WATCH_WRITES {
         append(&guard.path, &common::live_lines(&session, i, 1))?;
         let written = Instant::now();
         let id = format!("msg_live_{session}_{i}");
         let mut seen = false;
         while let Some(left) = WATCH_TIMEOUT.checked_sub(written.elapsed()) {
-            match app.notices.recv_timeout(left) {
-                Ok(n) => {
-                    full += usize::from(n.full);
-                    if n.records > 0 && has_call(&app.readers, &id)? {
+            match app.changed.recv_timeout(left) {
+                Ok(_) => {
+                    if has_call(&app.readers, &id)? {
                         latencies.push(written.elapsed());
                         seen = true;
                         break;
@@ -388,10 +383,9 @@ fn watch_isolated(app: &LiveApp, args: &common::Args) -> Result<()> {
         if let Some(rest) = WATCH_SPACING.checked_sub(written.elapsed()) {
             std::thread::sleep(rest);
         }
-        while let Ok(n) = app.notices.try_recv() {
-            full += usize::from(n.full);
-        }
+        while app.changed.try_recv().is_ok() {}
     }
+    let full = app.scans.try_iter().filter(|s| s.full).count();
     if latencies.is_empty() {
         bail!("ninguna escritura llegó a verse en {WATCH_TIMEOUT:?}");
     }
@@ -438,19 +432,15 @@ fn watch_burst(app: &LiveApp, args: &common::Args, events: usize) -> Result<()> 
     }
     let written = start.elapsed();
     let mut notices = Vec::new();
-    while let Ok(n) = app.notices.recv_timeout(BURST_QUIET) {
-        notices.push(n);
+    while let Ok(at) = app.changed.recv_timeout(BURST_QUIET) {
+        notices.push(at);
     }
+    let scans: Vec<ingest::ScanStats> = app.scans.try_iter().collect();
     let last_id = {
         let i = events - 1;
         format!("msg_live_{}_{i}", files[i % BURST_FILES].1)
     };
     let visible = has_call(&app.readers, &last_id)?;
-    let with_data: Vec<Instant> = notices
-        .iter()
-        .filter(|n| n.records > 0)
-        .map(|n| n.at)
-        .collect();
     row(
         "watch",
         "ráfaga",
@@ -462,17 +452,17 @@ fn watch_burst(app: &LiveApp, args: &common::Args, events: usize) -> Result<()> 
     row(
         "watch",
         "avisos a la interfaz / relecturas",
-        format!("{} / {}", with_data.len(), notices.len()),
+        format!("{} / {}", notices.len(), scans.len()),
     );
     row(
         "watch",
         "separación mínima entre avisos",
-        common::min_gap(&with_data).map_or("n/d".to_string(), ms),
+        common::min_gap(&notices).map_or("n/d".to_string(), ms),
     );
     row(
         "watch",
         "escaneos completos",
-        notices.iter().filter(|n| n.full).count(),
+        scans.iter().filter(|s| s.full).count(),
     );
     row("watch", "última línea visible", visible);
     Ok(())
@@ -496,13 +486,18 @@ fn idle(args: &common::Args) -> Result<()> {
     let before = proc_stat();
     std::thread::sleep(Duration::from_secs(args.idle_secs as u64));
     let after = proc_stat();
-    let rescans = app.notices.try_iter().count();
+    let rescans = app.scans.try_iter().count();
+    let notices = app.changed.try_iter().count();
     row(
         "idle",
         &format!("CPU en {} s de reposo", args.idle_secs),
         common::cpu_ms(&before, &after).map_or("n/d".to_string(), |c| format!("{c} ms")),
     );
-    row("idle", "relecturas", rescans);
+    row(
+        "idle",
+        "relecturas / avisos",
+        format!("{rescans} / {notices}"),
+    );
     Ok(())
 }
 

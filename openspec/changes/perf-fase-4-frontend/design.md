@@ -97,4 +97,21 @@ Sin migración de datos ni de esquema. Orden: arnés y partida → D2/D3 → D4 
 
 ## Desviaciones durante la implementación
 
-(se rellena al aplicar: partida, cifras por paso, pasos revertidos y supervivientes de mutación)
+### Partida
+
+Commit de partida `c732391` (arnés sin cambios de rendimiento). `node scripts/perf-ui.mjs --latency=104,630` (3 ejecuciones × 5 repeticiones; mediana / máximo en ms; render = suma de `actualDuration` del `Profiler` por interacción, mediana). Los tiempos van en múltiplos de ~16,7 ms (fotogramas de Chromium headless a 60 Hz).
+
+| Escenario | 104 ms | render | 630 ms | render |
+|---|---|---|---|---|
+| S1 frío (Resumen → Modelos, primera vez) | 33,3 / 33,6 | 10,4 | 33,3 / 33,3 | 10,1 |
+| S1 cacheado (idas y vueltas siguientes) | 66,6 / 69,3 | 10,2 | 183,4 / 200,2 | 9,1 |
+| S2 frío (30 d → 7 d tras un aviso) | 183,0 / 183,4 | 21,5 | 833,3 / 833,6 | 20,6 |
+| S2 cacheado (7 d → 30 d) | 166,8 / 169,9 | 16,0 | 816,6 / 817,5 | 16,2 |
+| S3 frío (ocultar un agente) | 216,7 / 216,9 | 25,8 | 1000,0 / 1000,2 | 24,8 |
+| S4 aviso con el Resumen abierto | 183,3 / 183,7 | 25,0 | 833,3 / 852,8 | 25,0 |
+
+S4, peticiones por aviso: `get_dashboard_snapshot` ×2, `get_summary` ×3, `get_timeseries`, `list_sessions`, `list_agents`, `list_projects` (9). El Resumen se pide dos veces porque las listas de agentes y proyectos llegan como objetos nuevos y cambian el `filter`. S1 cacheado con 630 ms incluye la recarga de «Hoy en directo» al volver al Resumen.
+
+Bundle (build normal): un único `index-*.js` de 401 405 B (115 448 B gzip) y `index-*.css` de 48 697 B (9 191 B gzip).
+
+Arnés: el volcado con `--dump-dom` no espera al `await` de nivel de módulo (el evento `load` llega antes), así que `scripts/perf-ui.mjs` usa el protocolo de DevTools con el `WebSocket` de Node 24 (sin dependencias) y espera a `<pre id="perf-results">`. Las funciones puras del arnés están en `src/dev/perfStats.ts` (las importa también el script con la eliminación de tipos de Node 24). El fin de cada interacción es el segundo `requestAnimationFrame` tras el último cambio del DOM fuera de la barra superior y del panel lateral, o tras el render que sigue a la última respuesta, con 200 ms sin peticiones ni cambios. La build `perf` usa `react-dom/profiling` (el `Profiler` no mide en producción) y se escribe en `node_modules/.perf-dist`, sin tocar `dist/`.

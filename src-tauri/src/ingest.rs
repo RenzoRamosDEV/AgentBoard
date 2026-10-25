@@ -2047,6 +2047,22 @@ mod tests {
     }
 
     #[test]
+    fn un_archivo_relacionado_que_tampoco_existe_no_se_intenta_leer() {
+        let (dir, a, b) = two_files(true);
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(ClaudeCode::with_roots(vec![dir
+            .path()
+            .to_path_buf()]))];
+        let mut conn = db::open_in_memory().unwrap();
+        scan_all(&mut conn, &providers).unwrap();
+        fs::remove_file(&a).unwrap();
+        fs::remove_file(&b).unwrap();
+        let stats = scan_paths(&mut conn, &providers, &paths(&[&a])).unwrap();
+        assert_eq!((stats.errors, stats.files), (0, 0));
+        scan_paths(&mut conn, &providers, &paths(&[&b])).unwrap();
+        assert_eq!(dump(&conn), from_scratch(dir.path()));
+    }
+
+    #[test]
     fn una_base_de_opencode_sin_cambios_no_se_limpia_ni_se_relee() {
         use crate::providers::opencode::OpenCode;
         let dir = tempfile::tempdir().unwrap();

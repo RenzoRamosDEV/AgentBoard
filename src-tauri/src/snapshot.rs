@@ -223,6 +223,28 @@ mod tests {
     }
 
     #[test]
+    fn el_gasto_del_mes_va_desde_su_inicio_sin_el_final_del_periodo() {
+        let (_dir, storage) = on_disk();
+        call(&storage.writer, "m2", 3000);
+        let req = DashboardRequest {
+            filter: Filter {
+                from: Some(0),
+                to: Some(2000),
+                ..Default::default()
+            },
+            month_from: 2500,
+            ..request()
+        };
+        let snap = dashboard(&storage.writer, &req, 5000).unwrap();
+        assert_eq!(
+            snap.month.iter().map(|p| p.calls).sum::<i64>(),
+            1,
+            "solo m2"
+        );
+        assert_eq!(snap.summary.calls, 1, "solo m1");
+    }
+
+    #[test]
     fn turn_stats_se_calcula_una_vez_por_snapshot() {
         let (_dir, storage) = on_disk();
         let before = crate::insights::turn_stats_calls();

@@ -236,3 +236,51 @@ tests incluidos. El paso B (tabla `turn_days`) **no se hace**: `activity_daily` 
 debajo de 300 ms sin el paso A (241–255 ms en `bench-fast`; se confirma en `release` en la medición
 final). El tamaño en bytes de la respuesta cambiaba (20,1 → 19,4 KiB en `200m`) solo por la
 representación decimal de sumas hechas en otro orden (golden de consultas en verde).
+
+### Paso 7: WAL acotado (D8)
+
+`bench-fast`, `200m`, `--repeat 200 --cache`, tres ejecuciones (load 1,9–5,8). La fase `contention`
+reproduce ahora al escritor de la app: tras cada relectura, con el escritor libre,
+`checkpoint_if_large`; y el lector `ui` recibe sus avisos por el notificador real (como mucho uno
+por segundo) y lee el snapshot del Resumen. Se imprimen los checkpoints hechos y aplazados.
+
+| Medida | Partida | Paso 7 |
+|---|---|---|
+| `--reader ui`: con / sin lecturas | × 1,37–1,38 | **× 1,22–1,32** |
+| `--reader ui`: WAL al terminar | 1 254,9 MiB | 1 254,9 MiB (0 checkpoints hechos, 198 aplazados) |
+| `--reader loop`: con / sin lecturas | × 1,37–1,40 | × 1,34–1,35 |
+| `--reader loop`: WAL al terminar | 1 259,3 MiB | **236–463 MiB** (4–7 checkpoints hechos) |
+| Resumen en frío después / antes (ui) | × 2,04–2,06 (partida recompilada) | × 1,23–2,18 |
+
+Estructural y mejora: **se conserva**. Presupuestos de D1 (`ui` ≤ × 1,1, WAL ≤ 8 MiB, después ≤ 1,2
+× antes) **no se cumplen** en esta carga:
+
+- Cada tanda añade 200 000 llamadas a una única sesión del último día, dentro del filtro de 30
+  días: el Resumen de esa sesión pasa de ~140 ms a 1,1–2,4 s. Con lecturas de ~2 s y un aviso por
+  segundo siempre hay un lector abierto: el `TRUNCATE` no puede completar nunca (aplazado 198 de
+  198 veces) y el escritor no se bloquea más de 100 ms por intento. Con el lector en bucle, que deja
+  huecos entre lecturas, sí completa y el WAL final baja de 1,25 GiB a 0,24–0,46 GiB.
+- «Resumen en frío después / antes» compara el Resumen con 200 000 y con 400 000 llamadas nuevas:
+  mide sobre todo el crecimiento de los datos, no el WAL.
+- **Corrección de la partida**: el «antes» de 143 ms de la partida se midió con un binario anterior
+  a mover esa medida tras la tanda sin lecturas (el binario no se recompiló). Recompilado en
+  `97088e3`, la partida da 1 171–1 197 ms antes / 2 393–2 462 ms después (× 2,04–2,06).
+
+### Paso 8: páginas y tipos compactos (D9)
+
+Bytes JSON (`200m`, filtro de 30 días): ninguna respuesta pasa de 1 MiB (la mayor, el snapshot del
+Resumen, 246,1 KiB). `get_session_detail` de la sesión más grande 126,5 → **51,9 KiB** (sin turnos,
+línea en columnas; sus turnos van en páginas de 30: 5,6 KiB); `get_project_detail` del proyecto
+mayor 10,7 → 5,5 KiB (sin sesiones); `list_sessions` 88,5 KiB (hasta 500) → 23,3 KiB (página de 50).
+
+- El servidor MCP no cambia: `list_sessions`, `project_detail` y `session_detail` siguen igual
+  (golden nuevo `tests/golden/detalle_mcp_fixtures.txt`, grabado en la partida de `sessions.rs`
+  antes de tocarlo, y los tests de `agentboard-mcp`).
+- `project_overview` y `session_overview` se componen sobre `project_detail` y `session_detail`
+  (salida idéntica a la del MCP por construcción); `session_turns` pagina la lista completa de
+  turnos de la sesión (el cálculo por turno necesita todas sus llamadas).
+- Interfaz: `DataTable` admite orden controlado (`sort`/`onSortChange`) y «Cargar más» (`more`); el
+  paginado lo lleva `lib/pager.ts` (descarta respuestas de cargas anteriores). En el turno no se
+  ordena (llega en orden). Texto nuevo «Cargar más ({n} de {total})» en es/en/pt/fr. Comprobado
+  con Chrome sin cabeza sobre el mock: detalle de proyecto (página, total, sesiones con
+  compactaciones) y de sesión (marcas de compactación y aviso calculado en el backend).

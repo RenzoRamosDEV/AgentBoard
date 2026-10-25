@@ -61,6 +61,18 @@ fn perfil_profiling_hereda_con_simbolos() {
 }
 
 #[test]
+fn perfil_bench_fast_sin_lto() {
+    assert_keys(
+        "profile.bench-fast",
+        &[
+            ("inherits", "\"release\""),
+            ("lto", "false"),
+            ("codegen-units", "16"),
+        ],
+    );
+}
+
+#[test]
 fn el_parser_de_secciones_no_mezcla_secciones() {
     let toml = "[a]\nx = 1\n# c\n[b]\nx = 2\n";
     assert_eq!(section(toml, "a"), vec![("x".into(), "1".into())]);

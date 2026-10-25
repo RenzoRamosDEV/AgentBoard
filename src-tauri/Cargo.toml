@@ -47,6 +47,12 @@ inherits = "release"
 debug = true
 strip = false
 
+[profile.bench-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [[bench]]
 name = "parse_line"
 harness = false

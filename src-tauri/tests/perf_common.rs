@@ -3,7 +3,10 @@
 #[path = "../benches/common/mod.rs"]
 mod common;
 
-use common::{live_lines, parse_args, refresh_segments, vm_hwm_kib, Args, LiveFile, Phase};
+use common::{
+    cpu_ms, live_lines, min_gap, parse_args, refresh_segments, vm_hwm_kib, Args, LiveFile, Phase,
+    Reader,
+};
 use std::path::PathBuf;
 
 fn args(list: &[&str]) -> Result<Args, String> {
@@ -28,8 +31,84 @@ fn valores_por_defecto() {
             fingerprint: false,
             query_fingerprint: false,
             cache: None,
+            events: None,
+            idle_secs: 60,
+            reader: Reader::Loop,
         }
     );
+}
+
+#[test]
+fn opciones_de_la_fase_3() {
+    for (raw, phase) in [("watch", Phase::Watch), ("idle", Phase::Idle)] {
+        assert_eq!(
+            args(&["--fixtures", "d", "--phase", raw]).unwrap().phase,
+            phase
+        );
+    }
+    let a = args(&[
+        "--fixtures",
+        "d",
+        "--events",
+        "500",
+        "--idle-secs",
+        "5",
+        "--reader",
+        "ui",
+    ])
+    .unwrap();
+    assert_eq!(
+        (a.events, a.idle_secs, a.reader),
+        (Some(500), 5, Reader::Ui)
+    );
+    assert_eq!(
+        args(&["--fixtures", "d", "--reader", "loop"])
+            .unwrap()
+            .reader,
+        Reader::Loop
+    );
+    for bad in [
+        &["--fixtures", "d", "--reader", "otro"][..],
+        &["--fixtures", "d", "--reader"],
+        &["--fixtures", "d", "--events", "0"],
+        &["--fixtures", "d", "--events", "x"],
+        &["--fixtures", "d", "--idle-secs", "0"],
+        &["--fixtures", "d", "--idle-secs", "-3"],
+    ] {
+        assert!(args(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn separacion_minima_entre_avisos() {
+    use std::time::{Duration, Instant};
+    let t0 = Instant::now();
+    let at = |ms: u64| t0 + Duration::from_millis(ms);
+    assert_eq!(min_gap(&[]), None);
+    assert_eq!(min_gap(&[at(0)]), None);
+    assert_eq!(
+        min_gap(&[at(0), at(1000)]),
+        Some(Duration::from_millis(1000))
+    );
+    assert_eq!(
+        min_gap(&[at(0), at(1500), at(2499), at(4000)]),
+        Some(Duration::from_millis(999))
+    );
+    assert_eq!(min_gap(&[at(5), at(5)]), Some(Duration::ZERO));
+}
+
+#[test]
+fn cpu_de_proc_self_stat() {
+    // Campos 14 y 15 (utime, stime) en ticks de 10 ms; el nombre puede tener espacios y paréntesis.
+    let stat = |u: u64, s: u64| {
+        format!("123 (perf (scan) x) S 1 2 3 4 5 6 7 8 9 10 {u} {s} 0 0 20 0 1 0 100 0 0")
+    };
+    assert_eq!(cpu_ms(&stat(10, 5), &stat(10, 5)), Some(0));
+    assert_eq!(cpu_ms(&stat(10, 5), &stat(11, 5)), Some(10));
+    assert_eq!(cpu_ms(&stat(10, 5), &stat(13, 9)), Some(70));
+    assert_eq!(cpu_ms(&stat(10, 5), &stat(9, 5)), Some(0));
+    assert_eq!(cpu_ms("", &stat(1, 1)), None);
+    assert_eq!(cpu_ms(&stat(1, 1), "1 (x) S 2"), None);
 }
 
 #[test]

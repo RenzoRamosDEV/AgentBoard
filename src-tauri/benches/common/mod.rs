@@ -372,7 +372,16 @@ pub enum Phase {
     Queries,
     Warm,
     Contention,
+    Watch,
+    Idle,
     All,
+}
+
+/// Lector de `--phase contention`: el Resumen en bucle (Fase 2) o uno por aviso, como la interfaz.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reader {
+    Loop,
+    Ui,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,10 +393,13 @@ pub struct Args {
     pub fingerprint: bool,
     pub query_fingerprint: bool,
     pub cache: Option<PathBuf>,
+    pub events: Option<usize>,
+    pub idle_secs: usize,
+    pub reader: Reader,
 }
 
 pub const USAGE: &str =
-    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|warm|contention|all] [--live-lines N] [--repeat R] [--fingerprint] [--query-fingerprint] [--cache <ruta>]";
+    "uso: perf_scan --fixtures <dir> [--phase cold|live|queries|warm|contention|watch|idle|all] [--live-lines N] [--repeat R] [--fingerprint] [--query-fingerprint] [--cache <ruta>] [--events N] [--idle-secs S] [--reader ui|loop]";
 
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut fixtures = None;
@@ -397,6 +409,9 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
     let mut fingerprint = false;
     let mut query_fingerprint = false;
     let mut cache = None;
+    let mut events = None;
+    let mut idle_secs = 60;
+    let mut reader = Reader::Loop;
     let mut it = args.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("falta el valor de {flag}"));
@@ -409,6 +424,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
                     "queries" => Phase::Queries,
                     "warm" => Phase::Warm,
                     "contention" => Phase::Contention,
+                    "watch" => Phase::Watch,
+                    "idle" => Phase::Idle,
                     "all" => Phase::All,
                     other => return Err(format!("fase desconocida: {other}")),
                 }
@@ -418,6 +435,15 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
             "--fingerprint" => fingerprint = true,
             "--query-fingerprint" => query_fingerprint = true,
             "--cache" => cache = Some(PathBuf::from(value()?)),
+            "--events" => events = Some(positive(&flag, &value()?)?),
+            "--idle-secs" => idle_secs = positive(&flag, &value()?)?,
+            "--reader" => {
+                reader = match value()?.as_str() {
+                    "loop" => Reader::Loop,
+                    "ui" => Reader::Ui,
+                    other => return Err(format!("lector desconocido: {other}")),
+                }
+            }
             other => return Err(format!("argumento desconocido: {other}")),
         }
     }
@@ -429,7 +455,35 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
         fingerprint,
         query_fingerprint,
         cache,
+        events,
+        idle_secs,
+        reader,
     })
+}
+
+/// Separación mínima entre instantes consecutivos; `None` con menos de dos.
+pub fn min_gap(at: &[std::time::Instant]) -> Option<Duration> {
+    at.windows(2)
+        .map(|w| w[1].saturating_duration_since(w[0]))
+        .min()
+}
+
+/// Milisegundos por tick de `/proc/self/stat` (`CLK_TCK` = 100 en Linux x86-64 y arm64).
+const MS_PER_TICK: u64 = 10;
+
+fn cpu_ticks(stat: &str) -> Option<u64> {
+    // El nombre del proceso (campo 2) va entre paréntesis y puede contener espacios: se cuenta
+    // desde el último `)`, donde empieza el campo 3; utime y stime son los campos 14 y 15.
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut fields = rest.split_whitespace().skip(11);
+    let utime: u64 = fields.next()?.parse().ok()?;
+    let stime: u64 = fields.next()?.parse().ok()?;
+    Some(utime + stime)
+}
+
+/// CPU (usuario + sistema, en ms) consumida entre dos lecturas de `/proc/self/stat`.
+pub fn cpu_ms(before: &str, after: &str) -> Option<u64> {
+    Some(cpu_ticks(after)?.saturating_sub(cpu_ticks(before)?) * MS_PER_TICK)
 }
 
 pub fn median(v: &[Duration]) -> Duration {

@@ -123,4 +123,30 @@
 
 ## Desviaciones durante la implementación
 
-<!-- Se completa durante la implementación: partida, cifras por paso, pasos revertidos y motivo. -->
+### Partida
+
+Commit de partida `97088e3` (fases nuevas de `perf_scan`, sin cambios de comportamiento). `bench-fast`,
+`200m` con `--cache` nueva por ejecución, tres ejecuciones (mediana; rango entre paréntesis), load 0,4–2,3.
+
+| Medida | Partida |
+|---|---|
+| `watch`: evento → dato visible (mediana / p95) | 800 ms (799–801) / 807–818 ms; 20 escaneos completos en 20 escrituras |
+| `watch --events 500`: avisos / relecturas / escaneos completos | 1 / 1 / 1 (el debounce global espera a que acabe la ráfaga); separación n/d |
+| `idle --idle-secs 60`: CPU / relecturas | 0 ms (0–10) / 0 |
+| `contention --repeat 200 --reader ui` | × 1,38 (41,6 → 57,0 ms); WAL 1 254,9 MiB; Resumen en frío antes / después 143 / 2 430 ms (× 16–17) |
+| `contention --reader loop` | × 1,38 (42,1 → 57,8 ms); WAL 1 259,3 MiB; × 15,8–16 |
+| `queries` 200m: Resumen completo frío / repetido | 133 ms (132–147) / 0,0 ms |
+| `queries` 1g: Resumen completo frío; `activity_daily` | 781 ms (778–794); 255 ms (255–256) |
+| Respuesta mayor (bytes, 200m, 30 días) | `get_session_detail` de la mayor: 126,5 KiB; `get_timeseries(hour)` 102,3 KiB; `list_sessions` 88,5 KiB |
+
+Las consultas de `200m` están en el rango de «Después de la Fase 2» (171 ms en `release` con load
+1,5–3,5; aquí 133 ms con menos carga). `activity_daily` en `1g` ya baja de 300 ms en `bench-fast` con
+poca carga (255 ms frente a 341 ms en `release` con load 1,5–3,5): el paso A de D7 se hace igual (lo
+exige la tarea) y el paso B solo si sigue ≥ 300 ms.
+
+Notas de la herramienta:
+- «Resumen en frío antes / después» de `contention` se mide tras la tanda sin lecturas y tras la tanda
+  con lecturas (cada tanda añade 200 × 1000 llamadas a la sesión en vivo, así que parte de la subida
+  es crecimiento de datos y no WAL).
+- En la partida, el aviso a la interfaz de `watch` es `on_done(Vigilante)` con registros (lo que
+  emitía `ingest://done`) y todos los escaneos son completos.

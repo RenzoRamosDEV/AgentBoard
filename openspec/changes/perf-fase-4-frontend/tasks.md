@@ -29,9 +29,9 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 5. Tablas (D6)
 
-- [ ] 5.1 Tests en rojo en `src/lib/__tests__/virtual.test.ts` de `visibleRange`: arriba del todo, en medio, al final, tabla por debajo de la ventana, `count` 0, `rowHeight` 0, `overscan` recortado en ambos extremos (particiones y bordes 199/200/201 filas para decidir si se virtualiza con `shouldVirtualize`); verificar que fallan
-- [ ] 5.2 Tests en rojo en `DataTable.test.tsx` (`renderToStaticMarkup`): con 200 filas el marcado es el de hoy (golden de la partida en `src/components/__tests__/__golden__/datatable-200.html`); con 1000 filas desplegadas pinta como mucho la ventana inicial más el margen, dos espaciadores con la altura del resto y `aria-rowcount=1000`; el orden local da el mismo orden que hoy y no vuelve a ordenar si solo cambia un prop ajeno (contador en `sort` de la columna); verificar que fallan
-- [ ] 5.3 Implementar D6 en `DataTable.tsx` y `src/lib/virtual.ts`; `columns` con `useMemo` en `Projects`, `ProjectDetail`, `SessionDetail` y las vistas ampliadas de desgloses; verificar 5.1–5.2, `npm test`, `npm run build`, el aspecto (incluido desplazarse por una tabla larga de turnos en el mock) y medir aplicando la regla
+- [x] 5.1 Tests en rojo en `src/lib/__tests__/virtual.test.ts` de `visibleRange`: arriba del todo, en medio, al final, tabla por debajo de la ventana, `count` 0, `rowHeight` 0, `overscan` recortado en ambos extremos (particiones y bordes 199/200/201 filas para decidir si se virtualiza con `shouldVirtualize`); verificar que fallan
+- [x] 5.2 Tests en rojo en `DataTable.test.tsx` (`renderToStaticMarkup`): con 200 filas el marcado es el de hoy (golden de la partida en `src/components/__tests__/__golden__/datatable-200.html`); con 1000 filas desplegadas pinta como mucho la ventana inicial más el margen, dos espaciadores con la altura del resto y `aria-rowcount=1000`; el orden local da el mismo orden que hoy y no vuelve a ordenar si solo cambia un prop ajeno (contador en `sort` de la columna); verificar que fallan
+- [x] 5.3 Implementar D6 en `DataTable.tsx` y `src/lib/virtual.ts`; `columns` con `useMemo` en `Projects`, `ProjectDetail`, `SessionDetail` y las vistas ampliadas de desgloses; verificar 5.1–5.2, `npm test`, `npm run build`, el aspecto (incluido desplazarse por una tabla larga de turnos en el mock) y medir aplicando la regla
 
 ## 6. Agrupaciones y gráficos (D7)
 

@@ -68,6 +68,7 @@ export function ProjectDetail({
   );
 
   useEffect(() => pager.load(sort), [pager, sort, generation]);
+  const sessionCols = useMemo(() => sessionColumns(sessions.rows), [sessions.rows]);
 
   if (error)
     return (
@@ -165,7 +166,7 @@ export function ProjectDetail({
           <DataTable
             rows={sessions.rows}
             rowKey={(r) => r.id}
-            columns={sessionColumns(sessions.rows)}
+            columns={sessionCols}
             sort={sort}
             onSortChange={setSort}
             more={{ total: sessions.total, onMore: pager.more }}

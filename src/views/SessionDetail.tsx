@@ -31,9 +31,44 @@ export function compactionAlert(after: AfterCompaction | null): string | null {
 /** Turnos por página. */
 const TURNS_PAGE = 30;
 
+/** Columnas de la tabla de turnos (no dependen de los datos). */
+const turnColumnsDef = (): Column<TurnRow>[] => [
+  { header: "#", cell: (r) => r.n, width: "36px", className: "muted num" },
+  { header: t("Hora"), cell: (r) => fmt.time(r.ts), width: "56px", className: "secondary num" },
+  {
+    header: t("Actividad"),
+    cell: (r) => (
+      <span className="with-dot">
+        <i style={{ background: activityColor(r.activity) }} />
+        {activityLabel(r.activity)}
+      </span>
+    ),
+    width: "120px",
+  },
+  {
+    header: t("Herramientas"),
+    cell: (r) =>
+      r.tools.length ? (
+        <span className="mono small" title={r.tools.map(([n, c]) => `${n} ×${c}`).join(" · ")}>
+          {r.tools
+            .slice(0, TOP_TOOLS)
+            .map(([n, c]) => `${n} ×${c}`)
+            .join(" · ")}
+          {r.tools.length > TOP_TOOLS ? " …" : ""}
+        </span>
+      ) : (
+        <span className="muted">–</span>
+      ),
+    className: (r) => (r.toolErrors ? "warn" : "secondary"),
+  },
+  { header: t("Entrada / salida"), cell: (r) => `${fmt.compact(r.inputTokens)} / ${fmt.compact(r.outputTokens)}`, align: "right", width: "120px", className: "secondary" },
+  { header: t("Coste"), cell: (r) => fmt.usd(r.costUsd), align: "right", width: "72px", className: "cost" },
+];
+
 export function SessionDetail({ id, back, backLabel }: { id: string; back: () => void; backLabel?: string }) {
   const { data: d, error } = useQuery<Detail>("get_session_detail", id, () => api.sessionDetail(id));
   const generation = useGeneration();
+  const turnColumns = useMemo(turnColumnsDef, []);
   const [turns, setTurns] = useState<PagerState<TurnRow>>({ rows: [], total: 0 });
   // Turnos por páginas, en orden; un aviso de datos cambiados vuelve a la primera.
   const pager = useMemo(() => createPager<TurnRow, null>((offset, limit) => api.sessionTurns(id, { offset, limit }), TURNS_PAGE, setTurns), [id]);
@@ -69,38 +104,6 @@ export function SessionDetail({ id, back, backLabel }: { id: string; back: () =>
   }));
   const markers = d.compactions.map((ts, i) => ({ index: markerIndex(timeline, ts), label: t("compact. {n}", { n: i + 1 }) }));
 
-  const turnColumns: Column<TurnRow>[] = [
-    { header: "#", cell: (r) => r.n, width: "36px", className: "muted num" },
-    { header: t("Hora"), cell: (r) => fmt.time(r.ts), width: "56px", className: "secondary num" },
-    {
-      header: t("Actividad"),
-      cell: (r) => (
-        <span className="with-dot">
-          <i style={{ background: activityColor(r.activity) }} />
-          {activityLabel(r.activity)}
-        </span>
-      ),
-      width: "120px",
-    },
-    {
-      header: t("Herramientas"),
-      cell: (r) =>
-        r.tools.length ? (
-          <span className="mono small" title={r.tools.map(([n, c]) => `${n} ×${c}`).join(" · ")}>
-            {r.tools
-              .slice(0, TOP_TOOLS)
-              .map(([n, c]) => `${n} ×${c}`)
-              .join(" · ")}
-            {r.tools.length > TOP_TOOLS ? " …" : ""}
-          </span>
-        ) : (
-          <span className="muted">–</span>
-        ),
-      className: (r) => (r.toolErrors ? "warn" : "secondary"),
-    },
-    { header: t("Entrada / salida"), cell: (r) => `${fmt.compact(r.inputTokens)} / ${fmt.compact(r.outputTokens)}`, align: "right", width: "120px", className: "secondary" },
-    { header: t("Coste"), cell: (r) => fmt.usd(r.costUsd), align: "right", width: "72px", className: "cost" },
-  ];
 
   const toolColumns: Column<ToolStat>[] = [
     { header: t("Herramienta"), cell: (r) => <span title={r.tool}>{r.tool}</span>, width: "minmax(110px, 1fr)", className: "mono", sort: (r) => r.tool },

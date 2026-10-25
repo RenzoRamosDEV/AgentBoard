@@ -2254,6 +2254,9 @@ mod tests {
         assert_eq!(turn_of(&conn, "antes"), None);
     }
 
+    // La identidad del archivo (dev:inodo) solo existe en Unix; en Windows la rotación se
+    // detecta solo cuando el archivo encoge.
+    #[cfg(unix)]
     #[test]
     fn archivo_rotado_se_relee_desde_cero_sin_duplicar() {
         let (_d, file, p, mut conn) = setup();
@@ -2621,6 +2624,9 @@ mod tests {
         assert!(!window.wait_for(0), "tras cerrar, nada");
     }
 
+    // La identidad del archivo (dev:inodo) solo existe en Unix; en Windows la rotación se
+    // detecta solo cuando el archivo encoge.
+    #[cfg(unix)]
     #[test]
     fn el_escaneo_lee_lo_anadido_y_los_archivos_rotados() {
         let (_d, file, p, mut conn) = setup();

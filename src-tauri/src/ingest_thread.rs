@@ -236,19 +236,28 @@ fn rebuild(
     generation: &DataGeneration,
 ) -> Result<()> {
     let mode = mode.unwrap_or_else(|| state.storage.mode.clone());
-    if let CacheMode::Disco(old) = &state.storage.mode {
-        crate::db::delete_cache_files(old);
+    if let CacheMode::Disco(old) = state.storage.mode.clone() {
+        // Windows no deja borrar una base abierta: se sueltan antes el escritor y los lectores
+        // publicados, pasando por una base vacía en memoria.
+        let placeholder = Storage::open(CacheMode::Memoria)?;
+        publish(state, Arc::new(placeholder.readers(1)?));
+        state.storage = placeholder;
+        crate::db::delete_cache_files(&old);
     }
     let storage = Storage::open(mode)?;
     crate::pricing::apply_overrides(&storage.writer, &(state.prices)())?;
-    let pool = Arc::new(storage.readers(ReadPool::SIZE)?);
+    publish(state, Arc::new(storage.readers(ReadPool::SIZE)?));
+    state.storage = storage;
+    state.changed(generation, &Touched::everything());
+    Ok(())
+}
+
+/// Publica los lectores de la base vigente; las consultas en curso terminan con los anteriores.
+fn publish(state: &WriterState, pool: Arc<ReadPool>) {
     match state.readers.write() {
         Ok(mut current) => *current = pool,
         Err(poisoned) => *poisoned.into_inner() = pool,
     }
-    state.storage = storage;
-    state.changed(generation, &Touched::everything());
-    Ok(())
 }
 
 /// Checkpoint `TRUNCATE` del WAL si supera su límite; si un lector lo impide, se reintenta tras
@@ -867,13 +876,17 @@ mod tests {
         );
         handle.request(Origen::EscaneoInicial);
         assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 4));
-        let before = crate::commands::current(&readers).unwrap();
+        // Sin retener los lectores viejos: en Windows impedirían borrar la caché.
+        let before = Arc::downgrade(&crate::commands::current(&readers).unwrap());
         // Un lector se encuentra la base dañada: se pide reconstruir y se relee todo.
         handle.report(&corrupt());
         handle.report(&anyhow::anyhow!("un error cualquiera no reconstruye"));
         assert_eq!(rx.recv_timeout(WAIT).unwrap(), (Origen::EscaneoInicial, 4));
         let after = crate::commands::current(&readers).unwrap();
-        assert!(!Arc::ptr_eq(&before, &after), "lectores nuevos");
+        assert!(
+            !std::ptr::eq(before.as_ptr(), Arc::as_ptr(&after)),
+            "lectores nuevos"
+        );
         assert_eq!(calls(&fx), 2);
         assert!(
             rx.recv_timeout(Duration::from_millis(300)).is_err(),

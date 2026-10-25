@@ -284,3 +284,27 @@ mayor 10,7 → 5,5 KiB (sin sesiones); `list_sessions` 88,5 KiB (hasta 500) → 
   ordena (llega en orden). Texto nuevo «Cargar más ({n} de {total})» en es/en/pt/fr. Comprobado
   con Chrome sin cabeza sobre el mock: detalle de proyecto (página, total, sesiones con
   compactaciones) y de sesión (marcas de compactación y aviso calculado en el backend).
+
+### Mutación dirigida (tarea 9.1)
+
+`cargo mutants --in-place --in-diff <diff desde 97088e3> --cargo-arg=--lib -- <módulo>`, cada
+ejecución cortada a 3 min con `SIGINT`, árbol limpio después (`git status`). Con los tests del módulo
+cada mutante tarda 3–5 s, así que casi todas las ejecuciones terminaron solas.
+
+| Alcance | Examinados | Atrapados | Sin compilar | Tiempo agotado | Supervivientes |
+|---|---|---|---|---|---|
+| `notifier.rs` (`Throttle`) | 20 | 14 | 6 | 0 | 0 |
+| `watcher.rs` (`normalize`, `under_root`, `recognized`, `relevant`, `Debouncer`, `watch_plan`) | 25 (+10 al repetir) | 17 (+9) | 5 (+1) | 0 | 3 → 1 |
+| `sessions.rs` (orden, `PageRequest`, `session_page`, `project_overview`, `after_compaction`, `session_turns`) | 34 (+14) | 20 (+13) | 12 (+1) | 0 | 2 → 0 |
+| `snapshot.rs` | 5 (+5) | 0 (+2) | 3 (+3) | 0 | 2 → 0 |
+| `ingest.rs` (planificación de `scan_paths`: `scan_given`, `plan_paths`, `load_tracked_paths`, `forget_stale_files`, avisos) | 18 (+5) | 15 (+5) | 1 | 1 | 1 → 0 |
+
+Los supervivientes se mataron con tests nuevos (evento `Modify` sobre una carpeta no relee su
+contenido; turno justo en la compactación y razón distinta de 1; mes del snapshot con su inicio y
+sin el final del periodo; archivo relacionado que tampoco existe) y se repitió la mutación del
+alcance afectado. Queda **1 superviviente justificado**: `under_root → true` en `watcher.rs` es
+equivalente en resultado (`recognized` vuelve a exigir la raíz); solo evita recorrer carpetas
+creadas fuera de las raíces (p. ej. bajo el `~` vigilado sin recursión), un coste que los tests no
+observan. Puntuación sobre los mutantes viables examinados: 1 superviviente de 76 (98,7 %). El
+mutante con tiempo agotado (`Sink::committed → Ok(())`) es detectado: sin el aviso el test espera el
+cambio hasta el límite.

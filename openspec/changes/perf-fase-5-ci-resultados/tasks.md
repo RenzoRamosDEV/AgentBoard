@@ -18,7 +18,7 @@ Sin optimizaciones nuevas en la app ni en el servidor MCP; sin dependencias nuev
 ## 3. Job de benchmarks en CI (D1, D3)
 
 - [x] 3.1 Añadir a `.github/workflows/ci.yml` el disparador `workflow_dispatch` y el job `bench` de D3 (tests del script, fixture `50m`, `cargo bench --profile bench-fast` de los tres benches, `capture` + artefacto `perf-baseline` con `if: always()`, `compare` con informe en `$GITHUB_STEP_SUMMARY`, `timeout-minutes: 45`); verificar con `actionlint .github/workflows/ci.yml` y `python3 -c 'import yaml,sys; yaml.safe_load(open(".github/workflows/ci.yml"))'`
-- [ ] 3.2 Ensayo local del job: `python3 scripts/gen-fixtures.py 50m`, el mismo `cargo bench --profile bench-fast …`, `capture` y `compare` contra la captura (código 0) y contra una copia con una mediana dividida por 1,25 (código 1 y mensaje claro); anotar el tiempo total en «Desviaciones»
+- [x] 3.2 Ensayo local del job: `python3 scripts/gen-fixtures.py 50m`, el mismo `cargo bench --profile bench-fast …`, `capture` y `compare` contra la captura (código 0) y contra una copia con una mediana dividida por 1,25 (código 1 y mensaje claro); anotar el tiempo total en «Desviaciones»
 
 ## 4. Línea base en el runner (D1)
 

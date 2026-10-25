@@ -151,3 +151,7 @@ Distrobox `agentburn-dev`, Ryzen 5 Pro 7535U con carga variable, compilación ya
 - `shell: bash` en el paso de comparación: el shell por defecto de `run` es `bash -e` sin `pipefail`, y el `| tee -a "$GITHUB_STEP_SUMMARY"` se tragaría el código 1/2 del comparador.
 
 `actionlint .github/workflows/ci.yml` y `yaml.safe_load` sin errores; los jobs `frontend` y `rust` no cambian.
+
+### Ensayo local del job (tarea 3.2)
+
+En distrobox, mismos comandos que el job: `gen-fixtures.py 50m` (1,4 s, 397 archivos), `rm -rf src-tauri/target/criterion`, `cargo bench --profile bench-fast --bench parse_line --bench ingest_file --bench summary_queries` (compilación 2 min 31 s con dependencias ya compiladas en otros perfiles; total 322 s ≈ 5,4 min). Salen **17 benchmarks**: el target `parse_line` incluye también el grupo `parse_file/*`. `capture` → código 0; `compare` contra su propia captura → 0; contra una copia con `summary_queries/activity` dividida por 1,25 → código 1 con `REGRESIÓN summary_queries/activity: 4,07 ms → 5,09 ms (+25 %, umbral +20 %)` y las instrucciones de actualización. Reaparece el aviso de cargo `output filename collision` ya documentado en la Fase 0 (`crate-type`); no afecta al job.

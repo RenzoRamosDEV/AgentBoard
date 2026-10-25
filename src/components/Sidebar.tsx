@@ -70,6 +70,7 @@ export function Sidebar(p: Props) {
             {SECTIONS.filter((s) => s.group === g.id).map((s) => (
               <button
                 key={s.id}
+                data-perf={`nav-${s.id}`}
                 className={`nav-item ${p.section === s.id ? "active" : ""}`}
                 onClick={() => p.setSection(s.id)}
                 title={t(s.title)}

@@ -61,7 +61,7 @@ export function Topbar(p: Props) {
     <div className="topbar">
       <div className="segmented" role="group" aria-label={t("Periodo")}>
         {PERIODS.map((x) => (
-          <button key={x.kind} type="button" className={`segment ${p.period.kind === x.kind ? "active" : ""}`} aria-pressed={p.period.kind === x.kind} onClick={() => p.setPeriod({ kind: x.kind })}>
+          <button key={x.kind} type="button" data-perf={`period-${x.kind}`} className={`segment ${p.period.kind === x.kind ? "active" : ""}`} aria-pressed={p.period.kind === x.kind} onClick={() => p.setPeriod({ kind: x.kind })}>
             {t(x.label)}
           </button>
         ))}
@@ -69,6 +69,7 @@ export function Topbar(p: Props) {
 
       <Popover
         ariaLabel={t("Agentes")}
+        perf="agents"
         label={
           <>
             <span className="muted">{t("Agentes")}</span>
@@ -81,7 +82,7 @@ export function Topbar(p: Props) {
           {p.agents.map((a) => (
             <li key={a.id}>
               <label title={a.logRoot}>
-                <input type="checkbox" checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
+                <input type="checkbox" data-perf={`agent-${a.id}`} checked={!p.hiddenAgents.has(a.id)} onChange={() => p.toggleAgent(a.id)} />
                 <span className="name">{a.name}</span>
                 <span className="muted num">{fmt.usd(a.costUsd)}</span>
               </label>

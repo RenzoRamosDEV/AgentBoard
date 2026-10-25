@@ -1,6 +1,6 @@
 /**
  * Datos de ejemplo para desarrollar la UI en un navegador normal (`npm run dev`),
- * sin el núcleo Rust. Solo se carga en modo dev y fuera de Tauri.
+ * sin el núcleo Rust. Solo se carga en modo dev (o en la build `perf` de medición) y fuera de Tauri.
  */
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -101,7 +101,14 @@ function mockSettings() {
   };
 }
 
+/** Retraso simulado del backend con `?latency=<ms>`: el Resumen entero, el resto de comandos ¼. */
+function mockLatency(): number {
+  const ms = Number(new URLSearchParams(location.search).get("latency"));
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
 export function installMocks() {
+  const latency = mockLatency();
   const handle = (cmd: string, args: unknown): unknown => {
     const a = args as Record<string, unknown>;
     // El Resumen en una petición: los mismos apartados que los comandos sueltos.
@@ -350,7 +357,16 @@ export function installMocks() {
     console.warn("mock sin implementar:", cmd, args);
     return null;
   };
-  mockIPC(handle, { shouldMockEvents: true });
+  const delayed = latency
+    ? async (cmd: string, args: unknown) => {
+        const out = handle(cmd, args);
+        await new Promise((r) => setTimeout(r, cmd === "get_dashboard_snapshot" ? latency : latency / 4));
+        return out;
+      }
+    : handle;
+  mockIPC(delayed, { shouldMockEvents: true });
+  // El arnés de medición emite sus propios avisos: sin relecturas simuladas que lo enturbien.
+  if (new URLSearchParams(location.search).get("perf") === "1") return;
   // Relecturas simuladas del vigilante: un aviso de datos cambiados de vez en cuando.
   setInterval(() => {
     const d = new Date();

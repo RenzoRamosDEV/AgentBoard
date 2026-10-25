@@ -4,8 +4,10 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://v2.tauri.app/start/frontend/vite/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // La build `perf` usa la variante de React con `Profiler` activo (en producción no mide).
+  resolve: mode === "perf" ? { alias: { "react-dom/client": "react-dom/profiling" } } : undefined,
   clearScreen: false,
   server: {
     port: 1420,
@@ -14,4 +16,4 @@ export default defineConfig({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
-});
+}));

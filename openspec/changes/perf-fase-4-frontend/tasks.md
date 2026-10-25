@@ -7,8 +7,8 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 1. Arnés de medición y partida
 
-- [ ] 1.1 Tests en rojo: `src/dev/__tests__/perfHarness.test.ts` para las funciones puras del arnés (`median`, `summarize` de repeticiones con 1 y 5 valores, y `parseResults` que extrae el JSON de `<pre id="perf-results">` y falla sin él); `scripts/perf-ui.mjs` exporta `chunkSizes(dir)` probada sobre una carpeta temporal (bytes y gzip); verificar que fallan
-- [ ] 1.2 Implementar D1: `.env.perf` (`VITE_MOCK=1`), instalación del mock en `main.tsx` con `VITE_MOCK`, `?latency=` en `mock.ts`, `src/dev/perfHarness.ts` (Profiler, escenarios S1–S4 con clics y `data-perf`), `scripts/perf-ui.mjs`; verificar 1.1 en verde, que `npm run build` (sin modo `perf`) no incluye el mock ni el arnés (buscar `installMocks` en `dist/assets`) y que `node scripts/perf-ui.mjs` imprime S1–S4 y los chunks
+- [x] 1.1 Tests en rojo: `src/dev/__tests__/perfHarness.test.ts` para las funciones puras del arnés (`median`, `summarize` de repeticiones con 1 y 5 valores, y `parseResults` que extrae el JSON de `<pre id="perf-results">` y falla sin él); `scripts/perf-ui.mjs` exporta `chunkSizes(dir)` probada sobre una carpeta temporal (bytes y gzip); verificar que fallan
+- [x] 1.2 Implementar D1: `.env.perf` (`VITE_MOCK=1`), instalación del mock en `main.tsx` con `VITE_MOCK`, `?latency=` en `mock.ts`, `src/dev/perfHarness.ts` (Profiler, escenarios S1–S4 con clics y `data-perf`), `scripts/perf-ui.mjs`; verificar 1.1 en verde, que `npm run build` (sin modo `perf`) no incluye el mock ni el arnés (buscar `installMocks` en `dist/assets`) y que `node scripts/perf-ui.mjs` imprime S1–S4 y los chunks
 - [ ] 1.3 Medición de partida (antes de cualquier cambio de rendimiento) con latencia 104 y 630 ms; anotar cifras, chunks y commit de partida en design.md («Desviaciones…» → «Partida»)
 
 ## 2. Caché de consultas y generación (D2, D3)

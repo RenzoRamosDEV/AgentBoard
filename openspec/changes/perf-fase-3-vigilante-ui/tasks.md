@@ -32,10 +32,10 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 5. Snapshot del Resumen (D6)
 
-- [ ] 5.1 Tests en rojo en `snapshot.rs`: (a) sobre el fixture `2m` y `tests/fixtures`, con los filtros del golden de consultas, zona `Europe/Madrid` y `now` fijo, cada apartado del snapshot (con y sin `previous`, con y sin `branch_view`) es igual a la consulta suelta con el comparador del golden; (b) con un lote confirmado entre dos apartados (gancho de prueba), todos los apartados ven el mismo estado; (c) `turn_stats` se ejecuta una vez por snapshot (contador); (d) dos peticiones iguales en el mismo minuto y generación salen de la caché de resultados; verificar que fallan
-- [ ] 5.2 Implementar `snapshot.rs` (una transacción de lectura, `turn_stats` compartido), el comando `get_dashboard_snapshot` registrado en `lib.rs` y `snapshot` en `perf_scan --phase queries`; verificar 5.1, `equivalencia_consultas` y `cargo test --workspace` en verde
-- [ ] 5.3 Test en rojo (`npm test`): `useDashboardData` hace un único `invoke("get_dashboard_snapshot")` con `monthFrom`, `branchView` y `previous`, y devuelve `DashboardData` con `filter` y `prev.filter`; verificar que falla; implementar en `api.ts`, `useData.ts` y `mock.ts`; verificar `npm test`, `npm run build` y que el Resumen se ve igual en `npm run dev` (mock)
-- [ ] 5.4 Medir (MB: `queries` en `200m`, snapshot en frío y repetido) y aplicar la regla D1; verificar snapshot < 300 ms en frío; anotar las cifras
+- [x] 5.1 Tests en rojo en `snapshot.rs`: (a) sobre el fixture `2m` y `tests/fixtures`, con los filtros del golden de consultas, zona `Europe/Madrid` y `now` fijo, cada apartado del snapshot (con y sin `previous`, con y sin `branch_view`) es igual a la consulta suelta con el comparador del golden; (b) con un lote confirmado entre dos apartados (gancho de prueba), todos los apartados ven el mismo estado; (c) `turn_stats` se ejecuta una vez por snapshot (contador); (d) dos peticiones iguales en el mismo minuto y generación salen de la caché de resultados; verificar que fallan
+- [x] 5.2 Implementar `snapshot.rs` (una transacción de lectura, `turn_stats` compartido), el comando `get_dashboard_snapshot` registrado en `lib.rs` y `snapshot` en `perf_scan --phase queries`; verificar 5.1, `equivalencia_consultas` y `cargo test --workspace` en verde
+- [x] 5.3 Test en rojo (`npm test`): `useDashboardData` hace un único `invoke("get_dashboard_snapshot")` con `monthFrom`, `branchView` y `previous`, y devuelve `DashboardData` con `filter` y `prev.filter`; verificar que falla; implementar en `api.ts`, `useData.ts` y `mock.ts`; verificar `npm test`, `npm run build` y que el Resumen se ve igual en `npm run dev` (mock)
+- [x] 5.4 Medir (MB: `queries` en `200m`, snapshot en frío y repetido) y aplicar la regla D1; verificar snapshot < 300 ms en frío; anotar las cifras
 
 ## 6. `activity_daily` en 1 GB (D7)
 

@@ -197,3 +197,23 @@ Notas de la herramienta:
 - Tarea 4.4: la comprobación manual en `npm run tauri dev` no se hizo (sesión sin interacción
   gráfica); la cubren `perf_scan --phase watch` (vigilante, ingesta y notificador reales) y los
   tests de suscripción del frontend.
+
+### Paso 5: snapshot del Resumen (D6)
+
+`bench-fast`, tres ejecuciones (load 1,5–3,1). Estructural: **se conserva**.
+
+| Medida | Antes | Paso 5 |
+|---|---|---|
+| Resumen 200m en frío: 18 consultas sueltas / snapshot **con comparación** | 120–128 ms / — | **106 ms** (106–120) |
+| Resumen 1g en frío: sueltas / snapshot con comparación | 738–755 ms / — | 626 ms (622–628) |
+| Snapshot repetido (caché de resultados) | — | 0,0 ms |
+| `watch`: evento → dato visible (la medición ya lee con el snapshot) | 574 ms | **515 ms** (515–515) / p95 521–527 ms |
+| Respuesta mayor (bytes, 200m) | 126,5 KiB | 246,1 KiB (`get_dashboard_snapshot`, que sustituye a 20 respuestas) |
+
+- `turn_stats` se comparte entre `activity` y `activity_daily` (`insights::activity_from` /
+  `activity_daily_from`).
+- `perf_scan --phase queries` no compara el snapshot con las consultas sueltas: lo hace el test
+  `tests/snapshot_resumen.rs` (fixtures `2m` y versionados, en memoria y en disco, con y sin
+  comparación y vista por ramas) con el comparador del golden.
+- Comprobado en `npm run dev` (mock) con Chrome sin cabeza (`?probe=1`): el Resumen se pinta con
+  las cifras del periodo y del anterior y la sonda no marca desbordes.

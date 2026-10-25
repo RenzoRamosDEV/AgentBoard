@@ -4,6 +4,9 @@ Medición de referencia del backend de AgentBoard antes de cualquier optimizaci�
 cifras salen de logs **sintéticos** (`scripts/gen-fixtures.py`), nunca de los logs reales.
 Las fases 1–4 deben compararse contra este documento.
 
+Resumen final de las Fases 0–5 (estado de cada presupuesto, lo que no se cumplió y próximos
+pasos): [`RESULTS.md`](RESULTS.md).
+
 ## Entorno
 
 | Campo | Valor |

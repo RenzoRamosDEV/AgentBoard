@@ -238,6 +238,7 @@ cargo build --manifest-path src-tauri/Cargo.toml -p agentboard-mcp
 ```
 
 Cada Pull Request compila y prueba en **Linux, Windows y macOS**. Ver [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Resultados de rendimiento (presupuestos, antes y después, pendientes): [`docs/perf/RESULTS.md`](docs/perf/RESULTS.md).
 
 ---
 

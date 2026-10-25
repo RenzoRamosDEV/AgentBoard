@@ -163,3 +163,13 @@ Nodos comprobados en el código: `watcher.rs` (`QUIET` 150 ms, `MAX_WAIT` 1 s, `
 ### Guía «Cómo perfilar» (tareas 4.1 y 5.2)
 
 Comprobado en local: `AGENTBOARD_LOG=debug cargo run --example scan` (código 0, 988 líneas de trazas; con `| head` sale 101 por la tubería cerrada, no por el ejemplo), `perf_scan --fixtures target/perf-fixtures/50m --phase queries` con `bench-fast` (código 0; RSS pico 40,8 MiB) y `node scripts/perf-ui.mjs --runs=1` (código 0; S1 en caché 33,3 ms, S2 en frío 133,3 ms, S5 133,2 ms, iguales a la Fase 4). Los comandos de «Benchmarks en CI y línea base» son los del job, en el mismo orden. La sección «Integración continua» de `CONTRIBUTING.md` y la de `docs/wiki/Arquitectura.md` mencionan el job `bench`.
+
+### `RESULTS.md` frente al mapa de D6 (tarea 5.3)
+
+Cada cifra se comprobó contra `BASELINE.md`; correcciones al mapa de partida de D6:
+
+- Cambio en frío, «antes»: 33,2–216,7 ms (incluye S1 en frío, 33,2 ms), no 166,8–216,7 ms; «después» con la latencia de 1 GB: 35,6–666,6 ms (S5 666,6 ms), no «~650 ms».
+- Memoria, respuestas: ≤ 327,0 KiB (1 GB), no ≤ 246 KiB (esa es la de 200 MB). El RSS se compara en las mismas condiciones (200 MB solo frío: 60,7 → 88 MiB; 1 GB con vivo: 275,5 → 323 MiB), y la memoria se desglosa en tres filas (RSS, respuestas, WAL).
+- Refresco con lecturas, «antes»: la primera medición es la de la Fase 2 (×1,36–1,38 en disco); se da también la partida de la Fase 3 (×1,29).
+- Filas añadidas: refresco en vivo (presupuesto de la Fase 1) y Resumen después/antes de la contención (≤ ×1,2, no cumple), para no omitir ningún «no cumple» de `BASELINE.md`.
+- Mutación: F1 97 de 545 examinados (96,5 %), F2 305 de 404 (97,1 %), F3 98,7 % de 75 viables, F4 92,6 % (7 equivalentes), F5 98,4 %.

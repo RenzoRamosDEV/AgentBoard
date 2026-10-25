@@ -590,6 +590,12 @@ mod pure_tests {
             &providers(&root),
         );
         assert_eq!(got, vec![root.join("p/c.jsonl"), sub.join("a.jsonl")]);
+        // Otros eventos de una carpeta (permisos, fechas) no releen lo que contiene.
+        let touched = relevant(
+            &event(EventKind::Modify(ModifyKind::Any), &[&root.join("p")]),
+            &providers(&root),
+        );
+        assert!(touched.is_empty(), "{touched:?}");
     }
 
     fn ms(n: u64) -> Duration {

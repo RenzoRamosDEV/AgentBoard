@@ -99,6 +99,8 @@ async function measure(act: () => unknown): Promise<Sample> {
   probe.renderMs = 0;
   const t0 = now();
   probe.lastPaint = t0;
+  // La espera cuenta desde el clic: una transición o un chunk perezoso pintan unos fotogramas después.
+  probe.lastActivity = t0;
   act();
   await quiet();
   return { ms: probe.lastPaint - t0, renderMs: probe.renderMs, requests: Object.fromEntries(probe.requests) };

@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useState } from "react";
+import { lazy, memo, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { subscribeApp } from "./lib/live";
 import { queryStore } from "./lib/query";
@@ -10,15 +10,17 @@ import { SECTIONS, type SectionId } from "./lib/sections";
 import { useDashboardData } from "./lib/useData";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
-import { SettingsDialog } from "./components/SettingsDialog";
 import { TooltipProvider } from "./components/Tooltip";
 import { Overview as OverviewView } from "./views/Overview";
-import { Section as SectionView } from "./views/Section";
-import { Projects as ProjectsView } from "./views/Projects";
-import { ProjectDetail } from "./views/ProjectDetail";
-import { SessionDetail } from "./views/SessionDetail";
-import { Pricing } from "./views/Pricing";
-import { CommandPalette } from "./components/CommandPalette";
+
+// Cada apartado distinto del Resumen se descarga al abrirlo por primera vez.
+const SectionView = lazy(() => import("./views/Section").then((m) => ({ default: m.Section })));
+const ProjectsView = lazy(() => import("./views/Projects").then((m) => ({ default: m.Projects })));
+const ProjectDetail = lazy(() => import("./views/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
+const SessionDetail = lazy(() => import("./views/SessionDetail").then((m) => ({ default: m.SessionDetail })));
+const Pricing = lazy(() => import("./views/Pricing").then((m) => ({ default: m.Pricing })));
+const SettingsDialog = lazy(() => import("./components/SettingsDialog").then((m) => ({ default: m.SettingsDialog })));
+const CommandPalette = lazy(() => import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })));
 
 // Memoizadas: el render urgente de un cambio de filtro (aún con el filtro anterior) no las repinta.
 const Overview = memo(OverviewView);
@@ -140,7 +142,8 @@ export default function App() {
             </div>
           )}
           <Topbar lastScan={lastScan} flash={live} onSearch={openPalette} onExport={doExport} />
-          <Content
+          <Suspense fallback={<div className="main muted">{t("Cargando…")}</div>}>
+            <Content
             section={section}
             projectKey={projectKey}
             sessionId={sessionId}
@@ -150,9 +153,11 @@ export default function App() {
             openSession={openSession}
             settings={settings}
             saveSettings={saveSettings}
-          />
+            />
+          </Suspense>
         </div>
       </div>
+      <Suspense fallback={null}>
       {showPalette && (
         <PaletteHost
           onClose={() => setShowPalette(false)}
@@ -165,6 +170,7 @@ export default function App() {
         />
       )}
       {showSettings && <SettingsDialog settings={settings} onSave={saveSettings} onClose={() => setShowSettings(false)} onExport={doExport} />}
+      </Suspense>
     </TooltipProvider>
     </LangContext.Provider>
   );

@@ -24,8 +24,8 @@ Comandos de Rust dentro de distrobox: `distrobox enter agentburn-dev -- bash -lc
 
 ## 4. Carga por apartado (D5)
 
-- [ ] 4.1 Test en rojo en `src/lib/__tests__/lazy.test.ts`: `App.tsx` importa `Section`, `Projects`, `ProjectDetail`, `SessionDetail`, `Pricing`, `SettingsDialog` y `CommandPalette` solo con `lazy(() => import(...))` y no de forma estática (lectura del fuente, como `live.test.ts`); verificar que falla
-- [ ] 4.2 Implementar D5 con `Suspense` y el mismo indicador «Cargando…»; verificar 4.1, `npm run build` con un chunk por apartado y el chunk inicial menor que en la partida, el aspecto, y medir S1 en frío y cacheado aplicando la regla
+- [x] 4.1 Test en rojo en `src/lib/__tests__/lazy.test.ts`: `App.tsx` importa `Section`, `Projects`, `ProjectDetail`, `SessionDetail`, `Pricing`, `SettingsDialog` y `CommandPalette` solo con `lazy(() => import(...))` y no de forma estática (lectura del fuente, como `live.test.ts`); verificar que falla
+- [x] 4.2 Implementar D5 con `Suspense` y el mismo indicador «Cargando…»; verificar 4.1, `npm run build` con un chunk por apartado y el chunk inicial menor que en la partida, el aspecto, y medir S1 en frío y cacheado aplicando la regla
 
 ## 5. Tablas (D6)
 

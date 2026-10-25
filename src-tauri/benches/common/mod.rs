@@ -115,6 +115,73 @@ pub fn top_queries() -> Vec<(&'static str, Query)> {
     ]
 }
 
+/// El mes en curso de los fixtures con los agentes y proyectos de `f`.
+fn month_of(f: &queries::Filter) -> queries::Filter {
+    queries::Filter {
+        from: Some(MONTH_START_MS),
+        to: None,
+        ..f.clone()
+    }
+}
+
+/// Las 18 consultas del Resumen (`full_summary`), una a una y con su nombre.
+pub fn resumen_queries() -> Vec<(&'static str, Query)> {
+    vec![
+        ("summary", |c, f| {
+            queries::summary(c, f, WINDOW_END_MS).map(|_| ())
+        }),
+        ("breakdown(agent)", |c, f| {
+            queries::breakdown(c, f, "agent").map(|_| ())
+        }),
+        ("timeseries(day)", |c, f| {
+            queries::timeseries(c, f, "day", TZ).map(|_| ())
+        }),
+        ("timeseries(hour)", |c, f| {
+            queries::timeseries(c, f, "hour", TZ).map(|_| ())
+        }),
+        ("timeseries_by(agent)", |c, f| {
+            queries::timeseries_by(c, f, "agent", TZ).map(|_| ())
+        }),
+        ("timeseries_by(model)", |c, f| {
+            queries::timeseries_by(c, f, "model", TZ).map(|_| ())
+        }),
+        ("timeseries_by(project)", |c, f| {
+            queries::timeseries_by(c, f, "project", TZ).map(|_| ())
+        }),
+        ("timeseries_by(tool)", |c, f| {
+            queries::timeseries_by(c, f, "tool", TZ).map(|_| ())
+        }),
+        ("timeseries(day) del mes", |c, f| {
+            queries::timeseries(c, &month_of(f), "day", TZ).map(|_| ())
+        }),
+        ("breakdown(project)", |c, f| {
+            queries::breakdown(c, f, "project").map(|_| ())
+        }),
+        ("breakdown(model)", |c, f| {
+            queries::breakdown(c, f, "model").map(|_| ())
+        }),
+        ("activity", |c, f| insights::activity(c, f).map(|_| ())),
+        ("activity_daily", |c, f| {
+            insights::activity_daily(c, f, TZ).map(|_| ())
+        }),
+        ("breakdown(tool)", |c, f| {
+            queries::breakdown(c, f, "tool").map(|_| ())
+        }),
+        ("breakdown(command)", |c, f| {
+            queries::breakdown(c, f, "command").map(|_| ())
+        }),
+        ("breakdown(skill)", |c, f| {
+            queries::breakdown(c, f, "skill").map(|_| ())
+        }),
+        ("breakdown(mcp)", |c, f| {
+            queries::breakdown(c, f, "mcp").map(|_| ())
+        }),
+        ("breakdown(agent_type)", |c, f| {
+            queries::breakdown(c, f, "agent_type").map(|_| ())
+        }),
+    ]
+}
+
 /// La llamada completa del Resumen (`useDashboardData`, sin periodo anterior), en secuencia como
 /// la ejecutan los comandos con el `Mutex` único de la base. Devuelve el número de consultas.
 pub fn full_summary(conn: &Connection, f: &queries::Filter) -> Result<usize> {

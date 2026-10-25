@@ -195,7 +195,7 @@ fn timed<T>(f: impl Fn() -> Result<T>) -> Result<(Duration, Duration)> {
 
 fn queries(conn: &Connection) -> Result<()> {
     let f = common::last_30_days();
-    for (name, query) in common::top_queries() {
+    for (name, query) in common::resumen_queries() {
         let (first, warm) = timed(|| query(conn, &f))?;
         row(
             "queries",

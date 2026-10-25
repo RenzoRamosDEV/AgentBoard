@@ -39,7 +39,7 @@ binario nativo para Linux, Windows y macOS.
   coste y ahorro por caché. Los modelos sin precio conocido cuentan como 0.
 - **Vigilante en vivo.** `watcher.rs` usa el crate `notify` para observar las carpetas de logs.
   Descarta los eventos de solo acceso y las rutas que ningún provider reconoce (los `-wal`/`-shm`
-  de una base SQLite cuentan como la base), agrupa los eventos **por archivo** (200 ms de calma,
+  de una base SQLite cuentan como la base), agrupa los eventos **por archivo** (150 ms de calma,
   1 s como máximo para un log que no para de crecer) y pide al hilo de ingesta la **relectura
   dirigida** de esos archivos (`ingest::scan_paths`: misma tubería que el escaneo completo, sin
   recorrer las raíces; la limpieza de archivos borrados, rotados o truncados se aplica a ellos y a

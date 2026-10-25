@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Calma tras el último evento de un archivo antes de releerlo.
-const QUIET: Duration = Duration::from_millis(200);
+const QUIET: Duration = Duration::from_millis(150);
 /// Espera máxima desde el primer evento pendiente de un archivo que no para de cambiar.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 /// Rechequeo de una raíz que existe pero no se pudo vigilar (p. ej. `max_user_watches`): sin él
@@ -603,26 +603,26 @@ mod pure_tests {
     }
 
     #[test]
-    fn una_rafaga_de_un_archivo_sale_una_vez_a_los_200_ms_del_ultimo_evento() {
+    fn una_rafaga_de_un_archivo_sale_una_vez_a_los_150_ms_del_ultimo_evento() {
         let t0 = Instant::now();
         let a = PathBuf::from("/l/a.jsonl");
         let mut d = Debouncer::default();
         assert_eq!(d.next_deadline(), None);
         d.add(a.clone(), t0);
         d.add(a.clone(), t0 + ms(50));
-        assert_eq!(d.next_deadline(), Some(t0 + ms(250)));
-        assert!(d.take_ready(t0 + ms(249)).is_empty());
-        assert_eq!(d.take_ready(t0 + ms(250)), vec![a.clone()]);
+        assert_eq!(d.next_deadline(), Some(t0 + ms(200)));
+        assert!(d.take_ready(t0 + ms(199)).is_empty());
+        assert_eq!(d.take_ready(t0 + ms(200)), vec![a.clone()]);
         assert!(d.take_ready(t0 + ms(400)).is_empty(), "una sola vez");
         assert_eq!(d.next_deadline(), None);
 
         let mut d = Debouncer::default();
         d.add(a.clone(), t0);
-        assert!(d.take_ready(t0 + ms(199)).is_empty());
-        assert_eq!(d.take_ready(t0 + ms(200)), vec![a.clone()]);
+        assert!(d.take_ready(t0 + ms(149)).is_empty());
+        assert_eq!(d.take_ready(t0 + ms(150)), vec![a.clone()]);
         let mut d = Debouncer::default();
         d.add(a.clone(), t0);
-        assert_eq!(d.take_ready(t0 + ms(201)), vec![a]);
+        assert_eq!(d.take_ready(t0 + ms(151)), vec![a]);
     }
 
     #[test]
@@ -643,7 +643,7 @@ mod pure_tests {
         assert_eq!(d.take_ready(t0 + ms(1001)), vec![a.clone()]);
         // Tras salir, el siguiente evento empieza otra espera.
         d.add(a.clone(), t0 + ms(1050));
-        assert_eq!(d.next_deadline(), Some(t0 + ms(1250)));
+        assert_eq!(d.next_deadline(), Some(t0 + ms(1200)));
     }
 
     #[test]
@@ -658,10 +658,10 @@ mod pure_tests {
         d.add(b.clone(), t0);
         d.add(a.clone(), t0 + ms(10));
         d.add(c.clone(), t0 + ms(150));
-        assert_eq!(d.next_deadline(), Some(t0 + ms(200)));
-        assert_eq!(d.take_ready(t0 + ms(200)), vec![b.clone()]);
-        assert_eq!(d.next_deadline(), Some(t0 + ms(210)));
-        assert_eq!(d.take_ready(t0 + ms(360)), vec![a, c]);
+        assert_eq!(d.next_deadline(), Some(t0 + ms(150)));
+        assert_eq!(d.take_ready(t0 + ms(150)), vec![b.clone()]);
+        assert_eq!(d.next_deadline(), Some(t0 + ms(160)));
+        assert_eq!(d.take_ready(t0 + ms(300)), vec![a, c]);
         assert_eq!(d.next_deadline(), None);
     }
 

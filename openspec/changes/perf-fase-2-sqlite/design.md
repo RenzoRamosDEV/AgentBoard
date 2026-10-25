@@ -407,3 +407,60 @@ borrarla), CONTRIBUTING (filosofía) y wiki (Home, Arquitectura, Funcionalidad, 
 - **No examinados:** 91 cuerpos de comandos Tauri de `commands.rs`, `lib.rs` y los 2 de
   bandeja/avisos. Los cubren los golden de equivalencia (integración, fuera de `--lib`) y la
   comprobación en la app.
+
+### Ajustes tras la medición final (14.2)
+
+Con la máquina en reposo (load 1,5–3,5), el A/B partida/final dio el frío en memoria +22–29 % y
+el refresco en vivo +24–41 %. Arranque y contención en disco salían peor de lo esperado. Cambios
+(cada uno con tests en verde y medido):
+
+- **Un solo `stat` por archivo** para la limpieza de D10 y el plan, con un mapa por `OsStr`. Vivo
+  200 MB 42,2 → 34,7 ms; 1 GB 156 → 120 ms.
+- **`mmap_size` (1 GiB) y `journal_size_limit` (8 MiB)** en la caché en disco (D3 no los
+  preveía). Los lectores pierden su caché de páginas con cada lote del escritor en WAL; con
+  `mmap` la vuelven a leer de la caché del sistema sin copias.
+- **`TZ` manda sobre la zona detectada** (`tz::system_name`, como libc y el WebView). Dentro del
+  contenedor la zona detectada es UTC: al reabrir una caché grabada con `Europe/Madrid`, `prepare`
+  la reponía a UTC, rehacía todos los días y agregados (los 0,6/3,6 s del primer arranque) y el
+  Resumen iba por el detalle (20 ms por consulta en lugar de < 1 ms). `perf_scan` fija ahora
+  `TZ=Europe/Madrid`, como la app, donde la zona del sistema es la de la interfaz.
+- `perf_scan --phase queries` mide las 18 consultas del Resumen por separado (el spec pone un
+  presupuesto por consulta en 1 GB).
+
+Cifras finales (`231b00e` frente a la partida `d7fa167`) y estado de los presupuestos: sección
+«Después de la Fase 2» de `docs/perf/BASELINE.md`.
+
+- **Cumplen**: arranque con 200 MB indexados (140 ms), Resumen 200 MB en frío (171 ms) y desde la
+  caché (0,0 ms), frío 200 MB en disco (2,8 s).
+- **No cumplen**:
+  - `activity_daily` en 1 GB: 341 ms (presupuesto 300 ms; las otras 17 consultas, sí).
+  - Refresco con el Resumen en bucle en disco: ×1,36–1,38 (presupuesto ×1,1). Con un lector
+    siempre activo el checkpoint no reinicia el WAL; seguimiento para la Fase 3.
+
+### Huella de consultas (D1)
+
+El hash por consulta de `--query-fingerprint` redondea cada real a 6 decimales. Al cambiar el orden
+de las sumas (agregados), algunos valores caen al otro lado del redondeo: 36 de 200 líneas de
+`200m` cambian de hash, todas de `timeseries_by`, que tiene cientos de reales por línea. Se volcaron
+las 200 salidas completas de `200m` con el código de partida y con el final, y se compararon con
+las reglas del golden (enteros y cadenas exactos, reales ≤ 1e-6): **las 200 son iguales**. La huella
+de tablas (ingesta) es idéntica y los golden de `2m` y `tests/fixtures` pasan sin regrabar, en
+memoria y en disco.
+
+### Otras desviaciones
+
+- **Migraciones**: en lugar de una sola migración 0005 hay una por paso (0005 coste, 0006 primera
+  llamada, 0007 día local, 0008 agregados, 0009 índices, 0010 caché fiel), para poder medir y
+  revertir cada paso por separado. Una caché de otra versión se reconstruye igual (D2).
+- **Ruta de agregados** (D7): `summary`, `breakdown`, `list_*` no reciben zona. Basta con que los
+  extremos del periodo sean medianoches de la zona de la caché; las series por día exigen además
+  que la zona pedida sea esa.
+- **Test (b) de 2.1**: se mide con un disparador temporal espía (cuenta las actualizaciones de
+  `cost_usd` por modelo) en lugar del contador de `db::trace`. El coste pendiente se recalcula en
+  `derived::refresh` y los helpers de test lo llaman.
+- **8.1(b)**: la regla de 5 000 filas o 200 ms se prueba con la función pura `batch_full` y sus
+  bordes, en lugar de un proveedor lento, que depende del reloj con la máquina cargada.
+- **12.3**: los tests de la pestaña «Datos» renderizan `DataSettings` con `react-dom/server` y prueban
+  `createRebuild`/`isDirty` con dobles de prueba (no hay Testing Library ni jsdom, y no se añaden
+  dependencias). El diálogo usa esas piezas.
+- **Sin dependencias nuevas**: solo la feature `unlock_notify` de `rusqlite`.

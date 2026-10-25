@@ -35,19 +35,19 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 - [x] 5.2 Tablas, disparadores de claves sucias y `derived::refresh` (D7), llamado al final de cada lote del `Writer`, en `apply_overrides` y en `queries::testdata::seed`/helpers de `pricing`; verificar 5.1, 1.2 y `cargo test --workspace` en verde
 - [x] 5.3 Tests en rojo en `queries.rs` de la ruta de consulta: con `from` en medianoche local y la zona de la caché se leen agregados (el plan no toca `calls`), con `from` a mitad de día o con otra zona se usa el detalle, y ambas rutas dan lo mismo sobre `testdata` y sobre el fixture `2m` (equivalencia por partición: todo, días completos, mitad de día, `to` en el futuro, periodo vacío, filtro de agente + proyecto, `no_project`); verificar que fallan
 - [x] 5.4 Pasar a agregados `summary` (salvo `burn rate`), `timeseries(day)`, `timeseries_by` (5 dimensiones), `breakdown(agent|project|branch|model|tool|mcp)`, `list_agents` y `list_projects` (D7); verificar 5.3, 1.2 (también el servidor MCP: `cargo test -p agentboard-mcp`) en verde
-- [ ] 5.5 Medir (MQ en `200m`/`1g` y MF con `--phase live --repeat 200`); aplicar la regla D13 (si el frío empeora > 5 % por los disparadores, probar la alternativa de claves sucias en el `Writer` antes de revertir) y anotar las cifras
+- [x] 5.5 Medir (MQ en `200m`/`1g` y MF con `--phase live --repeat 200`); aplicar la regla D13 (si el frío empeora > 5 % por los disparadores, probar la alternativa de claves sucias en el `Writer` antes de revertir) y anotar las cifras
 
 ## 6. Índices revisados con `EXPLAIN QUERY PLAN` (D9)
 
 - [x] 6.1 Test en rojo `consultas_usan_indices` en `queries.rs`: para cada consulta del Resumen con filtro de 30 días, con agente y con proyecto, y para el relleno de turnos y el refresco de agregados, el plan no contiene `SCAN calls`/`SCAN tool_calls` sin índice; verificar qué consultas fallan y anotar sus planes en design.md
 - [x] 6.2 Añadir los índices de D9 que el plan pida (y quitar los que no use ninguna consulta); verificar 6.1, 1.2 y `equivalencia_ingesta` en verde
-- [ ] 6.3 Medir (MQ en `200m`/`1g` y MF con `--phase live --repeat 200`); aplicar la regla D13 por índice y anotar las cifras
+- [x] 6.3 Medir (MQ en `200m`/`1g` y MF con `--phase live --repeat 200`); aplicar la regla D13 por índice y anotar las cifras
 
 ## 7. Claves foráneas fuera del escritor (D3)
 
 - [x] 7.1 Tests en rojo en `ingest.rs`: (a) con `foreign_keys=OFF` una llamada, herramienta, turno o evento de una sesión inexistente sigue fallando y deshace solo su archivo (el test existente `un_fallo_al_escribir_deshace_solo_ese_archivo` más uno por tipo de registro); (b) `PRAGMA foreign_key_check` vacío tras escanear `tests/fixtures` y el fixture `2m`; (c) la comprobación de sesión hace como mucho una búsqueda por sesión y archivo (contador); verificar que fallan los que correspondan
 - [x] 7.2 Desactivar `foreign_keys` y añadir la comprobación memorizada en el `Writer`; verificar 7.1, 1.2 y `equivalencia_ingesta` en verde
-- [ ] 7.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (revertir a `foreign_keys=ON` si no mejora ≥ 5 %) y anotar las cifras
+- [x] 7.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (revertir a `foreign_keys=ON` si no mejora ≥ 5 %) y anotar las cifras
 
 ## 8. Escritor único por lotes y lectores separados (D4, D5)
 
@@ -55,13 +55,13 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 - [x] 8.2 Hilo de ingesta dueño de la conexión de escritura, trabajos nuevos, lotes por filas o tiempo y contador de generación (D4); `set_settings` aplica precios con `Job::AplicarPrecios`; verificar 8.1, los tests existentes de `ingest_thread` y `watcher`, y `cargo test --workspace` en verde
 - [x] 8.3 Tests en rojo en `db.rs`: (a) con la base en archivo WAL, una consulta larga en un lector no impide que el escritor confirme un lote y una consulta durante un lote ve el estado anterior completo; (b) en memoria con caché compartida, un lector espera al lote en curso (sin `SQLITE_LOCKED`) y ve el lote entero; (c) los lectores no pueden escribir (`query_only`); verificar que fallan
 - [x] 8.4 `ReadPool` (2 conexiones, D5), feature `unlock_notify` de `rusqlite`, PRAGMAs de D3 por tipo de conexión; `AppState` con `RwLock<Arc<ReadPool>>`; comandos (`with_reader`), `alerts::refresh` y `tray::refresh` leen del pool; `perf_scan --phase contention`; verificar 8.3, `cargo test --workspace`, `npm test` y en la app (`npm run tauri dev` sobre el fixture `200m` con `AGENTBOARD_LOG=debug`) que las vistas cargan y que `emit.ingest_done` del vigilante llega mientras la interfaz consulta
-- [ ] 8.5 Medir (`--phase contention` sobre `200m`: mediana del refresco con y sin el Resumen en bucle; MF con `--phase live --repeat 200`); comprobar que el refresco con lecturas no supera 1,1 × el refresco sin ellas; aplicar la regla D13 (estructural) y anotar las cifras
+- [x] 8.5 Medir (`--phase contention` sobre `200m`: mediana del refresco con y sin el Resumen en bucle; MF con `--phase live --repeat 200`); comprobar que el refresco con lecturas no supera 1,1 × el refresco sin ellas; aplicar la regla D13 (estructural) y anotar las cifras
 
 ## 9. Caché de resultados (D8)
 
 - [x] 9.1 Tests en rojo en `result_cache.rs`: (a) la misma clave y generación devuelve el mismo `Arc` sin recalcular (contador); (b) otra generación vacía la caché; (c) un resultado calculado mientras cambió la generación no se guarda; (d) las consultas que dependen de la hora cambian de clave al cambiar el minuto; (e) al pasar de 256 entradas se vacía (valores límite 255/256/257); (f) filtros equivalentes con distinto orden de campos JSON comparten clave; verificar que fallan
 - [x] 9.2 Implementar `ResultCache` (D8) y usarla en los comandos del Resumen y de los apartados; verificar 9.1, `cargo test --workspace` y `npm test` en verde
-- [ ] 9.3 Medir (MQ en `200m`: Resumen repetido); aplicar la regla D13 y anotar las cifras
+- [x] 9.3 Medir (MQ en `200m`: Resumen repetido); aplicar la regla D13 y anotar las cifras
 
 ## 10. Caché en disco, validación y reconstrucción (D2)
 
@@ -69,14 +69,14 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 - [x] 10.2 Implementar `Storage`, `CacheMode`, validación y `remove_legacy_db` (D2); `lib.rs` abre la caché según `settings.memory_only`; verificar 10.1 y `cargo test --workspace` en verde
 - [x] 10.3 Test en rojo: un error `SQLITE_CORRUPT` simulado en el escritor o en un lector encola `Job::Reconstruir` y la app sigue; verificar que falla; implementarlo y verificar en verde
 - [x] 10.4 Ejecutar 1.2 también en modo disco (parámetro del test) y verificar que ambos modos dan el golden
-- [ ] 10.5 Medir MF con `--cache` sobre `200m` (presupuesto < 10 s); aplicar la regla D13 (estructural) y anotar las cifras
-- [ ] 10.6 Completar `perf_scan --cache` y `--phase warm` (D13); medir el arranque con 200 MB ya indexados (tres ejecuciones) y verificar < 1,5 s hasta los datos del Resumen; anotar las cifras
+- [x] 10.5 Medir MF con `--cache` sobre `200m` (presupuesto < 10 s); aplicar la regla D13 (estructural) y anotar las cifras
+- [x] 10.6 Completar `perf_scan --cache` y `--phase warm` (D13); medir el arranque con 200 MB ya indexados (tres ejecuciones) y verificar < 1,5 s hasta los datos del Resumen; anotar las cifras
 
 ## 11. Caché fiel a los logs (D10)
 
 - [x] 11.1 Tests en rojo en `ingest.rs`: (a) escanear A∪B, borrar B y reescanear da la misma huella (`common::fingerprint`) que escanear solo A en una base nueva; (b) igual con una sesión repartida entre A y B (sus `started_at`/`ended_at` vuelven a los de A); (c) igual con B rotado (otra identidad) y con B truncado; (d) un archivo sin cambios no se relee tras una limpieza que no le afecta; (e) la limpieza rehace los agregados de las sesiones afectadas; verificar que fallan
 - [x] 11.2 `file_state` con `id` estable, tabla `session_files` y limpieza al planificar (D10); verificar 11.1, 1.2, `equivalencia_ingesta` y los tests de rotación y truncado existentes en verde
-- [ ] 11.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (estructural) y anotar las cifras
+- [x] 11.3 Medir (MF y `--phase live --repeat 200`); aplicar la regla D13 (estructural) y anotar las cifras
 
 ## 12. Ajustes «Solo memoria» y «Reconstruir caché» (D12)
 
@@ -92,8 +92,8 @@ TDD: en cada tarea que cambia comportamiento, primero el test en rojo (verificar
 ## 14. Resultados y cierre
 
 - [x] 14.1 Mutación sobre el diff de la fase (`cargo mutants --in-place --in-diff <diff> --cargo-arg=--lib`, cada ejecución cortada a los 3 min con `SIGINT` y `git status` limpio después; ejecuciones dirigidas a `derived.rs`, `result_cache.rs`, `Storage`, la limpieza de D10, `apply_overrides` y la ruta de consulta): puntuación > 95 % sobre los mutantes examinados o justificar cada superviviente en design.md
-- [ ] 14.2 Medición final con los comandos de «Reproducción» de `docs/perf/BASELINE.md` más `--phase warm`, `--phase contention` y `--cache` (frío y vivo en 50 MB/200 MB/1 GB, consultas en 200 MB/1 GB, arranque con caché, RSS pico y tamaño de `cache.sqlite`, `cargo bench`); verificar la huella de ingesta y `--query-fingerprint` de `200m` iguales a las de partida (1.4) y los presupuestos del spec: arranque con 200 MB indexados < 1,5 s, Resumen 200 MB < 300 ms en frío y < 100 ms en caché, cada consulta del Resumen en 1 GB < 300 ms, frío 200 MB en disco < 10 s, refresco con lecturas ≤ 1,1 × sin ellas
-- [ ] 14.3 Añadir a `docs/perf/BASELINE.md` la sección «Después de la Fase 2» (entorno y carga, tabla antes/después por métrica incluidas consultas y arranque, pasos conservados y revertidos con su motivo, estado frente a los presupuestos, seguimientos para la Fase 3) y actualizar «Reproducción» con las fases nuevas; verificar que todos los comandos citados se ejecutan tal cual
+- [x] 14.2 Medición final con los comandos de «Reproducción» de `docs/perf/BASELINE.md` más `--phase warm`, `--phase contention` y `--cache` (frío y vivo en 50 MB/200 MB/1 GB, consultas en 200 MB/1 GB, arranque con caché, RSS pico y tamaño de `cache.sqlite`, `cargo bench`); verificar la huella de ingesta y `--query-fingerprint` de `200m` iguales a las de partida (1.4) y los presupuestos del spec: arranque con 200 MB indexados < 1,5 s, Resumen 200 MB < 300 ms en frío y < 100 ms en caché, cada consulta del Resumen en 1 GB < 300 ms, frío 200 MB en disco < 10 s, refresco con lecturas ≤ 1,1 × sin ellas
+- [x] 14.3 Añadir a `docs/perf/BASELINE.md` la sección «Después de la Fase 2» (entorno y carga, tabla antes/después por métrica incluidas consultas y arranque, pasos conservados y revertidos con su motivo, estado frente a los presupuestos, seguimientos para la Fase 3) y actualizar «Reproducción» con las fases nuevas; verificar que todos los comandos citados se ejecutan tal cual
 - [ ] 14.4 Comprobaciones finales: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm test`, `npm run build`; verificar que todo pasa
 - [ ] 14.5 Completar «Desviaciones durante la implementación» de design.md con todo lo que cambió respecto a D1–D14; verificar `openspec validate perf-fase-2-sqlite --strict`
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type ActivityDay, type ActivityReport, type BreakdownRow, type Filter, type Point, type SeriesPoint, type Summary } from "./api";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { tzName, type ActivityDay, type ActivityReport, type BreakdownRow, type Filter, type Point, type SeriesPoint, type Summary } from "./api";
 import { monthStart } from "./period";
 
 export interface DashboardData {
@@ -38,6 +39,28 @@ export interface PrevData {
   projects: BreakdownRow[];
 }
 
+/** Lo que devuelve `get_dashboard_snapshot`: los apartados sin los filtros. */
+export type DashboardSnapshot = Omit<DashboardData, "filter" | "prev"> & { prev: Omit<PrevData, "filter"> | null };
+
+type Invoke = (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
+
+/**
+ * Todos los apartados del Resumen en una sola petición, sobre un mismo estado de los datos.
+ * `monthFrom` es el inicio del mes en curso en la hora local (el gasto del mes ignora el periodo).
+ */
+export async function loadDashboard(
+  invoke: Invoke,
+  filter: Filter,
+  singleProject: string | null,
+  prevFilter: Filter | null,
+  monthFrom: number,
+): Promise<DashboardData> {
+  const snap = (await invoke("get_dashboard_snapshot", {
+    request: { filter, tz: tzName(), monthFrom, branchView: !!singleProject, previous: prevFilter },
+  })) as DashboardSnapshot;
+  return { ...snap, filter, prev: snap.prev && prevFilter ? { ...snap.prev, filter: prevFilter } : null };
+}
+
 /** Carga todos los apartados para el filtro activo. */
 export function useDashboardData(filter: Filter, singleProject: string | null, refresh: number, prevFilter: Filter | null = null) {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -45,38 +68,10 @@ export function useDashboardData(filter: Filter, singleProject: string | null, r
 
   useEffect(() => {
     let alive = true;
-    // Gasto del mes: respeta agentes y proyectos, ignora el periodo.
-    const monthFilter: Filter = { ...filter, from: monthStart().getTime(), to: undefined };
-    const by = (k: Parameters<typeof api.breakdown>[1]) => api.breakdown(filter, k);
-    Promise.all([
-      api.summary(filter),
-      by("agent"),
-      api.timeseries(filter, "day"),
-      api.timeseries(filter, "hour"),
-      api.timeseriesBy(filter, "agent"),
-      api.timeseriesBy(filter, "model"),
-      api.timeseriesBy(filter, singleProject ? "branch" : "project"),
-      api.timeseriesBy(filter, "tool"),
-      api.timeseries(monthFilter, "day"),
-      by("project"),
-      singleProject ? by("branch") : Promise.resolve(null),
-      by("model"),
-      api.activity(filter),
-      api.activityDaily(filter),
-      by("tool"),
-      by("command"),
-      by("skill"),
-      by("mcp"),
-      by("agent_type"),
-      prevFilter
-        ? Promise.all([api.summary(prevFilter), api.timeseries(prevFilter, "day"), api.breakdown(prevFilter, singleProject ? "branch" : "project")]).then(
-            ([summary, daily, projects]): PrevData => ({ filter: prevFilter, summary, daily, projects }),
-          )
-        : Promise.resolve(null),
-    ])
-      .then(([summary, agents, daily, hourly, dailyByAgent, dailyByModel, dailyByProject, dailyByTool, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes, prev]) => {
+    loadDashboard(tauriInvoke, filter, singleProject, prevFilter, monthStart().getTime())
+      .then((d) => {
         if (!alive) return;
-        setData({ filter, summary, agents, daily, hourly, dailyByAgent, dailyByModel, dailyByProject, dailyByTool, month, projects, branches, models, activity, activityDaily, tools, commands, skills, mcp, agentTypes, prev });
+        setData(d);
         setError(null);
       })
       .catch((e) => alive && setError(String(e)));

@@ -102,8 +102,43 @@ function mockSettings() {
 }
 
 export function installMocks() {
-  mockIPC((cmd, args) => {
+  const handle = (cmd: string, args: unknown): unknown => {
     const a = args as Record<string, unknown>;
+    // El Resumen en una petición: los mismos apartados que los comandos sueltos.
+    if (cmd === "get_dashboard_snapshot") {
+      const r = a.request as { filter: object; tz: string; monthFrom: number; branchView: boolean; previous: object | null };
+      const q = (c: string, extra: Record<string, unknown> = {}, filter: object = r.filter) => handle(c, { filter, tz: r.tz, ...extra });
+      const by = (k: string) => q("get_breakdown", { by: k });
+      const project = r.branchView ? "branch" : "project";
+      return {
+        summary: q("get_summary"),
+        agents: by("agent"),
+        daily: q("get_timeseries", { bucket: "day" }),
+        hourly: q("get_timeseries", { bucket: "hour" }),
+        dailyByAgent: q("get_timeseries_by", { by: "agent" }),
+        dailyByModel: q("get_timeseries_by", { by: "model" }),
+        dailyByProject: q("get_timeseries_by", { by: project }),
+        dailyByTool: q("get_timeseries_by", { by: "tool" }),
+        month: q("get_timeseries", { bucket: "day" }, { ...r.filter, from: r.monthFrom, to: undefined }),
+        projects: by("project"),
+        branches: r.branchView ? by("branch") : null,
+        models: by("model"),
+        activity: q("get_activity"),
+        activityDaily: q("get_activity_daily"),
+        tools: by("tool"),
+        commands: by("command"),
+        skills: by("skill"),
+        mcp: by("mcp"),
+        agentTypes: by("agent_type"),
+        prev: r.previous
+          ? {
+              summary: q("get_summary", {}, r.previous),
+              daily: q("get_timeseries", { bucket: "day" }, r.previous),
+              projects: q("get_breakdown", { by: project }, r.previous),
+            }
+          : null,
+      };
+    }
     // Un filtro con `to` es el periodo anterior (comparación): cifras algo distintas.
     const f = (a.filter ?? {}) as { from?: number; to?: number };
     if (f.to != null) {
@@ -279,7 +314,8 @@ export function installMocks() {
     }
     console.warn("mock sin implementar:", cmd, args);
     return null;
-  }, { shouldMockEvents: true });
+  };
+  mockIPC(handle, { shouldMockEvents: true });
   // Relecturas simuladas del vigilante: un aviso de datos cambiados de vez en cuando.
   setInterval(() => {
     const d = new Date();

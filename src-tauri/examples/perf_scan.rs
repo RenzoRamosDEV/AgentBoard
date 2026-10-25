@@ -326,13 +326,41 @@ fn has_call(readers: &db::SharedReaders, message_id: &str) -> Result<bool> {
     let pool = agentboard_lib::commands::current(readers)?;
     pool.with(|c| {
         // Lo que lee la interfaz al recibir el aviso: el Resumen de todo el historial.
-        common::full_summary(c, &queries::Filter::default())?;
+        agentboard_lib::snapshot::dashboard(c, &all_history(), common::WINDOW_END_MS)?;
         Ok(c.query_row(
             "SELECT COUNT(*) FROM calls WHERE message_id = ?1",
             [message_id],
             |r| r.get::<_, i64>(0),
         )? > 0)
     })
+}
+
+/// El Resumen de todo el historial, como lo pide la interfaz (con el periodo anterior vacío).
+fn all_history() -> agentboard_lib::snapshot::DashboardRequest {
+    agentboard_lib::snapshot::DashboardRequest {
+        filter: queries::Filter::default(),
+        tz: common::TZ.to_string(),
+        month_from: common::MONTH_START_MS,
+        branch_view: false,
+        previous: None,
+    }
+}
+
+/// El Resumen de los 30 días del filtro fijo, con la comparación con los 30 anteriores.
+fn last_30_days_request() -> agentboard_lib::snapshot::DashboardRequest {
+    let f = common::last_30_days();
+    let previous = f.from.map(|from| queries::Filter {
+        from: Some(from - 30 * common::DAY_MS),
+        to: Some(from),
+        ..f.clone()
+    });
+    agentboard_lib::snapshot::DashboardRequest {
+        filter: f,
+        tz: common::TZ.to_string(),
+        month_from: common::MONTH_START_MS,
+        branch_view: false,
+        previous,
+    }
 }
 
 fn append(path: &std::path::Path, text: &str) -> Result<()> {
@@ -512,6 +540,14 @@ fn payloads(conn: &Connection) -> Result<Vec<(String, usize)>> {
     let f = common::last_30_days();
     let mut out = Vec::new();
     out.push((
+        "get_dashboard_snapshot".to_string(),
+        json_len(&agentboard_lib::snapshot::dashboard(
+            conn,
+            &last_30_days_request(),
+            common::WINDOW_END_MS,
+        )?)?,
+    ));
+    out.push((
         "get_summary".to_string(),
         json_len(&queries::summary(conn, &f, common::WINDOW_END_MS)?)?,
     ));
@@ -613,6 +649,29 @@ fn queries(conn: &Connection) -> Result<()> {
     row(
         "queries",
         "resumen completo repetido (mediana, caché de resultados)",
+        ms(repeated),
+    );
+    let req = last_30_days_request();
+    let (first, _) =
+        timed(|| agentboard_lib::snapshot::dashboard(conn, &req, common::WINDOW_END_MS))?;
+    let snapshot_cache = agentboard_lib::result_cache::ResultCache::default();
+    let (_, repeated) = timed(|| {
+        agentboard_lib::snapshot::cached(
+            &snapshot_cache,
+            &generation,
+            &req,
+            common::WINDOW_END_MS,
+            || agentboard_lib::snapshot::dashboard(conn, &req, common::WINDOW_END_MS),
+        )
+    })?;
+    row(
+        "queries",
+        "snapshot del Resumen con comparación, frío",
+        ms(first),
+    );
+    row(
+        "queries",
+        "snapshot del Resumen repetido (mediana, caché de resultados)",
         ms(repeated),
     );
     let sizes = payloads(conn)?;

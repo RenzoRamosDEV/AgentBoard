@@ -405,7 +405,20 @@ pub struct ActivityReport {
     pub models: Vec<ModelOneShot>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TURN_STATS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Veces que este hilo ha calculado `turn_stats` (para los tests).
+#[cfg(test)]
+pub fn turn_stats_calls() -> usize {
+    TURN_STATS_CALLS.with(|c| c.get())
+}
+
 pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnStats>> {
+    #[cfg(test)]
+    TURN_STATS_CALLS.with(|c| c.set(c.get() + 1));
     let mut turns: HashMap<String, TurnStats> = HashMap::new();
     let (w, args) = f.sql("t.ts");
     let mut stmt = conn.prepare(&format!(
@@ -472,7 +485,15 @@ pub fn turn_stats(conn: &Connection, f: &Filter) -> Result<HashMap<String, TurnS
 
 #[tracing::instrument(level = "debug", skip_all)]
 pub fn activity(conn: &Connection, f: &Filter) -> Result<ActivityReport> {
-    let turns = turn_stats(conn, f)?;
+    activity_from(conn, f, &turn_stats(conn, f)?)
+}
+
+/// `activity` con los turnos ya calculados (`turn_stats` del mismo filtro).
+pub fn activity_from(
+    conn: &Connection,
+    f: &Filter,
+    turns: &HashMap<String, TurnStats>,
+) -> Result<ActivityReport> {
     #[derive(Default)]
     struct Acc {
         cost: f64,
@@ -552,9 +573,18 @@ pub struct ActivityDay {
 /// cruce el límite del filtro o una llamada no tenga turno.
 #[tracing::instrument(level = "debug", skip_all)]
 pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<ActivityDay>> {
+    activity_daily_from(conn, f, tz, &turn_stats(conn, f)?)
+}
+
+/// `activity_daily` con los turnos ya calculados (`turn_stats` del mismo filtro).
+pub fn activity_daily_from(
+    conn: &Connection,
+    f: &Filter,
+    tz: &str,
+    turns: &HashMap<String, TurnStats>,
+) -> Result<Vec<ActivityDay>> {
     let zone = crate::tz::parse(tz);
     let day_of = |ts: i64| crate::tz::day_start(ts, &zone);
-    let turns = turn_stats(conn, f)?;
     let mut acc: BTreeMap<(i64, String), (f64, i64)> = BTreeMap::new();
 
     let (w, args) = f.sql("c.ts");
@@ -582,7 +612,7 @@ pub fn activity_daily(conn: &Connection, f: &Filter, tz: &str) -> Result<Vec<Act
     }
     // Cada turno cuenta una vez: en el día de su primera llamada o, sin llamadas, en el de
     // su propia fecha si cae dentro del periodo.
-    for (id, t) in &turns {
+    for (id, t) in turns {
         let day = match first_call.get(id) {
             Some(ts) => day_of(*ts),
             None if t.ts > 0

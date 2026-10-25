@@ -90,6 +90,30 @@ pub async fn get_summary(
     cached(&state, key, move |c| queries::summary(c, &filter, now)).await
 }
 
+/// Todo el Resumen en una petición, sobre un mismo estado de los datos.
+#[tauri::command]
+#[tracing::instrument(name = "cmd.get_dashboard_snapshot", level = "info", skip_all)]
+pub async fn get_dashboard_snapshot(
+    state: tauri::State<'_, AppState>,
+    request: crate::snapshot::DashboardRequest,
+) -> CmdResult<crate::snapshot::DashboardSnapshot> {
+    let now = now_ms();
+    let (readers, results, generation) = (
+        state.readers.clone(),
+        state.results.clone(),
+        state.generation.clone(),
+    );
+    let ingest = state.ingest.clone();
+    run_blocking(move || {
+        let value = crate::snapshot::cached(&results, &generation, &request, now, || {
+            current(&readers)?.with(|c| crate::snapshot::dashboard(c, &request, now))
+        })
+        .inspect_err(|e| ingest.report(e))?;
+        Ok(crate::snapshot::DashboardSnapshot::clone(&value))
+    })
+    .await
+}
+
 #[tauri::command]
 #[tracing::instrument(name = "cmd.get_timeseries", level = "info", skip_all)]
 pub async fn get_timeseries(

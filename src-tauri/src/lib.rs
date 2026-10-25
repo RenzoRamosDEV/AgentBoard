@@ -15,6 +15,7 @@ pub mod queries;
 pub mod result_cache;
 pub mod sessions;
 pub mod settings;
+pub mod snapshot;
 pub mod telemetry;
 pub mod tray;
 pub mod tz;
@@ -143,6 +144,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_summary,
+            commands::get_dashboard_snapshot,
             commands::get_timeseries,
             commands::get_timeseries_by,
             commands::get_breakdown,

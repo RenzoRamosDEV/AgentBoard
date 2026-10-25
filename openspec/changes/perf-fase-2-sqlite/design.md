@@ -251,3 +251,159 @@ transacción.
 
 Frío 200 MB (A/B frente al paso 3, 6 pares, load ~8): 2 818 → 2 847 ms (+1,0 %; razones por par
 0,94–1,06): paso estructural, se conserva.
+
+### Paso 5: agregados diarios (D7) — conservado, con cambios
+
+- Tablas `daily_stats` (día, sesión, modelo) y `tool_stats` (día, sesión, herramienta) con PK
+  `WITHOUT ROWID`. Las claves sucias van en `dirty_keys (session_id, day)`; el día 0 marca solo la
+  sesión (revisar su primera llamada). Sustituye a `dirty_sessions` del paso 3.
+- **Sin disparadores de inserción** (lo visto en el paso 2): las claves las anota el escritor en
+  Rust; los disparadores son solo de actualización (`calls_stale`, `tool_calls_ts`) y de borrado.
+  Las filas de SQL directo se anotan al rellenar su día o su coste pendientes.
+- `refresh` rehace las claves sucias con `DELETE` + `INSERT … SELECT … GROUP BY`. Tres
+  correcciones medidas:
+  1. El planificador, sin estadísticas de `dirty_keys`, recorría `calls` entera en cada lote:
+     frío +40–50 %. Con `CROSS JOIN` que fija `dirty_keys` por fuera, +10–13 %.
+  2. Cada sesión sucia se recorre una vez (no una por día) y la marca de solo sesión (día 0) no
+     entra en ese recorrido.
+  3. **Desviación de D7 (deltas):** el refresco en vivo con `--repeat 200` pasó de 71 a 473 ms y
+     crecía (primeros 20: 112 ms, últimos 20: 919 ms), porque cada lote rehacía la clave de una
+     sesión que no para de crecer. D7 descartó los deltas porque un `UPSERT` puede cambiar valores.
+     Se usan solo para **inserciones nuevas** del escritor, que son exactas (las sumas se suman y
+     `MIN`/`MAX` se combinan): `derived::Deltas` suma por clave y hace `UPSERT` en
+     `daily_stats`/`tool_stats`. Todo lo demás (filas que cambian o se borran, precios,
+     limpiezas, cambio de primera llamada, resultado de herramienta sin día) sigue rehaciéndose
+     entero. El test de propiedad mezcla las dos vías.
+- Ruta de consulta: `queries::source` usa los agregados si los extremos del periodo son
+  medianoches de la zona de la caché (y, en las series por día, si la zona pedida es esa). Pasan a
+  agregados: `summary` (salvo el `burn rate`), `timeseries(day)`, `timeseries_by` ×5,
+  `breakdown(agent|project|branch|model|tool|mcp)`, `list_agents` y `list_projects`.
+- `perf_scan` medía con la zona de la caché en UTC (la del contenedor) y el filtro de 30 días en
+  medianoches UTC, así que las series por día iban siempre por el detalle, al revés que en la app
+  (la interfaz manda medianoches locales de la zona del sistema). Desde `106cc2e`, `perf_scan` y el
+  bench fijan la caché en `Europe/Madrid` y alinean el filtro a sus medianoches. Las cifras
+  anteriores de cada paso usan el filtro antiguo.
+
+| A/B (load 7–20, ruidoso) | Paso 4 | Paso 5 |
+|---|---|---|
+| `summary` · `breakdown(project)` · `breakdown(model)` 200 MB | 67 · 102 · 70 ms | 1,9 · 1,3 · 1,1 ms |
+| Resumen 200 MB frío / repetido | 916 / 931 ms | 479 / 475 ms |
+| `summary` · `breakdown(project)` · `breakdown(model)` 1 GB | 261 · 416 · 389 ms | 8,7 · 9,1 · 10,2 ms |
+| Resumen 1 GB frío / repetido | 5 238 / 5 105 ms | 3 951 / 3 535 ms (lo que queda es detalle: `activity`, horas, comandos) |
+| Refresco en vivo `--repeat 200`, mediana (con deltas, `4b852ee`) | 72,9 ms | 69,7 ms (primeros/últimos 20: 84 → 119 ms, ×1,4) |
+
+### Paso 6: índices (D9) — conservado
+
+`consultas_usan_indices` (sentencias del Resumen con 30 días, 30 días a mitad de día, agente y
+proyecto), `el_refresco_no_recorre_las_tablas_grandes` y
+`el_relleno_de_turnos_no_recorre_las_tablas_grandes` pasaron sin añadir índices. Las consultas
+de agregados buscan por rango de la PK (`day`), las de detalle por `calls_ts`/`tool_calls_ts` y
+`calls_turn`, el desglose por subagente por `tool_calls_agent`, y el refresco por
+`calls_first`/`tool_calls_session` y los índices parciales de pendientes. Se quitó
+`calls_agent(agent_id)`, que no usaba ninguna consulta. No se añadieron `calls(session_id, day)`,
+`tool_calls(session_id, day)` ni el parcial de turnos: los planes no los pedían y cada índice
+encarece la inserción. Frío A/B paso 5 → 6: razón mediana por par 0,955 (6 pares, load 9).
+
+### Paso 7: claves foráneas (D3) — **revertido**
+
+Comprobación de sesión memorizada en el `Writer` (con tests por tipo de registro y
+`foreign_key_check` vacío tras los fixtures). Medido A/B en 12 pares: razón mediana del frío 0,99,
+sin mejora ≥ 5 %. Una vez que el escritor inserta sin disparadores ni `INSERT … SELECT`, las
+comprobaciones de claves foráneas ya no pesan. Por D13 vuelve `foreign_keys=ON` (`27cc12a`).
+La comprobación del escritor se queda: no se nota y hace que el resultado no dependa del PRAGMA.
+
+### Paso 8: escritor único y lectores (D4, D5) — conservado
+
+- `Job::Scan | AplicarPrecios | Reconstruir`. Los precios se atienden entre lotes y también
+  mientras el escritor espera a los lectores de archivos (`BatchHooks::waiting`, cada 50 ms). La
+  regla de 5 000 filas o 200 ms está en `ingest::batch_full`.
+- `scan_shared` desaparece. `ReadPool` de 2 lectores con `query_only`; memoria compartida con
+  `unlock_notify` (sin la feature, el test de espera falla con `SQLITE_LOCKED`).
+- Frío A/B paso 7 → 8: razón ≈ 1,0 (estructural).
+- `--phase contention` (200 MB, 200 refrescos de 1 000 líneas, con el Resumen en bucle):
+  - **En disco:** ×1,43 / ×1,45 / ×0,74 frente a sin lecturas, con load 3–17. El escritor no
+    espera a los lectores, pero compiten por la CPU con el escritor y los hilos de lectura de
+    archivos. **No se cumple con holgura el ×1,1 del spec**; se anota como seguimiento.
+  - **En memoria compartida:** ×9. Es la espera acotada por lote y consulta que el spec admite
+    para el modo opcional.
+- En la app (`target/debug/agentboard` con `HOME`/XDG falsos sobre `200m`, `AGENTBOARD_LOG=debug`):
+  95 comandos respondidos durante el escaneo inicial; tres `emit.ingest_done` del vigilante con
+  la interfaz consultando; sin avisos ni errores.
+
+### Paso 9: caché de resultados (D8) — conservado
+
+Clave = tipo de consulta + JSON de sus argumentos con los campos en el orden del tipo
+(`Filter` pasa a `Serialize`); `summary` añade el minuto. Los resultados se devuelven clonados
+(tipos con `Clone`) para no cambiar los tipos de los comandos.
+
+### Paso 10: caché en disco (D2) — conservado
+
+- `Storage::open(CacheMode)` valida `user_version`, la marca `cache_meta.format` y una lectura de
+  `file_state`; si no valen, borra y recrea. Si el escritor no abre una caché que pasó la
+  validación, la borra y lo intenta otra vez antes de quedarse en memoria.
+- `0700`/`0600`: el archivo se crea con `0600` antes de que SQLite lo abra, y `-wal`/`-shm`
+  heredan esos permisos (sin tocar el `umask`, que `std` no expone).
+- La corrupción en ejecución se trata con `IngestHandle::report`, desde lectores y comandos, y
+  desde el escritor cuando falla un escaneo: encola `Job::Reconstruir`.
+- `perf_scan --cache` usa `Storage`. `--phase warm` abre la caché, aplica precios, saca el Resumen
+  por un lector y hace el escaneo incremental.
+
+### Paso 11: caché fiel a los logs (D10) — conservado
+
+- La limpieza va al planificar el escaneo y solo con los archivos de los proveedores de ese
+  escaneo.
+- Las fuentes SQLite (OpenCode) solo se limpian si desaparecen: su «offset» es un cursor, no un
+  tamaño.
+- `file_state` se escribe al principio de `write_file` (en el mismo `SAVEPOINT`) con
+  `RETURNING id`, para enlazar `session_files`.
+- Dos tests anteriores afirmaban el comportamiento antiguo, contrario al spec nuevo («nada se
+  borra solo»: `borrar_el_original_conserva_las_filas` y las 4 llamadas tras rotar). Se
+  cambiaron a lo que pide el spec: se retiran.
+- Medido A/B frente al paso 10: vivo 273 → 264 ms; el frío, con load 6–19, sale demasiado
+  ruidoso para decidir. Paso estructural, se conserva.
+
+### Paso 12: ajustes (D12) — conservado
+
+- `memory_only` en `Settings`.
+- `db::startup_mode` borra una caché que haya quedado si «Solo memoria» está activa.
+- `set_settings` reconstruye al cambiar el modo (`commands::cache_mode_change`, probado aparte).
+- Comando `rebuild_cache`.
+- Interfaz: pestaña «Datos» (`DataSettings`) y `lib/cache.ts` (`createRebuild` registra el oyente
+  de `ingest://done` antes de pedir la reconstrucción). Se prueban con `react-dom/server` y
+  dobles de prueba, sin dependencias nuevas.
+- El mock usa `mockIPC(…, { shouldMockEvents: true })` para emitir `ingest://done`.
+- En la app con «Solo memoria» activa al arrancar, la caché que quedaba se borró y no se creó
+  otra. La interacción con el interruptor y el botón no se automatizó: la cubren los tests de
+  Rust (reconstruir a memoria y a disco con los mismos datos, consultas durante la reconstrucción)
+  y los de vitest.
+
+### Paso 13: documentación (D14)
+
+README (insignia, principio «Caché local reconstruible», tabla, diagrama, ruta, permisos y cómo
+borrarla), CONTRIBUTING (filosofía) y wiki (Home, Arquitectura, Funcionalidad, Servidor MCP).
+
+### Mutación (14.1)
+
+- **Alcance:** `cargo mutants --in-place --in-diff <diff 3d549e4..HEAD de src-tauri/src>
+  --cargo-arg=--lib`, 33 ejecuciones dirigidas (`-f`/`--re`), cada una cortada a los 3 min con
+  `SIGINT` y `git status` limpio después. Hay 404 mutantes; se examinaron 305:
+  - 235 detectados y 2 por tiempo de espera (cuelgues del hilo de ingesta: detectados);
+  - 61 inviables;
+  - 7 supervivientes.
+- **Puntuación sobre los viables:** 237/244 = **97,1 %**.
+- **Huecos reales cerrados con tests nuevos:** `is_empty` de la caché, `cache_write` en los deltas,
+  caché que valida pero no abre, ruta de la caché, OpenCode sin cambios, precios mientras se espera
+  a los lectores, errores de herramientas en sus agregados, cambio de «Solo memoria».
+- **Supervivientes justificados:**
+  - `max_ts` inicial en `Deltas::call`: equivalente, porque `max(0, ts) = ts` con fechas no
+    negativas.
+  - `!= NotFound` en `delete_cache_files`: solo decide si se avisa por stderr.
+  - Guarda `!fresh → true` en `open_disk`: con una base recién creada solo repite el intento.
+  - Signo de `cache_size` del escritor y del lector: ajuste de rendimiento, no de resultados.
+  - `remove_legacy_db`: tocaría la carpeta de datos real; su lógica está en
+    `remove_legacy_db_in`, probado.
+  - `== Source::Jsonl` en `scan`: equivalente en resultados, porque `read_jsonl` ya descarta los
+    archivos sin cambios; es una línea de la Fase 1 movida.
+- **No examinados:** 91 cuerpos de comandos Tauri de `commands.rs`, `lib.rs` y los 2 de
+  bandeja/avisos. Los cubren los golden de equivalencia (integración, fuera de `--lib`) y la
+  comprobación en la app.

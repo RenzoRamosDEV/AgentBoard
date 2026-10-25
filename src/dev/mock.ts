@@ -109,6 +109,9 @@ function mockLatency(): number {
 
 export function installMocks() {
   const latency = mockLatency();
+  // `?history=<días>`: con «Todo» (sin `from`), series de ese número de días (medición con historial largo).
+  const history = Math.max(0, Math.floor(Number(new URLSearchParams(location.search).get("history")) || 0));
+  const longHistory = (f: { from?: number }) => history > 0 && f.from == null;
   const handle = (cmd: string, args: unknown): unknown => {
     const a = args as Record<string, unknown>;
     // El Resumen en una petición: los mismos apartados que los comandos sueltos.
@@ -185,6 +188,10 @@ export function installMocks() {
           return out;
         }
         // Solo algunos días tienen actividad, como en la realidad.
+        if (longHistory(f)) {
+          const first = Math.floor(now / DAY) * DAY - (history - 1) * DAY;
+          return Array.from({ length: history }, (_, i) => pt(first + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
+        }
         const days = Math.floor((now - monthStart) / DAY) + 1;
         return Array.from({ length: days }, (_, i) => pt(monthStart + i * DAY, 1 + ((i * 37) % 11) * 0.6, 100 + (i % 5) * 20)).filter((_, i) => i % 3 !== 1);
       }
@@ -198,7 +205,7 @@ export function installMocks() {
           tool: [["Bash", "Bash"], ["Read", "Read"], ["Edit", "Edit"], ["Grep", "Grep"], ["Write", "Write"]],
         };
         const out: { ts: number; key: string; label: string; costUsd: number; calls: number; outputTokens: number }[] = [];
-        for (let d = 13; d >= 0; d--) {
+        for (let d = longHistory(f) ? history - 1 : 13; d >= 0; d--) {
           const ts = Math.floor((now - d * DAY) / DAY) * DAY;
           (keys[String(a.by)] ?? []).forEach(([key, label], i) => {
             if ((d + i) % 4 === 3) return;
@@ -247,7 +254,7 @@ export function installMocks() {
         };
       case "get_activity_daily": {
         const out = [];
-        for (let i = 13; i >= 0; i--) {
+        for (let i = longHistory(f) ? history - 1 : 13; i >= 0; i--) {
           const ts = Math.floor((now - i * DAY) / DAY) * DAY;
           out.push({ ts, activity: "coding", costUsd: 1 + ((i * 7) % 5) * 0.5, turns: 10 });
           out.push({ ts, activity: "exploration", costUsd: 0.4 + ((i * 3) % 4) * 0.3, turns: 3 });

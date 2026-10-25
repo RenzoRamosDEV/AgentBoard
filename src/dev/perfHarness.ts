@@ -1,6 +1,6 @@
 /**
  * Arnés de medición de la interfaz (solo en la build `perf`, con `?perf=1`): ejecuta los
- * escenarios S1–S4 con clics reales sobre la app montada con el mock y deja el JSON de
+ * escenarios S1–S5 con clics reales sobre la app montada con el mock y deja el JSON de
  * resultados en `<pre id="perf-results">`, que lee `scripts/perf-ui.mjs`.
  */
 import { Profiler, createElement, type ReactNode } from "react";
@@ -143,6 +143,13 @@ async function scenarios() {
     await measure(click("agent-codex"));
   }
   el("agents").click();
+  // S5: 30 d → «Todo» tras un aviso (frío), con el historial largo del mock (`?history=`); vuelta sin medir.
+  const s5: Sample[] = [];
+  for (let i = 0; i < REPS; i++) {
+    await measure(dataChanged);
+    s5.push(await measure(click("period-all")));
+    await measure(click("period-30d"));
+  }
   // S4: aviso de datos cambiados con el Resumen abierto: peticiones hechas y render.
   const s4: Sample[] = [];
   for (let i = 0; i < REPS; i++) s4.push(await measure(dataChanged));
@@ -151,6 +158,7 @@ async function scenarios() {
     S2: { cold: stat(s2cold), cached: stat(s2cached) },
     S3: { cold: stat(s3) },
     S4: { ...stat(s4), requests: s4[s4.length - 1].requests },
+    S5: { cold: stat(s5) },
   };
 }
 

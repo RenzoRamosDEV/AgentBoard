@@ -2,7 +2,7 @@
 /**
  * Medición de la interfaz (Fase 4): build `perf` con el mock y el arnés, `vite preview` y
  * Chromium headless (protocolo de DevTools, sin dependencias); repite cada latencia `--runs` veces y da mediana y máximo
- * de S1–S4. Imprime además el tamaño de los chunks de la build normal (bytes y gzip).
+ * de S1–S5. Imprime además el tamaño de los chunks de la build normal (bytes y gzip).
  *
  *   node scripts/perf-ui.mjs [--latency=104,630] [--runs=3] [--no-build]
  *
@@ -19,6 +19,8 @@ import { median, parseResults } from "../src/dev/perfStats.ts";
 const ROOT = resolve(import.meta.dirname, "..");
 const PERF_OUT = join(ROOT, "node_modules", ".perf-dist");
 const PORT = 5199;
+/** Historial del mock con «Todo» (S5): tres años, para que el periodo vaya por meses. */
+const HISTORY_DAYS = 1095;
 
 /** Bytes y gzip de cada `.js`/`.css` de `dir`, del mayor al menor. */
 export function chunkSizes(dir) {
@@ -86,7 +88,7 @@ async function runOnce(chrome, latency) {
       });
       proc.on("exit", () => ko(new Error("Chromium terminó sin DevTools")));
     });
-    const url = `http://localhost:${PORT}/?perf=1&latency=${latency}`;
+    const url = `http://localhost:${PORT}/?perf=1&latency=${latency}&history=${HISTORY_DAYS}`;
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json();
     const ws = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((ok, ko) => ((ws.onopen = ok), (ws.onerror = ko)));
@@ -158,6 +160,7 @@ async function main() {
       console.log(fmtRow("S2 cacheado", res.S2.cached));
       console.log(fmtRow("S3 frío", res.S3.cold));
       console.log(fmtRow("S4 aviso", res.S4));
+      if (res.S5) console.log(fmtRow("S5 «Todo»", res.S5.cold));
       console.log(`S4 peticiones: ${JSON.stringify(res.S4.requests)}`);
       console.log(`JSON ${latency}: ${JSON.stringify(res)}`);
     }

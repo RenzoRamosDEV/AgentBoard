@@ -67,6 +67,22 @@ cargo build --release --example perf_scan
 ./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase contention --repeat 200 --cache target/perf-cache/cont.sqlite
 rm -f target/perf-cache/*.sqlite*
 
+# 3c. Fase 3: vigilante, reposo, contención como la interfaz, snapshot y bytes por comando.
+#     Pasos intermedios con el perfil `bench-fast` (release sin LTO); medición final con `release`.
+cargo build --profile bench-fast --example perf_scan
+./target/bench-fast/examples/perf_scan --fixtures target/perf-fixtures/200m --phase watch --cache target/perf-cache/w.sqlite
+rm -f target/perf-cache/*.sqlite*
+./target/bench-fast/examples/perf_scan --fixtures target/perf-fixtures/200m --phase watch --events 500 --cache target/perf-cache/w.sqlite
+rm -f target/perf-cache/*.sqlite*
+./target/bench-fast/examples/perf_scan --fixtures target/perf-fixtures/200m --phase idle --idle-secs 60 --cache target/perf-cache/w.sqlite
+rm -f target/perf-cache/*.sqlite*
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase contention --repeat 200 --reader ui --cache target/perf-cache/cont.sqlite
+rm -f target/perf-cache/*.sqlite*
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase contention --repeat 200 --reader loop --cache target/perf-cache/cont.sqlite
+rm -f target/perf-cache/*.sqlite*
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase queries
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/1g --phase queries
+
 # 4. Benchmarks criterion (necesitan el fixture 50m; si falta lo generan o lo indican)
 cargo bench --bench parse_line --bench ingest_file --bench summary_queries
 
@@ -84,6 +100,9 @@ flamegraph --perfdata target/perf-live.data -o ../docs/perf/live-refresh.svg
 `perf_scan` solo lee la carpeta indicada (cinco proveedores JSONL con `with_roots`, nunca
 `providers::all()`); el archivo de actividad simulada `claude_code/-home-dev-Proyectos-proyecto-00/perf-live-<pid>.jsonl`
 se borra al terminar (comprobado con `find target/perf-fixtures -name 'perf-live-*'`: vacío).
+Las fases `watch` (con `--events`, 50 archivos `perf-burst-<pid>-<k>.jsonl`) e `idle` de la Fase 3
+también escriben solo ahí y borran lo suyo
+(`find target/perf-fixtures \( -name 'perf-live-*' -o -name 'perf-burst-*' \)`: vacío).
 
 ## Resultados de `perf_scan` (release)
 
@@ -470,3 +489,91 @@ Todos se conservaron salvo el 7, aunque varios cambiaron tras medir (detalle y c
   el detalle (turnos, horas). Pueden pasar a agregados por turno o por hora.
 - **Huella de consultas**: el hash redondeado no sirve para comparar fases cuando cambia el orden
   de las sumas. Mejor volcar las salidas y compararlas con tolerancia (como el golden).
+
+## Después de la Fase 3 (vigilante y comunicación con la UI)
+
+Cambio OpenSpec `perf-fase-3-vigilante-ui`. Mismo portátil, contenedor y fixtures que las fases
+anteriores. Binarios `release`: partida `97088e3` (fases nuevas de `perf_scan`, sin cambios de
+comportamiento; recompilada en un worktree) frente a final, A/B alternando binarios, tres pares
+por métrica, load average 0,3–2,6. La latencia del vigilante se volvió a medir tras el último
+ajuste (calma de 150 ms, `9050bbf`): tres ejecuciones `release`.
+
+**Equivalencia**: golden de ingesta y de consultas sin regrabar y en verde; huella de tablas de
+`200m` (`--fingerprint`) idéntica a la partida. La huella de consultas (`--query-fingerprint`)
+difiere solo en las 3 líneas de `list_agents`, que incluyen la carpeta de logs: `perf_scan` pasa
+ahora las raíces como ruta absoluta (el vigilante filtra por raíz y `notify` da rutas absolutas).
+El resto de las 211 líneas son iguales. Golden nuevo de lo que devuelve el servidor MCP de
+proyectos y sesiones (`tests/golden/detalle_mcp_fixtures.txt`), grabado antes de tocar
+`sessions.rs`: igual.
+
+### Antes y después
+
+| Métrica (200 MB salvo indicación) | Partida (`97088e3`) | Después de la Fase 3 | Presupuesto |
+|---|---|---|---|
+| Escritura aislada → Resumen que la incluye (mediana / p95) | 787–789 / 794–802 ms | **459–462 / 464–477 ms** | < 500 ms: **cumple** |
+| Ráfaga de 500 líneas en 50 logs: avisos a la interfaz / relecturas / escaneos completos | 1 / 1 / 1 | **4 / 500 / 0** | ≤ 1 aviso/s, 0 completos: **cumple** |
+| Separación mínima entre avisos en la ráfaga | — (un solo aviso al acabar) | **1 000,1 ms** | ≥ 1 s: **cumple** |
+| CPU del proceso en 60 s de reposo / relecturas | 0 ms / 0 | 0–10 ms / 0 | < 60 ms y 0: **cumple** |
+| Relecturas con lecturas como la interfaz (`contention --reader ui`) | × 1,29 | **× 1,21–1,23** | ≤ × 1,1: **no cumple** |
+| Relecturas con el Resumen en bucle (`--reader loop`) | × 1,27–1,29 | × 1,26–1,28 | (sin presupuesto) |
+| WAL al terminar la tanda, `ui` / `loop` | 1 255 / 1 205–1 259 MiB | 1 255 / **48–135 MiB** | ≤ 8 MiB: **no cumple** |
+| Resumen en frío después / antes de la tanda | × 2,05–2,06 | × 2,07–2,22 | ≤ × 1,2: **no cumple** (ver abajo) |
+| Resumen con comparación en una petición, frío: 50 MB / 200 MB / 1 GB | — (18–23 `invoke`) | 15 / **102–104** / 621–633 ms | < 300 ms en 200 MB: **cumple** |
+| Resumen repetido (caché de resultados) | 0,0 ms | 0,0 ms | — |
+| `activity_daily` 1 GB (mediana) | 238–240 ms | 238–243 ms | < 300 ms: **cumple** (sin cambios: el paso A se revirtió) |
+| Respuesta mayor salvo exportar, 200 MB / 1 GB | 126,5 / 234,6 KiB | 246,1 / 327,0 KiB (el snapshot, que sustituye a 20 respuestas) | ≤ 1 MiB: **cumple** |
+| `get_session_detail` de la sesión mayor | 126,5 KiB | **51,9 KiB** (+ turnos en páginas de 30: 5,6 KiB) | — |
+| `get_project_detail` del proyecto mayor, 200 MB / 1 GB | 10,7 / 29,2 KiB | 5,5 / 8,1 KiB (sesiones en páginas de 25) | — |
+| `list_sessions` 1 GB | 234,6 KiB (hasta 500) | 23,2 KiB (página de 50) | — |
+| Frío en memoria 50 MB / 200 MB / 1 GB | 451–457 / 2 080–2 115 / 12 602–12 639 ms | 458–464 / 2 136–2 184 / 12 913–13 010 ms | (+1 / +3 / +3 %) |
+| Refresco 1000 líneas `--repeat 20`, 50 MB / 200 MB / 1 GB | 18,5–18,8 / 33,2–33,3 / 113–115 ms | 20,5–21,2 / 40,8–41,1 / 151–153 ms | ver abajo |
+| Escaneo incremental sin cambios al arrancar (warm) | 18,9–19,1 ms | 26,7–27,0 ms | ver abajo |
+| Arranque con caché hasta datos del Resumen | 129–130 ms | 129–134 ms | — |
+
+**El refresco y el escaneo sin cambios no empeoran por el código**: la diferencia es la ruta de los
+fixtures. Con la misma ruta absoluta que ahora usa `perf_scan`, el binario de la partida da 39,7 /
+40,6 ms en 200 MB, 151,3 ms en 1 GB y 26,3 ms en el escaneo sin cambios: igual que el final (cada
+`stat` resuelve más componentes de la ruta). Las raíces reales de la app ya son absolutas. Además,
+en la app el vigilante ya no hace escaneos completos: relee solo los archivos tocados.
+
+**Contención y WAL**: cada tanda de `contention` añade 200 000 llamadas a una sola sesión del
+último día, dentro del filtro de 30 días, y el Resumen pasa de ~140 ms a 1–2,4 s. Con lecturas de
+~2 s y un aviso por segundo siempre hay un lector abierto, el `wal_checkpoint(TRUNCATE)` con el
+escritor libre se aplaza las 198 veces (sin bloquear al escritor más de 100 ms) y el WAL no se
+reinicia. Con el lector en bucle, que deja huecos, sí completa y el WAL final baja de 1,2 GiB a
+48–135 MiB. «Después / antes» compara el Resumen con 200 000 y con 400 000 llamadas nuevas: mide
+sobre todo el crecimiento de los datos. (El «antes» de 143 ms anotado en la partida intermedia se
+midió con un binario anterior al orden definitivo de la fase; recompilada, la partida da × 2,05.)
+
+### Pasos conservados y revertidos
+
+1. `bench-fast` y fases nuevas de `perf_scan` (`watch`, `idle`, `--reader`, snapshot y bytes).
+2. Relectura dirigida (`ingest::scan_paths`, `Job::Rescan`): estructural.
+3. Vigilante con debounce por archivo, filtro de eventos y sin sondeo: estructural (800 → 569 ms
+   en `bench-fast`). Ajuste final de la calma de 200 a 150 ms (dentro de 150–300 ms del spec):
+   511 → 461 ms en `release`.
+4. Aviso `data:changed` con throttle de 1/s: estructural (500 → 4 avisos en la ráfaga).
+5. Snapshot del Resumen en una transacción con `turn_stats` compartido: estructural (200 MB con
+   comparación: 102–104 ms frente a 120–128 ms de las 18 consultas sueltas sin comparación).
+6. **Revertido**: `activity_daily` agrupado en SQL (paso A de D7): +9 % en 1 GB y +18 % en 200 MB
+   en `bench-fast`. El paso B (tabla `turn_days`) no se hizo: ya cumple < 300 ms.
+7. Checkpoint `TRUNCATE` del WAL con el escritor libre: estructural; acota el WAL cuando hay
+   huecos entre lecturas.
+8. Páginas y tipos compactos (sesiones, turnos, detalle de proyecto y de sesión): estructural.
+
+Mutación dirigida (`cargo mutants --in-diff`, 3 min por ejecución): 1 superviviente de 75 mutantes
+viables (equivalente), detalle en `design.md` del cambio.
+
+### Seguimientos para la Fase 4
+
+- **Contención con una sesión enorme**: el Resumen de 30 días con una sesión de cientos de miles
+  de llamadas tarda segundos (`timeseries(hour)`, `activity`, `activity_daily`, `breakdown(command)`
+  por el detalle). Agregados por hora y por turno acortarían cada lectura y dejarían huecos al
+  checkpoint.
+- **Interfaz**: el evento ya lleva agentes y días; refrescar solo lo afectado, memoizar y
+  virtualizar tablas (Non-Goals de esta fase).
+- **D10 de la Fase 2**: en secuencias forzadas (borrar el log principal de una sesión cuyos
+  subagentes ya se truncaron o rotaron) el escaneo completo incremental difiere de leer desde cero
+  en los turnos de otra sesión; la relectura dirigida reproduce exactamente al escaneo completo.
+- **Frío +1–3 %** (sin cambios de ingesta en esta fase): ruido o el coste de `Touched`; medir con
+  `perf` si sube.

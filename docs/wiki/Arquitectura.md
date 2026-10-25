@@ -72,6 +72,19 @@ binario nativo para Linux, Windows y macOS.
   para inglés, portugués y francés.
 - **Temas.** El tema (claro, oscuro o del sistema) se resuelve por un atributo en el documento;
   el modo oscuro usa un acento naranja y el claro uno celeste.
+- **Caché de datos (`lib/query.ts`).** Cada consulta se guarda por comando y filtro
+  (`filterKey`) con la generación de datos en la que se pidió. Los avisos `data:changed` e
+  `ingest://done` y guardar los ajustes cambian la generación: solo se vuelven a pedir las
+  consultas de las vistas montadas; las demás se piden al volver a mostrarse, enseñando antes el
+  dato anterior. Las peticiones iguales simultáneas comparten una sola llamada, no hay recarga al
+  recuperar el foco y la memoria se acota con un LRU de 64 entradas.
+- **Filtro global (`lib/filterStore.ts`).** Periodo, agentes y proyectos ocultos y comparación
+  viven fuera de React; la barra superior, el panel lateral y el contenido se suscriben solo a lo
+  que usan (`useSyncExternalStore`). El contenido usa el filtro diferido (`useDeferredValue`): la
+  barra responde al instante y el Resumen del filtro nuevo se pide ya en el render urgente.
+- **Carga por apartado y tablas largas.** Los apartados distintos del Resumen se cargan con
+  `React.lazy`; las tablas con más de 200 filas solo pintan las visibles más un margen
+  (`lib/virtual.ts`).
 
 ## Especificación primero
 

@@ -577,3 +577,100 @@ viables (equivalente), detalle en `design.md` del cambio.
   en los turnos de otra sesión; la relectura dirigida reproduce exactamente al escaneo completo.
 - **Frío +1–3 %** (sin cambios de ingesta en esta fase): ruido o el coste de `Touched`; medir con
   `perf` si sube.
+
+## Después de la Fase 4 (frontend fluido)
+
+Cambio OpenSpec `perf-fase-4-frontend`. Mide la interfaz, no el backend: build de producción con
+el mock de desarrollo (`vite build --mode perf`, React con `Profiler` activo) en Chromium headless,
+latencia simulada del Resumen de **104 ms** (Resumen de 200 MB en frío, «Después de la Fase 3»;
+resto de comandos ¼) y, como referencia, **630 ms** (1 GB). Cada escenario se repite 5 veces y el
+arnés se ejecuta 3 veces: mediana de las medianas y máximo de los máximos. El fin de una
+interacción es el segundo `requestAnimationFrame` tras el último cambio en el contenido (o tras el
+render que sigue a la última respuesta), con 200 ms sin peticiones ni cambios; los tiempos van en
+fotogramas de ~16,7 ms. «Render» es la suma de `actualDuration` del `Profiler` en la interacción.
+Partida: `c732391` (arnés sin cambios de rendimiento, medida con el arnés final en un worktree).
+
+Escenarios: **S1** Resumen → Modelos → Resumen (la primera ida en frío, el resto ya visitado);
+**S2** 30 d → 7 d tras un aviso de datos (frío) y vuelta a 30 d (cacheado); **S3** ocultar un
+agente tras un aviso (frío); **S4** aviso `data:changed` con el Resumen abierto; **S5** 30 d →
+«Todo» tras un aviso con tres años de historial en el mock (`?history=1095`; en la partida, el mock
+no tenía historial largo y «Todo» cubría el mes en curso).
+
+**Equivalencia**: el HTML de todos los apartados del mock (`#root` completo, recorriendo el panel
+lateral, el detalle de un proyecto y el de una sesión) es igual al de la partida salvo las horas
+del mock, que dependen del reloj; golden nuevos grabados antes de tocar el código: tabla de 200
+filas (`datatable-200.html`) y Resumen + apartados sobre datos deterministas de 30 y 450 días
+(`derivaciones.json`). Ningún golden se regrabó.
+
+### Antes y después
+
+| Escenario | Partida 104 ms (render) | Fase 4 104 ms (render) | Partida 630 ms | Fase 4 630 ms | Presupuesto |
+|---|---|---|---|---|---|
+| S1 apartado en frío (mediana / máx.) | 33,2 / 33,4 (10,6) | 33,1 / 33,6 (10,1) | 33,2 / 33,3 | 35,6 / 49,8 | < 300 ms: **cumple** |
+| S1 apartado ya visitado | 66,5 / 67,2 (9,6) | **33,3 / 33,6** (9,6) | 199,9 / 200,5 | **33,4 / 33,7** | < 100 ms: **cumple** |
+| S2 periodo en frío | 166,8 / 183,7 (20,6) | **133,3 / 133,7** (8,5) | 833,3 / 833,5 | **650,0 / 650,5** | < 300 ms: **cumple** |
+| S2 periodo ya cargado | 166,7 / 167,7 (15,7) | **33,3 / 49,7** (9,3) | 816,6 / 818,7 | **33,5 / 33,8** | < 100 ms: **cumple** |
+| S3 ocultar un agente (frío) | 216,7 / 217,3 (26,1) | **133,4 / 166,9** (18,6) | 999,8 / 1000,2 | **650,1 / 817,1** | < 300 ms: **cumple** |
+| S4 aviso con el Resumen abierto | 183,3 / 183,5 (25,4) | **133,4 / 133,5** (10,2) | 833,4 / 833,6 | **649,9 / 650,3** | — |
+| S5 «Todo» con 3 años (frío) | 166,9 / 183,7 (22,0)¹ | **133,4 / 134,2** (18,6) | 833,2 / 838,2¹ | **666,6 / 666,9** | < 300 ms: **cumple** |
+| S4: peticiones por aviso | 9 (`get_dashboard_snapshot` ×2) | **8** (Resumen ×1) | 9 | 8 | una por vista montada |
+
+¹ Partida sin historial largo en el mock: «Todo» con menos datos que después.
+
+Con datos ya cargados ya no se pide nada (antes cada cambio volvía a pedir el Resumen, agentes y
+proyectos); en frío, la espera es la del Resumen más un fotograma, sin la segunda petición del
+Resumen que provocaban las listas de agentes y proyectos al llegar. Las 8 peticiones de S4 son de
+lo montado: listas de agentes y proyectos, sesiones totales del pie, Resumen y «Hoy en directo»
+(4).
+
+**Bundle** (build normal; arranque = script, `modulepreload` y CSS de `index.html`):
+
+| | Partida bytes / gzip | Fase 4 bytes / gzip |
+|---|---|---|
+| Arranque | 450 102 / 124 639 B (un solo `index.js` y CSS) | **399 658** / 117 786 B |
+| Total | 450 102 / 124 639 B | 462 975 / 139 343 B |
+| `index-*.js` | 401 405 / 115 448 B | 231 560 / 71 914 B (+ `jsx-runtime` 76 407 / 21 054, `Overview` 19 662 / 6 280, `Charts` 8 619 / 3 075, `DataTable` 5 012 / 2 220 y módulos comunes) |
+| Por apartado (perezosos) | — | `Section` 19 376 / 5 273, `Pricing` 14 151 / 5 057, `SessionDetail` 6 891 / 2 502, `SettingsDialog` 6 713 / 2 369, `Projects` 6 445 / 2 334, `ProjectDetail` 6 108 / 2 198, `CommandPalette` 3 183 / 1 502, `pager` 385 / 248 B |
+
+El arranque baja un 11 % en bytes, pero en gzip pasa de 115 448 + 9 191 a 117 786 B (+2 %): varios
+chunks pequeños comprimen peor que uno grande. El total crece un 3 % por la caché, el almacén de
+filtro, la virtualización y la división en chunks.
+
+### Pasos conservados y revertidos
+
+1. Arnés (`scripts/perf-ui.mjs`, `src/dev/perfHarness.ts`, modo `perf`, `?latency=`,
+   `?history=`): sin dependencias; Chromium por el protocolo de DevTools con el `WebSocket` de Node.
+2. Caché de consultas por generación (`lib/query.ts`) y avisos → generación: S1 cacheado −50 %,
+   S2 frío −20 %, S2 cacheado −80 %, S3 −38 %, S4 −27 % y una petición menos por aviso. El render de
+   S4 subió de 25 a 41 ms (cada respuesta repintaba la app entera) hasta el paso 3.
+3. Filtro global en un almacén con suscripción por selector (`lib/filterStore.ts`), `Topbar` y
+   `Sidebar` con `memo`, `useDeferredValue` en el contenido y transición en el cambio de apartado:
+   misma latencia, render −40 % en S2 frío, −26 % en S3 y −76 % en S4. La primera versión pedía el
+   Resumen en el render diferido (+1 fotograma en S3); ahora se pide en el urgente.
+4. `React.lazy` por apartado: estructural (lo exige el spec), arranque −12 % en bytes, latencias
+   iguales.
+5. Tablas: orden memoizado por lista, filas `memo`, columnas memoizadas y virtualización propia a
+   partir de 200 filas: estructural, latencias iguales (las tablas del mock son cortas). Probado
+   aparte con 1 000 filas: 35–47 filas en el DOM y altura total de 1 000 filas.
+6. **Revertido**: agrupaciones de los paneles en `useMemo` y gráficos con `memo` (D7): render de S1
+   −6 %, el resto igual (al cambiar de apartado o de datos se recalcula de todos modos). Se
+   conservan el golden de las vistas y el test de que los gráficos no animan su geometría.
+7. **No aplicado**: cubo mensual en Rust (D8). Con tres años en «Todo» (S5) el render de toda la
+   interacción es 18,6 ms de 133,4; renderizar el Resumen con las series ya por meses ahorra
+   ~5,5 ms (19,7 → 14,3 ms en `renderToStaticMarkup`), un 4 % y menos de un fotograma: no puede
+   llegar al 10 %. El mock no mide el coste de serializar las series diarias por IPC.
+
+Mutación dirigida (sobre `query.ts`, `filterStore.ts` y `virtual.ts`; Stryker 9 con vitest 5 no
+activaba los mutantes, así que se usó un mutador de operadores propio, 3 min por archivo): 88 de 95
+muertos; los 7 supervivientes son equivalentes (detalle en `design.md` del cambio).
+
+**Reproducir**: `node scripts/perf-ui.mjs --latency=104,630 --runs=3` (compila la build normal en
+`dist/` para los chunks y la de medición en `node_modules/.perf-dist`; `CHROME` para otro
+Chromium).
+
+### Seguimientos
+
+- **IPC del Resumen con «Todo»**: medir con el backend real cuánto pesa serializar años de series
+  diarias; si importa, retomar D8 (cubo mensual en Rust).
+- **Gzip del arranque** +2 %: agrupar en `manualChunks` los módulos comunes pequeños si importa.
+- **Contención y WAL** (de la Fase 3) siguen pendientes para la entrega final.

@@ -131,9 +131,10 @@ python3 scripts/bench-compare.py compare --criterion-dir src-tauri/target/criter
   resultados o con JSON mal formado, código 2.
 - **Cómo leer el fallo**: el informe (también en el resumen de la ejecución en GitHub) tiene una
   fila por benchmark y una línea por problema, p. ej.
-  `REGRESIÓN summary_queries/activity: 5,41 ms → 6,89 ms (+27,4 %, umbral +20 %)`. Si avisa de
-  **CPU distinta** a la de la línea base, el runner es otra máquina: vuelve a ejecutar el job
-  antes de buscar la causa; si se repite con esa CPU, regenera la línea base.
+  `REGRESIÓN summary_queries/activity: 5,41 ms → 6,89 ms (+27,4 %, umbral +20 %)`. Si el runner tiene
+  una **CPU distinta** a la de la línea base, los tiempos no son comparables: las regresiones se
+  muestran como aviso y no bloquean (un benchmark ausente sí bloquea). Solo fallan por tiempo las
+  ejecuciones en la misma CPU que la línea base.
 - **Actualizar la línea base** (cambio intencionado, benchmark renombrado o nuevo, otra CPU
   habitual): cada ejecución sube la candidata medida en el runner como artefacto
   `perf-baseline`, también cuando la comparación falla. Desde una ejecución en el estado deseado:

@@ -145,7 +145,7 @@ class CompareThreshold(Base):
             with self.subTest(actual=actual):
                 write_bench(self.crit, "summary_queries/activity", actual)
                 baseline = self.write_baseline(
-                    baseline_doc({"summary_queries/activity": self.BASE})
+                    baseline_doc({"summary_queries/activity": self.BASE}, cpu=self.mod.cpu_model())
                 )
                 code, out, _ = self.run_compare(baseline)
                 self.assertEqual(code, 1)
@@ -155,7 +155,7 @@ class CompareThreshold(Base):
     def test_umbral_configurable(self):
         write_bench(self.crit, "summary_queries/activity", 1150.0)
         baseline = self.write_baseline(
-            baseline_doc({"summary_queries/activity": self.BASE})
+            baseline_doc({"summary_queries/activity": self.BASE}, cpu=self.mod.cpu_model())
         )
         code, out, _ = self.run_main(
             "compare",
@@ -235,6 +235,24 @@ class CpuWarning(Base):
         self.assertIn("CPU distinta", report)
         self.assertIn("CPU A", report)
         self.assertIn("CPU B", report)
+
+    def test_cpu_distinta_convierte_regresiones_en_aviso(self):
+        doc = baseline_doc({"parse_line/codex": 100.0}, cpu="CPU A")
+        code, report = self.mod.compare(doc, {"parse_line/codex": 160.0}, 0.20, "CPU B")
+        self.assertEqual(code, 0)
+        self.assertIn("REGRESIÓN parse_line/codex", report)
+        self.assertIn("no bloquea", report)
+
+    def test_cpu_distinta_sigue_fallando_si_falta_un_bench(self):
+        doc = baseline_doc({"parse_line/codex": 100.0, "parse_line/gemini": 1.0}, cpu="CPU A")
+        code, _ = self.mod.compare(doc, {"parse_line/codex": 100.0}, 0.20, "CPU B")
+        self.assertEqual(code, 1)
+
+    def test_misma_cpu_con_regresion_falla(self):
+        doc = baseline_doc({"parse_line/codex": 100.0}, cpu="CPU A")
+        code, report = self.mod.compare(doc, {"parse_line/codex": 160.0}, 0.20, "CPU A")
+        self.assertEqual(code, 1)
+        self.assertNotIn("no bloquea", report)
 
     def test_misma_cpu_no_avisa(self):
         doc = baseline_doc({"parse_line/codex": 100.0}, cpu="CPU A")

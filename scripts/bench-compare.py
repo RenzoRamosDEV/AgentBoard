@@ -127,14 +127,19 @@ def compare(baseline: dict, current: dict, threshold: float, cpu: str):
         "|---|---|---|---|---|",
         *(f"| {' | '.join(row)} |" for row in rows),
     ]
-    if captured.get("cpu") != cpu:
+    same_cpu = captured.get("cpu") == cpu
+    if not same_cpu:
+        # Los runners de GitHub cambian de CPU entre ejecuciones y los tiempos no son
+        # comparables: las regresiones se informan, pero solo bloquean con la misma CPU.
         lines += [
             "",
             f"> Aviso: CPU distinta de la de la línea base (`{captured.get('cpu', '?')}` → "
-            f"`{cpu}`). Si el job falla solo por eso, vuelve a ejecutarlo; si se repite "
-            "con esta CPU, regenera la línea base.",
+            f"`{cpu}`). Las regresiones de tiempo se muestran pero no bloquean; "
+            "un bench ausente sí.",
         ]
-    failures = regressions + missing
+        if regressions:
+            lines += ["", *(f"- {r} (aviso, no bloquea)" for r in regressions)]
+    failures = (regressions if same_cpu else []) + missing
     if failures:
         lines += ["", *(f"- {failure}" for failure in failures), "", UPDATE_HINT]
     return (1 if failures else 0), "\n".join(lines) + "\n"

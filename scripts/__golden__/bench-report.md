@@ -11,9 +11,10 @@ Línea base: commit `abc1234`, runner `ubuntu-22.04`, CPU `AMD EPYC 7763 64-Core
 | summary_queries/activity | 5,41 ms | 6,89 ms | +27,4 % | REGRESIÓN |
 | summary_queries/breakdown(project) | 158,00 µs | 158,00 µs | 0 % | ok |
 
-> Aviso: CPU distinta de la de la línea base (`AMD EPYC 7763 64-Core Processor` → `Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz`). Si el job falla solo por eso, vuelve a ejecutarlo; si se repite con esta CPU, regenera la línea base.
+> Aviso: CPU distinta de la de la línea base (`AMD EPYC 7763 64-Core Processor` → `Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz`). Las regresiones de tiempo se muestran pero no bloquean; un bench ausente sí.
 
-- REGRESIÓN summary_queries/activity: 5,41 ms → 6,89 ms (+27,4 %, umbral +20 %)
+- REGRESIÓN summary_queries/activity: 5,41 ms → 6,89 ms (+27,4 %, umbral +20 %) (aviso, no bloquea)
+
 - AUSENTE parse_line/gone: está en la línea base y no en esta ejecución; actualiza la línea base.
 
 Si el cambio es intencionado, actualiza la línea base: descarga el artefacto `perf-baseline` de esta ejecución (`gh run download <id> -n perf-baseline`) y versiónalo como `docs/perf/baseline.json` en un commit propio (ver «Benchmarks en CI y línea base» en `CONTRIBUTING.md`).

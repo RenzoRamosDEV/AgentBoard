@@ -60,6 +60,13 @@ cargo build --release --example perf_scan
 ./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase queries
 ./target/release/examples/perf_scan --fixtures target/perf-fixtures/1g --phase queries
 
+# 3b. Fase 2: huellas de datos y de consultas, caché en disco, arranque con caché y contención
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase cold --fingerprint --query-fingerprint
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase cold --cache target/perf-cache/200m.sqlite
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase warm --cache target/perf-cache/200m.sqlite
+./target/release/examples/perf_scan --fixtures target/perf-fixtures/200m --phase contention --repeat 200 --cache target/perf-cache/cont.sqlite
+rm -f target/perf-cache/*.sqlite*
+
 # 4. Benchmarks criterion (necesitan el fixture 50m; si falta lo generan o lo indican)
 cargo bench --bench parse_line --bench ingest_file --bench summary_queries
 
@@ -356,3 +363,110 @@ empeora > 5 %); ninguno se revirtió:
 - Contención del `Mutex` único entre consultas e ingesta (cuello #4): con 200 MB la interfaz
   encadena tandas de 18 consultas y una relectura del vigilante puede esperar decenas de segundos.
 - Consultas del Resumen y `call_costs` (cuello #2): sin cambios en esta fase.
+
+## Después de la Fase 2 (SQLite y caché en disco)
+
+Cambio OpenSpec `perf-fase-2-sqlite`. Mismo portátil, contenedor y fixtures que las fases
+anteriores. Binarios `release`: partida `d7fa167` (golden de consultas grabado, sin
+optimizaciones) frente a final `231b00e`, A/B alternando binarios, tres pares por métrica, con
+`TZ=Europe/Madrid` (lo fija `perf_scan`: la zona de la caché es la de la interfaz, como en la app).
+
+**Carga de la máquina**: tanda final con load average 1,5–3,5, salvo el frío de 1 GB, que coincidió
+con un pico (6–12). Para ese caso se da la tanda anterior, con load 1,4–2,3 y el mismo código de
+ingesta salvo el `stat` único.
+
+**Equivalencia**:
+- Golden de ingesta (`tests/golden/ingesta_*.txt`) y de consultas (`tests/golden/consultas_*.txt`,
+  grabados en la partida, en memoria y en disco): iguales, sin regrabar.
+- Huella de tablas de `200m` (`--fingerprint`): idéntica.
+- Huella de consultas (`--query-fingerprint`): 36 de 200 líneas cambian de hash, todas de
+  `timeseries_by`, porque el hash redondea cada real a 6 decimales y el orden de las sumas lo
+  mueve en el borde. Las 200 salidas completas de `200m`, comparadas con el comparador del golden
+  (enteros exactos, reales ≤ 1e-6), son **iguales**.
+
+### Antes y después
+
+| Métrica | Partida (`d7fa167`) | Después de la Fase 2 (`231b00e`) | Cambio |
+|---|---|---|---|
+| Resumen completo 200 MB, en frío | 1 076 ms (1 024–1 087) | **171 ms** (169–175) | −84 % |
+| Resumen completo 200 MB, repetido | 1 066 ms | **0,0 ms** (caché de resultados) | — |
+| Resumen completo 1 GB, en frío | 5 692 ms (5 657–5 799) | **959 ms** (780–985) | −83 % |
+| Resumen completo 1 GB, repetido | 5 684 ms | **0,0 ms** | — |
+| `summary` · `breakdown(project)` · `breakdown(model)` · `timeseries(day)` 200 MB | 65,7 · 173,5 · 159,7 · 49,6 ms | 0,9 · 0,9 · 0,7 · 0,5 ms | −98 a −99 % |
+| Los mismos, 1 GB | 352 · 844 · 814 · 256 ms | 3,8 · 3,9 · 3,4 · 1,8 ms | −99 % |
+| `activity` 200 MB / 1 GB | 73,4 / 420 ms | 47,7 / 249 ms | −35 / −41 % |
+| Consulta más lenta del Resumen 1 GB | 844 ms (`breakdown(project)`) | 341 ms (`activity_daily`, detalle) | −60 % |
+| Arranque con la caché llena hasta datos del Resumen 50 MB / 200 MB / 1 GB | 0,4 / 1,8 / 11,5 s (había que releer todo) | **25 / 140 / 795 ms** | −94 a −93 % |
+| Escaneo incremental sin cambios al arrancar 50 MB / 200 MB / 1 GB | — | 6 / 20 / 98 ms | — |
+| Frío en memoria 50 MB / 200 MB | 404 / 1 833 ms | 517 / 2 368 ms | +28 / +29 % |
+| Frío en memoria 1 GB (tanda con load 2) | 11,5 s | 14,1 s | +22 % |
+| Frío a la caché en disco 50 MB / 200 MB / 1 GB | — | 584 / 2 783 / 20 003 ms | — |
+| Refresco 1000 líneas, `--repeat 20`, 50 MB / 200 MB / 1 GB | 17,6 / 31,8 / 111,0 ms | 19,9 / 35,3 / 120,3 ms | +13 / +11 / +8 % |
+| 200 refrescos sobre 200 MB: mediana | 33,7 ms | 37,9 ms | +12 % |
+| 200 refrescos: primeros 20 / últimos 20 | 34,8 / 34,8 ms | 34,8 / 39,7 ms (×1,14) | — |
+| Refresco con el Resumen en bucle por los lectores (caché en disco) | — (`Mutex` único: esperaba decenas de s) | ×1,36–1,38 (42 → 58 ms) | — |
+| RSS pico: frío 200 MB · consultas 1 GB · vivo 1 GB | 81 · 297 · 299 MiB | 88 · 320 · 323 MiB | +9 / +8 / +8 % |
+| Tamaño de `cache.sqlite` 50 MB / 200 MB / 1 GB | — | 10,1 / 39,9 / 204,6 MiB | — |
+
+Criterion (fixture `50m`, `cargo bench`, load ~2). La caché de la base de medición está en la
+zona de las consultas, así que el Resumen lee de los agregados:
+
+| Bench | Fase 1 (B / C) | Fase 2 |
+|---|---|---|
+| `summary_queries/resumen_completo` | 319,1 / 189,7 ms | **19,3 ms** |
+| `summary_queries/summary` · `breakdown(project)` · `breakdown(model)` · `timeseries(day)` | — | 108 · 158 · 126 · 86 µs |
+| `summary_queries/activity` | — | 5,41 ms |
+| `ingest_file/claude_code_5mib` | 91,0 / 51,2 ms | 41,9 ms |
+| `parse_file/claude_code` · `codex` · `copilot` · `cursor` · `gemini` | 13,8 · 2,02 · 1,69 · 1,76 · 2,94 ms / 17,0 · 1,94 · 1,48 · 1,03 · 2,24 ms | 9,63 · 1,25 · 1,06 · 0,73 · 1,24 ms |
+| `parse_line/claude_code` · `codex` · `copilot` · `cursor` · `gemini` | 6,31 · 4,65 · 2,99 · 3,92 · 6,66 µs / 3,42 · 2,81 · 1,82 · 2,72 · 7,94 µs | 2,41 · 2,16 · 1,29 · 1,56 · 3,83 µs |
+
+El parseo no cambia en esta fase: sus diferencias con la Fase 1 son de carga de la máquina.
+
+### Frente a los presupuestos
+
+| Presupuesto (spec `rendimiento`) | Medido | Estado |
+|---|---|---|
+| Arranque con 200 MB indexados < 1,5 s | 138–144 ms | **Cumple** |
+| Resumen 200 MB < 300 ms en frío | 169–175 ms | **Cumple** |
+| Resumen 200 MB < 100 ms desde la caché de resultados | 0,0 ms | **Cumple** |
+| Cada consulta del Resumen sobre 1 GB < 300 ms | 17 de 18; `activity_daily` 341 ms (312–391) | **No cumple** (por poco, una consulta de detalle) |
+| Frío 200 MB a la caché en disco < 10 s | 2,78–2,85 s | **Cumple** |
+| Refresco con lecturas ≤ 1,1 × sin ellas | ×1,36–1,38 en disco (×9 en «Solo memoria», espera acotada admitida) | **No cumple** |
+| (Fase 1) mediana de 200 refrescos < 200 ms; últimos 20 ≤ 1,5 × primeros 20 | 37,9 ms; ×1,14 | Cumple |
+
+### Pasos conservados y revertidos
+
+Todos se conservaron salvo el 7, aunque varios cambiaron tras medir (detalle y cifras por paso en
+`design.md` del cambio, «Desviaciones durante la implementación»):
+
+1. Golden de consultas y huella antes de optimizar.
+2. Coste precalculado: con disparadores, el frío empeoraba +123 %. Cualquier disparador en `calls`
+   o un `INSERT … SELECT` abre un subdiario por sentencia. Se conservó sin disparadores de
+   inserción: el coste lo calcula el escritor (`PriceBook`). Consultas −20 a −50 %.
+3. Primera llamada de la sesión sin `ROW_NUMBER`: `breakdown` −64 %.
+4. Día local precalculado (estructural, +1 % en frío).
+5. Agregados diarios. Correcciones por medición: `CROSS JOIN` para no recorrer `calls` en cada
+   lote; deltas para las inserciones (el refresco en vivo crecía con la sesión).
+6. Índices revisados con `EXPLAIN QUERY PLAN`: fuera `calls_agent`; ninguno nuevo.
+7. **Revertido**: claves foráneas desactivadas. Sin mejora (razón 0,99 en 12 pares) una vez que
+   el escritor inserta sin disparadores; vuelve `foreign_keys=ON`.
+8. Escritor único y lectores (estructural).
+9. Caché de resultados.
+10. Caché en disco. Correcciones: `mmap` y `journal_size_limit`; `TZ` manda sobre la zona
+    detectada.
+11. Caché fiel a los logs. Corrección: un solo `stat` por archivo para la limpieza y el plan.
+12. Ajustes «Solo memoria» y «Reconstruir caché».
+
+### Seguimientos para la Fase 3
+
+- **Frío +22–29 % y vivo +8–13 %**: mantener coste, día, primera llamada, agregados y
+  `session_files` cuesta. Candidatos: aplazar el refresco de derivados al final del escaneo
+  inicial en lugar de cada lote, y memorizar el día local por rango en el escritor.
+- **Contención en disco (×1,37)**: con un lector siempre activo, el checkpoint del WAL no puede
+  reiniciarlo, el WAL crece y las lecturas se vuelven más lentas (el Resumen pasa de 140 ms a
+  2,3 s tras 200 refrescos). Opciones: checkpoint `TRUNCATE` cuando la interfaz no lee, o las
+  relecturas dirigidas del vigilante (menos lotes).
+- **`activity_daily` / `activity` / `timeseries(hour)` en 1 GB** (341 / 249 / 149 ms): siguen por
+  el detalle (turnos, horas). Pueden pasar a agregados por turno o por hora.
+- **Huella de consultas**: el hash redondeado no sirve para comparar fases cuando cambia el orden
+  de las sumas. Mejor volcar las salidas y compararlas con tolerancia (como el golden).

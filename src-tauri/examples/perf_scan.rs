@@ -290,7 +290,7 @@ fn live_app(args: &common::Args) -> Result<LiveApp> {
             Origen::Vigilante => {
                 let _ = tx.send(Notice {
                     at: Instant::now(),
-                    full: true,
+                    full: stats.full,
                     records: stats.records,
                 });
             }

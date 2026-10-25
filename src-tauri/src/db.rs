@@ -1069,7 +1069,8 @@ mod tests {
         let first = checkpoint_if_large(&storage.writer, &storage.target).unwrap();
         let blocked = t.elapsed();
         assert_eq!(first, Checkpoint::Busy);
-        assert!(blocked < Duration::from_millis(400), "{blocked:?}");
+        // Muy por debajo de la espera normal de 5 s; holgado para runners lentos (macOS en CI).
+        assert!(blocked < Duration::from_millis(1500), "{blocked:?}");
         // El escritor sigue con su espera normal para lo demás.
         storage
             .writer

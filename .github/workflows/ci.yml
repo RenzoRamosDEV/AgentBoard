@@ -82,8 +82,11 @@ jobs:
           key: bench
       - name: Tests del comparador
         run: python3 -m unittest scripts/test_bench_compare.py
+      # La caché de Rust puede restaurar un fixture anterior incompleto: se genera desde cero.
       - name: Fixture sintético de 50 MB
-        run: python3 scripts/gen-fixtures.py 50m
+        run: |
+          rm -rf src-tauri/target/perf-fixtures
+          python3 scripts/gen-fixtures.py 50m
       # Sin resultados de ejecuciones anteriores que pudiera restaurar la caché.
       - name: Limpiar resultados de criterion
         run: rm -rf src-tauri/target/criterion

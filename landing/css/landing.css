@@ -1187,6 +1187,18 @@ pre code {
   }
 }
 
+@media (min-width: 60rem) and (max-width: 74rem) {
+  .site-nav {
+    gap: 0;
+    margin-right: 0.25rem;
+  }
+
+  .site-nav a {
+    padding-inline: 0.5rem;
+    font-size: 0.875rem;
+  }
+}
+
 /* ---------- Motion (transform and opacity only) ---------- */
 
 @media (hover: hover) and (pointer: fine) {

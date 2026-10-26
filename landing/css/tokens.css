@@ -1,0 +1,88 @@
+:root {
+  --brand-50: #eef8fd;
+  --brand-100: #d8eefa;
+  --brand-200: #b3dff5;
+  --brand-300: #7ccaee;
+  --brand-400: #3fb2e6;
+  --brand-500: #1a9fd9;
+  --brand-600: #0b8ac9;
+  --brand-700: #0a6fa3;
+  --brand-800: #0d5c86;
+  --brand-900: #114d6f;
+  --brand-950: #0b314a;
+
+  --bg: #f8f8f6;
+  --bg-elevated: #f2f2ef;
+  --surface: #ffffff;
+  --fg: #1b1c1f;
+  --fg-muted: #5c5e66;
+  --border: #e0dfda;
+  --primary: var(--brand-600);
+  --primary-fg: #ffffff;
+  --ring: var(--brand-500);
+
+  --danger: #c43434;
+  --danger-fg: #ffffff;
+  --success: #16813f;
+  --warning: #b85c10;
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+
+  --shadow-sm: 0 1px 2px rgb(17 77 111 / 0.06), 0 1px 3px rgb(17 77 111 / 0.08);
+  --shadow-md: 0 4px 12px -2px rgb(17 77 111 / 0.1), 0 2px 6px -2px rgb(17 77 111 / 0.08);
+  --shadow-lg: 0 18px 40px -12px rgb(17 77 111 / 0.22), 0 6px 16px -8px rgb(17 77 111 / 0.12);
+
+  --glass: rgb(255 255 255 / 0.72);
+  --glass-border: rgb(11 138 201 / 0.14);
+  --gradient-brand: linear-gradient(135deg, var(--brand-700) 0%, var(--brand-600) 50%, #20b0f0 100%);
+  --gradient-soft:
+    radial-gradient(1200px 600px at 10% -10%, rgb(32 176 240 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgb(11 138 201 / 0.08), transparent 60%);
+  --blob-a: rgb(32 176 240 / 0.26);
+  --blob-b: rgb(11 111 163 / 0.16);
+  --pattern-dot: rgb(11 138 201 / 0.12);
+}
+
+.dark {
+  --brand-50: #fff7ec;
+  --brand-100: #feecd2;
+  --brand-200: #fcd6a3;
+  --brand-300: #f7c47a;
+  --brand-400: #f2a33a;
+  --brand-500: #e88f22;
+  --brand-600: #c97a12;
+  --brand-700: #a35f0e;
+  --brand-800: #804a10;
+  --brand-900: #5f3810;
+  --brand-950: #3a2008;
+
+  --bg: #14161a;
+  --bg-elevated: #191c21;
+  --surface: #1d2026;
+  --fg: #e9ebef;
+  --fg-muted: #aab0ba;
+  --border: #2b2f37;
+  --primary: var(--brand-400);
+  --primary-fg: #14161a;
+
+  --danger: #f06a6a;
+  --danger-fg: #14161a;
+  --success: #4ade80;
+  --warning: #f28c38;
+
+  --shadow-sm: 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-md: 0 0 0 1px rgb(255 255 255 / 0.05), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 0 0 1px rgb(255 255 255 / 0.06), 0 24px 48px -16px rgb(0 0 0 / 0.7);
+
+  --gradient-brand: linear-gradient(135deg, var(--brand-300) 0%, var(--brand-400) 50%, #f28c38 100%);
+  --glass: rgb(25 28 33 / 0.7);
+  --glass-border: rgb(255 255 255 / 0.08);
+  --gradient-soft:
+    radial-gradient(1200px 600px at 10% -10%, rgb(242 163 58 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgb(242 140 56 / 0.07), transparent 60%);
+  --blob-a: rgb(242 163 58 / 0.18);
+  --blob-b: rgb(242 140 56 / 0.1);
+  --pattern-dot: rgb(255 255 255 / 0.05);
+}

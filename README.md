@@ -9,7 +9,7 @@
 Reúne en una sola vista qué hacen Claude Code, Codex, Copilot, Cursor, Gemini y OpenCode
 —y cuánto cuestan— leyendo los logs que ya tienen en el ordenador. Nada sale de la máquina.
 
-**[Documentación](https://biblioteca-renzo-ramos.vercel.app/agentboard/) · [Descargar](https://github.com/RenzoRamosDEV/AgentBoard/releases/latest)**
+**[Documentación](https://docs.portafolio-renzoramos.com/agentboard/) · [Descargar](https://github.com/RenzoRamosDEV/AgentBoard/releases/latest)**
 
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)

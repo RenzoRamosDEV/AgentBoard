@@ -197,7 +197,7 @@ b { font-weight: 600; }
 .select[aria-expanded="true"] svg { transform: rotate(180deg); }
 .select:hover { border-color: var(--text-muted); }
 .select:focus-visible { outline: none; border-color: var(--accent-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 25%, transparent); }
-.select-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--surface-1); border: 1px solid var(--border); box-shadow: 0 8px 24px rgb(0 0 0 / 0.28); }
+.select-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; list-style: none; background: var(--surface-1); border: 1px solid var(--border); }
 .select-option { padding: 6px 9px; font-size: 13px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
 .select-option.active { background: var(--surface-2); color: var(--text-primary); }
 .select-option.selected { color: var(--accent); font-weight: 600; }

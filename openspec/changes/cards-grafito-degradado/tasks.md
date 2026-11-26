@@ -5,7 +5,7 @@ Ciclo TDD en cada grupo: primero los tests en rojo, luego el CSS mínimo para po
 ## 1. Red de seguridad de colores de series (golden)
 
 - [x] 1.1 Crear `styles-grafito.test.ts` con el helper `declarations(css, selector)` (bloques de selector exacto, espacios normalizados, la última declaración gana) y un test unitario del helper con un CSS mínimo en línea (selector ausente → mapa vacío; selector repetido → gana el último); verificar con `npx vitest run src/components/__tests__/styles-grafito.test.ts`
-- [ ] 1.2 Añadir el test golden «colores de series intactos»: extrae todos los `--palette-*`, `--series-*`, `--act-*`, `--agent-*` de `:root` y `:root[data-theme="light"]` y los compara con `__golden__/series-tokens.json`; generar el golden con `UPDATE_GOLDEN=1` **sobre el CSS actual, antes de tocarlo**, y verificar que el test pasa en verde y que el JSON tiene 30 entradas por modo (8 `--palette-*`, 6 `--series-*`, 11 `--act-*`, 5 `--agent-*`)
+- [x] 1.2 Añadir el test golden «colores de series intactos»: extrae todos los `--palette-*`, `--series-*`, `--act-*`, `--agent-*` de `:root` y `:root[data-theme="light"]` y los compara con `__golden__/series-tokens.json`; generar el golden con `UPDATE_GOLDEN=1` **sobre el CSS actual, antes de tocarlo**, y verificar que el test pasa en verde y que el JSON tiene 30 entradas por modo (8 `--palette-*`, 6 `--series-*`, 11 `--act-*`, 5 `--agent-*`)
 
 ## 2. Paleta Grafito y contraste
 

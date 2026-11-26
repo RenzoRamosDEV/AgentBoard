@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
 
@@ -62,5 +62,27 @@ describe("helper declarations", () => {
 
   it("encuentra el selector dentro de una lista y normaliza espacios", () => {
     expect(declarations(sample, ".a .c")).toEqual({ margin: "0 1px" });
+  });
+});
+
+describe("colores de series intactos", () => {
+  const SERIES_TOKEN = /^--(palette|series|act|agent)-/;
+  const seriesTokens = (selector: string) =>
+    Object.fromEntries(Object.entries(declarations(css, selector)).filter(([prop]) => SERIES_TOKEN.test(prop)).sort(([a], [b]) => a.localeCompare(b)));
+
+  it("los --palette-*, --series-*, --act-* y --agent-* coinciden con el golden en ambos modos", () => {
+    const goldenUrl = new URL("./__golden__/series-tokens.json", import.meta.url);
+    const out = JSON.stringify({ dark: seriesTokens(DARK), light: seriesTokens(LIGHT) }, null, 2) + "\n";
+    if (process.env.UPDATE_GOLDEN === "1") writeFileSync(goldenUrl, out);
+    expect(out).toBe(readFileSync(goldenUrl, "utf8"));
+  });
+
+  it.each([DARK, LIGHT])("%s declara 30 tokens de series (8 palette, 6 series, 11 act, 5 agent)", (selector) => {
+    const counts = Object.keys(seriesTokens(selector)).reduce<Record<string, number>>((acc, prop) => {
+      const family = prop.split("-")[2];
+      acc[family] = (acc[family] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(counts).toEqual({ palette: 8, series: 6, act: 11, agent: 5 });
   });
 });

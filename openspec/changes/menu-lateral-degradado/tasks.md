@@ -10,10 +10,10 @@
 
 ## 3. Refactor y verificación
 
-- [ ] 3.1 Refactor si procede, manteniendo los tests en verde
-- [ ] 3.2 Mutación manual sobre el diff (revertir cada regla y comprobar que su test falla, máximo 3 min) y anotar el resultado en `mutation-testing.md`
-- [ ] 3.3 `npm test` y `npm run build` en verde, incluido el golden `series-tokens.json`
-- [ ] 3.4 Verificación visual con Vite en el puerto 5199 y capturas en claro y oscuro (desplegado; comprobar también el activo)
+- [x] 3.1 Refactor si procede, manteniendo los tests en verde
+- [x] 3.2 Mutación manual sobre el diff (revertir cada regla y comprobar que su test falla, máximo 3 min) y anotar el resultado en `mutation-testing.md`
+- [x] 3.3 `npm test` y `npm run build` en verde, incluido el golden `series-tokens.json`
+- [x] 3.4 Verificación visual con Vite en el puerto 5199 y capturas en claro y oscuro (desplegado; comprobar también el activo)
 
 ## Workflow follow-up
 

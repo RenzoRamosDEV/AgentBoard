@@ -10,9 +10,9 @@
 
 ## 3. Refactor y verificación
 
-- [ ] 3.1 Quitar reglas redundantes que queden sin efecto, manteniendo los tests en verde
-- [ ] 3.2 Mutación manual sobre el diff (revertir cada regla y comprobar que su test falla, máximo 3 min) y anotar el resultado en `mutation-testing.md`
-- [ ] 3.3 `npm test` y `npm run build` en verde, incluido el golden `series-tokens.json`
+- [x] 3.1 Quitar reglas redundantes que queden sin efecto, manteniendo los tests en verde
+- [x] 3.2 Mutación manual sobre el diff (revertir cada regla y comprobar que su test falla, máximo 3 min) y anotar el resultado en `mutation-testing.md`
+- [x] 3.3 `npm test` y `npm run build` en verde, incluido el golden `series-tokens.json`
 
 ## Workflow follow-up
 

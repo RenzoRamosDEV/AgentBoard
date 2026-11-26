@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentBoard · Temas de cards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ───────────── Shell del comparador (neutro, no forma parte de los temas) ───────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: Inter, system-ui, sans-serif; font-size: 13px;
+  background: #0b0b0c; color: #e6e6e6;
+}
+.shell-bar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  padding: 14px 24px; background: rgba(11,11,12,.92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid #222;
+}
+.shell-bar h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+.shell-bar h1 span { color: #777; font-weight: 400; }
+.seg { display: inline-flex; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 12px; color: #999; background: transparent; border: 0;
+  padding: 6px 12px; cursor: pointer; border-right: 1px solid #2a2a2a;
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: #1c1c1e; color: #fff; }
+.seg button:hover { color: #fff; }
+.spacer { flex: 1; }
+
+.stage { padding: 24px; display: grid; gap: 24px; }
+.stage.all { grid-template-columns: repeat(auto-fit, minmax(620px, 1fr)); }
+@media (max-width: 700px) { .stage, .stage.all { grid-template-columns: 1fr; padding: 16px; } .shell-bar { padding: 12px 16px; } }
+
+.theme-intro { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 16px; margin-bottom: 10px; }
+.theme-intro h2 { margin: 0; font-size: 15px; font-weight: 600; color: #fff; }
+.theme-intro h2 small { font-weight: 400; color: #777; margin-left: 8px; font-size: 12px; }
+.theme-intro p { margin: 0; color: #888; font-size: 12px; max-width: 70ch; }
+
+/* ───────────── Base común de la maqueta (todo vía tokens) ───────────── */
+.board {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font); font-size: 13px;
+  border: 1px solid #222; border-radius: 12px; padding: var(--pad-board);
+  display: grid; gap: var(--gap); overflow: hidden;
+}
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: var(--gap); }
+.grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--gap); }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid2 { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--card); border: var(--line) solid var(--card-border);
+  border-radius: var(--radius); padding: var(--pad-card);
+  box-shadow: var(--shadow); min-width: 0;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.card-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: var(--title-track); text-transform: var(--title-case); color: var(--title-color); margin: 0; }
+.card-sub { font-size: 11.5px; color: var(--muted); }
+.kpi-label { font-size: var(--label-size); letter-spacing: var(--label-track); text-transform: var(--label-case); color: var(--muted); }
+.kpi-value { font-family: var(--num-font); font-size: 24px; font-weight: var(--num-weight); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--fg); line-height: 1.1; }
+.kpi-foot { display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: var(--muted); }
+.delta { font-family: var(--num-font); font-size: 11px; padding: var(--chip-pad); border-radius: var(--chip-radius); border: var(--line) solid var(--chip-border); color: var(--fg-2); }
+.delta.up::before { content: "↑ "; } .delta.down::before { content: "↓ "; }
+.kpi .card { gap: 8px; }
+.spark { width: 64px; height: 20px; }
+.spark path { fill: none; stroke: var(--chart-hi); stroke-width: 1.25; }
+
+.chart { width: 100%; height: 180px; display: block; }
+.chart .bar { fill: var(--chart); }
+.chart .bar.hi { fill: var(--chart-hi); }
+.chart .grid { stroke: var(--gridline); stroke-width: 1; stroke-dasharray: var(--grid-dash); }
+.chart text { fill: var(--muted); font-family: var(--num-font); font-size: 10px; }
+
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; font-size: var(--label-size); letter-spacing: var(--label-track); text-transform: var(--label-case); color: var(--muted); padding: 0 0 8px; border-bottom: var(--line) solid var(--border); }
+td { padding: 9px 0; border-bottom: var(--line) solid var(--row); color: var(--fg-2); }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: var(--num-font); font-variant-numeric: tabular-nums; }
+td.name { color: var(--fg); }
+.meter { height: var(--meter-h); background: var(--track); border-radius: var(--meter-radius); overflow: hidden; width: 90px; display: inline-block; vertical-align: middle; }
+.meter i { display: block; height: 100%; background: var(--chart-hi); border-radius: inherit; }
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--chart-hi); margin-right: 8px; vertical-align: middle; }
+.dot.b { background: var(--chart); } .dot.c { background: var(--track); outline: var(--line) solid var(--border); }
+
+.tabs { display: inline-flex; gap: var(--tab-gap); border: var(--tabs-border); border-radius: var(--chip-radius); padding: var(--tabs-pad); }
+.tabs span { font-size: 11.5px; padding: 3px 9px; border-radius: var(--chip-radius); color: var(--muted); cursor: default; border-bottom: var(--tab-underline-off); }
+.tabs span.on { background: var(--tab-on-bg); color: var(--fg); border-bottom: var(--tab-underline); }
+
+/* ───────────── Borde de las cards: gris por defecto, naranja si se activa ───────────── */
+.board { --card-border: var(--border); }
+.board[data-edge="orange"][data-mode="dark"]  { --card-border: #f2a33a; }
+.board[data-edge="orange"][data-mode="light"] { --card-border: #e8833a; }
+.board[data-edge="soft"][data-mode="dark"]  { --card-border: rgba(242,163,58,.45); }
+.board[data-edge="soft"][data-mode="light"] { --card-border: rgba(232,131,58,.55); }
+
+/* ───────────── Tema 1 · Grafito ─────────────
+   Carbón suave, cards apenas elevadas por tono, borde 1px, radio medio. El más cercano al actual. */
+[data-theme="grafito"][data-mode="dark"] {
+  --bg: #0f0f10; --card: #161618; --border: #262629; --row: #1e1e21;
+  --fg: #ededee; --fg-2: #b4b4b8; --muted: #77777d; --title-color: #ededee;
+  --chart: #3a3a3f; --chart-hi: #e8e8ea; --track: #232326; --gridline: #1f1f22;
+  --chip-border: #2c2c30; --tab-on-bg: #232326;
+}
+[data-theme="grafito"][data-mode="light"] {
+  --bg: #f4f4f5; --card: #ffffff; --border: #e4e4e7; --row: #f0f0f2;
+  --fg: #111113; --fg-2: #4a4a50; --muted: #8a8a92; --title-color: #111113;
+  --chart: #d4d4d8; --chart-hi: #18181b; --track: #ececef; --gridline: #f0f0f2;
+  --chip-border: #e4e4e7; --tab-on-bg: #f0f0f2;
+}
+[data-theme="grafito"] {
+  --font: Inter, system-ui, sans-serif; --num-font: "JetBrains Mono", monospace; --num-weight: 500;
+  --line: .5px; --radius: 0; --shadow: none;
+  --pad-board: 20px; --pad-card: 18px; --gap: 14px;
+  --title-size: 13.5px; --title-weight: 600; --title-track: -.005em; --title-case: none;
+  --label-size: 12px; --label-track: 0; --label-case: none;
+  --chip-pad: 1px 6px; --chip-radius: 0; --meter-h: 3px; --meter-radius: 0; --grid-dash: 0;
+  --tab-gap: 2px; --tabs-border: .5px solid var(--border); --tabs-pad: 2px; --tab-underline: 0; --tab-underline-off: 0;
+}
+/* ── Variantes de línea de Grafito ──
+   --card-border es el color protagonista (naranja / naranja suave / gris, según el selector);
+   --row es el gris casi invisible que sostiene la forma cuando el acento solo marca puntos. */
+[data-theme="grafito"] .card { position: relative; background: transparent; }
+[data-theme="grafito"] .card::before { content: ""; position: absolute; pointer-events: none; }
+
+/* A · Hilo: caja cerrada de 0,5px, nada más. */
+[data-line="hilo"] .card { border: .5px solid var(--card-border); }
+[data-line="hilo"] .card::before { display: none; }
+
+/* B · Marcas: contorno gris casi invisible + escuadras de 10px en las 4 esquinas con el color de acento. */
+[data-line="marcas"] .card { border: 0; box-shadow: inset 0 0 0 .5px var(--row); }
+[data-line="marcas"] .card::before {
+  inset: 0; --c: var(--card-border); --s: 10px;
+  background:
+    linear-gradient(var(--c),var(--c)) left top / var(--s) 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left top / 1px var(--s) no-repeat,
+    linear-gradient(var(--c),var(--c)) right top / var(--s) 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right top / 1px var(--s) no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom / var(--s) 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom / 1px var(--s) no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom / var(--s) 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom / 1px var(--s) no-repeat;
+}
+
+/* C · Plano: contorno gris fino + cruces "+" que sobresalen en cada esquina, como un plano técnico. */
+[data-line="cruz"] .card { border: .5px solid var(--row); }
+[data-line="cruz"] .card::before {
+  inset: -6.5px; --c: var(--card-border);
+  background:
+    linear-gradient(var(--c),var(--c)) 0 6px / 13px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) 6px 0 / 1px 13px no-repeat,
+    linear-gradient(var(--c),var(--c)) right 0 top 6px / 13px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right 6px top 0 / 1px 13px no-repeat,
+    linear-gradient(var(--c),var(--c)) left 0 bottom 6px / 13px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left 6px bottom 0 / 1px 13px no-repeat,
+    linear-gradient(var(--c),var(--c)) right 0 bottom 6px / 13px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right 6px bottom 0 / 1px 13px no-repeat;
+}
+
+/* D · Regla: sin caja. Solo una línea fina arriba con un tramo corto de acento; el espacio separa las cards. */
+[data-line="regla"] .card { border: 0; border-top: .5px solid var(--border); padding: 16px 2px 6px; }
+[data-line="regla"] .card::before { top: -1px; left: 0; width: 28px; height: 2px; background: var(--card-border); }
+[data-line="regla"] .kpis, [data-line="regla"] .grid2 { gap: 22px; }
+
+/* E · Degradado: borde de 1px que nace con el acento en la esquina superior izquierda y se apaga hacia gris. */
+[data-line="degradado"] .card { border: 0; }
+[data-line="degradado"] .card::before {
+  inset: 0; padding: 1px;
+  background: linear-gradient(135deg, var(--card-border), transparent 40%, transparent 65%, var(--border));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+
+/* ───────────── Tema 2 · Tinta ─────────────
+   Negro puro, cards transparentes con línea fina, etiquetas en mayúsculas mono, esquinas casi rectas. Técnico. */
+[data-theme="tinta"][data-mode="dark"] {
+  --bg: #000000; --card: #000000; --border: #242424; --row: #141414;
+  --fg: #ffffff; --fg-2: #a1a1a1; --muted: #6b6b6b; --title-color: #a1a1a1;
+  --chart: #2e2e2e; --chart-hi: #ffffff; --track: #1a1a1a; --gridline: #1a1a1a;
+  --chip-border: #242424; --tab-on-bg: transparent;
+}
+[data-theme="tinta"][data-mode="light"] {
+  --bg: #ffffff; --card: #ffffff; --border: #e5e5e5; --row: #f2f2f2;
+  --fg: #000000; --fg-2: #555555; --muted: #8f8f8f; --title-color: #555555;
+  --chart: #e3e3e3; --chart-hi: #000000; --track: #f0f0f0; --gridline: #f0f0f0;
+  --chip-border: #e5e5e5; --tab-on-bg: transparent;
+}
+[data-theme="tinta"] {
+  --font: Inter, system-ui, sans-serif; --num-font: "JetBrains Mono", monospace; --num-weight: 400;
+  --line: 1px; --radius: 4px; --shadow: none;
+  --pad-board: 20px; --pad-card: 18px; --gap: 12px;
+  --title-size: 11px; --title-weight: 500; --title-track: .08em; --title-case: uppercase;
+  --label-size: 10.5px; --label-track: .08em; --label-case: uppercase;
+  --chip-pad: 0 5px; --chip-radius: 2px; --meter-h: 2px; --meter-radius: 0; --grid-dash: 2 3;
+  --tab-gap: 12px; --tabs-border: 0; --tabs-pad: 0; --tab-underline: 1px solid var(--fg); --tab-underline-off: 1px solid transparent;
+}
+[data-theme="tinta"] .tabs span { padding: 3px 0; border-radius: 0; }
+[data-theme="tinta"] .card-title, [data-theme="tinta"] .kpi-label, [data-theme="tinta"] th { font-family: "JetBrains Mono", monospace; }
+
+/* ───────────── Tema 3 · Niebla ─────────────
+   Superficies en capas de gris con borde translúcido y radio amplio. Suave y aireado, sin sombras. */
+[data-theme="niebla"][data-mode="dark"] {
+  --bg: #18181a; --card: #1f1f22; --border: rgba(255,255,255,.07); --row: rgba(255,255,255,.045);
+  --fg: #f2f2f3; --fg-2: #a9a9ae; --muted: #6f6f76; --title-color: #f2f2f3;
+  --chart: #333337; --chart-hi: #c9c9ce; --track: #2a2a2e; --gridline: rgba(255,255,255,.04);
+  --chip-border: transparent; --tab-on-bg: #2a2a2e; --chip-bg: #2a2a2e;
+}
+[data-theme="niebla"][data-mode="light"] {
+  --bg: #ececee; --card: #f8f8f9; --border: rgba(0,0,0,.06); --row: rgba(0,0,0,.05);
+  --fg: #1c1c1f; --fg-2: #5b5b62; --muted: #96969d; --title-color: #1c1c1f;
+  --chart: #d6d6da; --chart-hi: #3c3c42; --track: #e3e3e6; --gridline: rgba(0,0,0,.04);
+  --chip-border: transparent; --tab-on-bg: #e6e6e9; --chip-bg: #ebebee;
+}
+[data-theme="niebla"] {
+  --font: Inter, system-ui, sans-serif; --num-font: Inter, system-ui, sans-serif; --num-weight: 500;
+  --line: 1px; --radius: 16px; --shadow: none;
+  --pad-board: 22px; --pad-card: 20px; --gap: 16px;
+  --title-size: 14px; --title-weight: 500; --title-track: -.01em; --title-case: none;
+  --label-size: 12px; --label-track: 0; --label-case: none;
+  --chip-pad: 2px 8px; --chip-radius: 999px; --meter-h: 6px; --meter-radius: 999px; --grid-dash: 0;
+  --tab-gap: 2px; --tabs-border: 0; --tabs-pad: 3px; --tab-underline: 0; --tab-underline-off: 0;
+}
+[data-theme="niebla"] .delta { background: var(--chip-bg); }
+[data-theme="niebla"] .tabs { background: var(--chip-bg); }
+[data-theme="niebla"] .kpi-value { font-size: 26px; font-weight: 500; }
+[data-theme="niebla"] th { border-bottom-color: var(--row); }
+
+/* ───────────── Tema 4 · Rejilla ─────────────
+   Sin cajas: las cards comparten una retícula de líneas de 1px, como un plano. Cero radio, máximo orden. */
+[data-theme="rejilla"][data-mode="dark"] {
+  --bg: #0a0a0a; --card: #0a0a0a; --border: #232323; --row: #161616;
+  --fg: #fafafa; --fg-2: #9a9a9a; --muted: #616161; --title-color: #fafafa;
+  --chart: #2b2b2b; --chart-hi: #fafafa; --track: #1c1c1c; --gridline: #161616;
+  --chip-border: #2b2b2b; --tab-on-bg: #1c1c1c;
+}
+[data-theme="rejilla"][data-mode="light"] {
+  --bg: #fafafa; --card: #fafafa; --border: #dcdcdc; --row: #ececec;
+  --fg: #0a0a0a; --fg-2: #5a5a5a; --muted: #9a9a9a; --title-color: #0a0a0a;
+  --chart: #dedede; --chart-hi: #0a0a0a; --track: #ececec; --gridline: #efefef;
+  --chip-border: #dcdcdc; --tab-on-bg: #ececec;
+}
+[data-theme="rejilla"] {
+  --font: Inter, system-ui, sans-serif; --num-font: "JetBrains Mono", monospace; --num-weight: 400;
+  --line: 1px; --radius: 0; --shadow: none;
+  --pad-board: 0; --pad-card: 18px 20px; --gap: 0;
+  --title-size: 12.5px; --title-weight: 600; --title-track: 0; --title-case: none;
+  --label-size: 11px; --label-track: .02em; --label-case: none;
+  --chip-pad: 0 5px; --chip-radius: 0; --meter-h: 3px; --meter-radius: 0; --grid-dash: 0;
+  --tab-gap: 0; --tabs-border: 1px solid var(--border); --tabs-pad: 0; --tab-underline: 0; --tab-underline-off: 0;
+}
+/* La retícula: el tablero dibuja las líneas y las cards solo tocan sus vecinas. */
+.board[data-theme="rejilla"] { border-color: var(--card-border); }
+[data-theme="rejilla"] .card { border: 0; }
+[data-theme="rejilla"] .kpis > .card + .card,
+[data-theme="rejilla"] .grid2 > .card + .card { border-left: 1px solid var(--card-border); }
+[data-theme="rejilla"] .kpis, [data-theme="rejilla"] .grid2 + .grid2 { border-top: 0; }
+[data-theme="rejilla"] .grid2 { border-top: 1px solid var(--card-border); }
+[data-theme="rejilla"] .tabs span { border-radius: 0; border-right: 1px solid var(--border); }
+[data-theme="rejilla"] .tabs span:last-child { border-right: 0; }
+@media (max-width: 900px) {
+  [data-theme="rejilla"] .kpis > .card { border-left: 0 !important; border-bottom: 1px solid var(--card-border); }
+  [data-theme="rejilla"] .kpis > .card:nth-child(even) { border-left: 1px solid var(--card-border) !important; }
+  [data-theme="rejilla"] .grid2 > .card + .card { border-left: 0; border-top: 1px solid var(--card-border); }
+}
+</style>
+</head>
+<body>
+
+<header class="shell-bar">
+  <h1>AgentBoard <span>· propuesta de cards</span></h1>
+  <div class="seg" id="themeSeg" role="group" aria-label="Tema">
+    <button data-v="grafito">1 · Grafito</button>
+    <button data-v="tinta">2 · Tinta</button>
+    <button data-v="niebla">3 · Niebla</button>
+    <button data-v="rejilla">4 · Rejilla</button>
+    <button data-v="all">Comparar los 4</button>
+  </div>
+  <div class="seg" id="lineSeg" role="group" aria-label="Línea de Grafito">
+    <button data-v="hilo">A · Hilo</button>
+    <button data-v="marcas">B · Marcas</button>
+    <button data-v="cruz">C · Plano</button>
+    <button data-v="regla">D · Regla</button>
+    <button data-v="degradado">E · Degradado</button>
+    <button data-v="all">Ver las 5</button>
+  </div>
+  <span class="spacer"></span>
+  <div class="seg" id="edgeSeg" role="group" aria-label="Borde">
+    <button data-v="orange">Borde naranja</button>
+    <button data-v="soft">Naranja suave</button>
+    <button data-v="gray">Gris</button>
+  </div>
+  <div class="seg" id="modeSeg" role="group" aria-label="Modo">
+    <button data-v="dark">Oscuro</button>
+    <button data-v="light">Claro</button>
+  </div>
+</header>
+
+<main class="stage" id="stage"></main>
+
+<template id="boardTpl">
+  <section>
+    <div class="theme-intro"><h2></h2><p></p></div>
+    <div class="board">
+      <div class="kpis">
+        <div class="card kpi">
+          <span class="kpi-label">Coste · 30 días</span>
+          <span class="kpi-value">$412.38</span>
+          <div class="kpi-foot"><span class="delta up">12.4%</span><svg class="spark" viewBox="0 0 64 20"><path d="M0 15 L8 13 L16 14 L24 10 L32 11 L40 7 L48 9 L56 5 L64 4"/></svg></div>
+        </div>
+        <div class="card kpi">
+          <span class="kpi-label">Tokens</span>
+          <span class="kpi-value">48.2M</span>
+          <div class="kpi-foot"><span class="delta up">8.1%</span><svg class="spark" viewBox="0 0 64 20"><path d="M0 12 L8 14 L16 11 L24 12 L32 8 L40 10 L48 7 L56 8 L64 6"/></svg></div>
+        </div>
+        <div class="card kpi">
+          <span class="kpi-label">Sesiones</span>
+          <span class="kpi-value">312</span>
+          <div class="kpi-foot"><span class="delta down">3.0%</span><svg class="spark" viewBox="0 0 64 20"><path d="M0 6 L8 8 L16 7 L24 10 L32 9 L40 12 L48 11 L56 13 L64 12"/></svg></div>
+        </div>
+        <div class="card kpi">
+          <span class="kpi-label">Acierto de caché</span>
+          <span class="kpi-value">87%</span>
+          <div class="kpi-foot"><span class="delta up">1.2 pt</span><svg class="spark" viewBox="0 0 64 20"><path d="M0 10 L8 9 L16 10 L24 8 L32 8 L40 7 L48 7 L56 6 L64 6"/></svg></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head">
+            <div><h3 class="card-title">Coste diario</h3><span class="card-sub">Último mes · USD</span></div>
+            <div class="tabs"><span>7d</span><span class="on">30d</span><span>90d</span></div>
+          </div>
+          <svg class="chart" viewBox="0 0 600 180" preserveAspectRatio="none" data-chart></svg>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Por modelo</h3><span class="card-sub">Reparto del coste</span></div>
+          <table>
+            <thead><tr><th>Modelo</th><th></th><th class="num">Coste</th></tr></thead>
+            <tbody>
+              <tr><td class="name"><span class="dot"></span>Opus 5.5</td><td><span class="meter"><i style="width:68%"></i></span></td><td class="num">$280.40</td></tr>
+              <tr><td class="name"><span class="dot b"></span>Sonnet 5.5</td><td><span class="meter"><i style="width:24%"></i></span></td><td class="num">$98.96</td></tr>
+              <tr><td class="name"><span class="dot c"></span>Haiku 5.5</td><td><span class="meter"><i style="width:8%"></i></span></td><td class="num">$33.02</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Proyectos</h3><span class="card-sub">Top 4 por coste</span></div>
+          <table>
+            <thead><tr><th>Proyecto</th><th class="num">Sesiones</th><th class="num">Tokens</th><th class="num">Coste</th></tr></thead>
+            <tbody>
+              <tr><td class="name">AgentBoard</td><td class="num">124</td><td class="num">19.8M</td><td class="num">$171.20</td></tr>
+              <tr><td class="name">api-gateway</td><td class="num">88</td><td class="num">13.1M</td><td class="num">$109.75</td></tr>
+              <tr><td class="name">infra-terraform</td><td class="num">61</td><td class="num">9.4M</td><td class="num">$82.13</td></tr>
+              <tr><td class="name">docs-site</td><td class="num">39</td><td class="num">5.9M</td><td class="num">$49.30</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Actividad</h3><span class="card-sub">Por tipo de tarea</span></div>
+          <table>
+            <tbody>
+              <tr><td class="name">Programación</td><td><span class="meter"><i style="width:46%"></i></span></td><td class="num">46%</td></tr>
+              <tr><td class="name">Exploración</td><td><span class="meter"><i style="width:22%"></i></span></td><td class="num">22%</td></tr>
+              <tr><td class="name">Depuración</td><td><span class="meter"><i style="width:17%"></i></span></td><td class="num">17%</td></tr>
+              <tr><td class="name">Tests</td><td><span class="meter"><i style="width:15%"></i></span></td><td class="num">15%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script>
+const THEMES = {
+  grafito: { name: "Grafito", tag: "esquinas rectas", desc: "Carbón suave, líneas de 0,5px y esquinas rectas. Elige arriba cómo se dibuja la línea de las cards." },
+  tinta:   { name: "Tinta",   tag: "técnico",             desc: "Negro puro, cards transparentes definidas solo por la línea. Etiquetas mono en mayúsculas, esquinas de 4px, barras de 2px y rejilla punteada." },
+  niebla:  { name: "Niebla",  tag: "suave",               desc: "Capas de gris con borde translúcido casi invisible, radio 16px y chips en píldora. Más aire entre bloques y números grandes." },
+  rejilla: { name: "Rejilla", tag: "plano",               desc: "Sin cajas: todo el tablero es una retícula de líneas de 1px compartidas, como un plano o una hoja de cálculo. Cero radio, máxima densidad." },
+};
+const LINES = {
+  hilo:      { name: "A · Hilo",      desc: "Caja cerrada de 0,5px y nada más. Lo más limpio y sobrio." },
+  marcas:    { name: "B · Marcas",    desc: "Contorno gris casi invisible y escuadras de 10px con el color de acento en las 4 esquinas, como un visor de cámara." },
+  cruz:      { name: "C · Plano",     desc: "Contorno gris fino y cruces “+” que sobresalen en cada esquina, como un plano técnico o una herramienta de diseño." },
+  regla:     { name: "D · Regla",     desc: "Sin caja: solo una línea fina arriba con un tramo corto de acento. El espacio separa las cards. Estilo editorial." },
+  degradado: { name: "E · Degradado", desc: "Borde de 1px que nace con el acento en la esquina superior izquierda y se apaga hacia gris en la opuesta." },
+};
+const DAILY =[8,11,9,14,12,7,6,13,15,12,16,18,10,9,14,17,13,19,21,15,11,10,16,18,14,22,17,12,15,20];
+
+function drawChart(svg) {
+  const W = 600, H = 180, pad = 18, max = 25, n = DAILY.length, slot = (W - 30) / n, bw = slot * 0.62;
+  const maxIdx = DAILY.indexOf(Math.max(...DAILY));
+  let s = "";
+  [0, 10, 20].forEach(v => {
+    const y = H - pad - (v / max) * (H - pad - 6);
+    s += `<line class="grid" x1="30" x2="${W}" y1="${y}" y2="${y}"/><text x="0" y="${y + 3}">$${v}</text>`;
+  });
+  DAILY.forEach((v, i) => {
+    const h = (v / max) * (H - pad - 6), x = 30 + i * slot + (slot - bw) / 2;
+    s += `<rect class="bar${i === maxIdx || i === n - 1 ? " hi" : ""}" x="${x}" y="${H - pad - h}" width="${bw}" height="${h}" rx="1"/>`;
+  });
+  svg.innerHTML = s;
+}
+
+const stage = document.getElementById("stage");
+const tpl = document.getElementById("boardTpl");
+const store = { get(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+let theme = store.get("ab-theme", "grafito"), mode = store.get("ab-mode", "dark"), edge = store.get("ab-edge", "orange");
+let line = store.get("ab-line", "all");
+if (!(line in LINES) && line !== "all") line = "all";
+
+function boardsToShow() {
+  if (theme === "all") return Object.keys(THEMES).map(key => ({ key, line: line === "all" ? "hilo" : line }));
+  if (theme === "grafito" && line === "all") return Object.keys(LINES).map(l => ({ key: "grafito", line: l }));
+  return [{ key: theme, line: line === "all" ? "hilo" : line }];
+}
+
+function render() {
+  stage.innerHTML = "";
+  const list = boardsToShow();
+  stage.classList.toggle("all", list.length > 1);
+  document.getElementById("lineSeg").style.display = theme === "rejilla" || theme === "tinta" || theme === "niebla" ? "none" : "";
+  list.forEach(({ key, line: l }) => {
+    const node = tpl.content.cloneNode(true);
+    const t = THEMES[key];
+    const isGrafito = key === "grafito";
+    node.querySelector("h2").innerHTML = isGrafito
+      ? `Grafito · ${LINES[l].name}<small>${t.tag}</small>`
+      : `${Object.keys(THEMES).indexOf(key) + 1} · ${t.name}<small>${t.tag}</small>`;
+    node.querySelector(".theme-intro p").textContent = isGrafito ? LINES[l].desc : t.desc;
+    const board = node.querySelector(".board");
+    board.dataset.theme = key; board.dataset.mode = mode; board.dataset.edge = edge; if (isGrafito) board.dataset.line = l;
+    drawChart(node.querySelector("[data-chart]"));
+    stage.appendChild(node);
+  });
+  document.querySelectorAll("#themeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === theme));
+  document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === mode));
+  document.querySelectorAll("#edgeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === edge));
+  document.querySelectorAll("#lineSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === line));
+}
+document.getElementById("lineSeg").addEventListener("click", e => { const v = e.target.dataset.v; if (v) { line = v; store.set("ab-line", v); render(); } });
+document.getElementById("edgeSeg").addEventListener("click", e => { const v = e.target.dataset.v; if (v) { edge = v; store.set("ab-edge", v); render(); } });
+document.getElementById("themeSeg").addEventListener("click", e => { const v = e.target.dataset.v; if (v) { theme = v; store.set("ab-theme", v); render(); } });
+document.getElementById("modeSeg").addEventListener("click", e => { const v = e.target.dataset.v; if (v) { mode = v; store.set("ab-mode", v); render(); } });
+render();
+</script>
+</body>
+</html>

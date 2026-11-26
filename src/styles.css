@@ -24,6 +24,7 @@
   --text-muted: #848489;
   --accent: #f2a33a;
   --accent-soft: #f2a33a;
+  --card-edge: #f2a33a;
   --accent-ink: #14161a;
   --link: #7fa8f0;
   --good: #4ade80;
@@ -69,6 +70,7 @@
   --text-muted: #6b6b73;
   --accent: #0b8ac9;
   --accent-soft: #20b0f0;
+  --card-edge: #20b0f0;
   --accent-ink: #ffffff;
   --link: #0b8ac9;
   --good: #16813f;
@@ -233,7 +235,7 @@ b { font-weight: 600; }
 /* Tantas columnas como quepan: en ventanas estrechas las tarjetas saltan de fila solas. */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
 .kpis-compact { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
-.kpi { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.kpi { position: relative; background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 15px 17px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .kpi-label { font-size: 12px; color: var(--text-secondary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpi-value { font-family: var(--font-mono); font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpi-value.accent { color: var(--accent); }
@@ -251,7 +253,8 @@ b { font-weight: 600; }
 .panel-note { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--row-border); display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 16px; align-items: stretch; }
 @media (max-width: 1150px) { .grid-2 { grid-template-columns: 1fr; } }
-.panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel { position: relative; background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 19px 21px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel::before, .kpi::before { content: ""; position: absolute; inset: 0; padding: 1px; pointer-events: none; background: linear-gradient(135deg, var(--card-edge), transparent 40%, transparent 65%, var(--border)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 12px; min-height: 24px; }
 .panel-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .panel-title h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; }
@@ -497,7 +500,7 @@ kbd { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondar
 .rank-delta.bad { color: var(--warn); } .rank-delta.good { color: var(--good); } .rank-delta.neutral { color: var(--text-muted); }
 .rank-bar { height: var(--bar-h); margin-top: 6px; background: var(--track); border-radius: 999px; overflow: hidden; }
 .rank-bar div { height: 100%; background: var(--series-blue); border-radius: 999px; }
-.kpis-compact .kpi { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+.kpis-compact .kpi { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 10px; padding: 13px 15px; }
 .kpis-compact .kpi-head { flex: 1; min-width: 0; }
 .kpis-compact .kpi-value { font-size: 18px; }
 .card-alert.static { cursor: default; line-height: 1.45; }
@@ -636,7 +639,7 @@ svg .grid { stroke-dasharray: 3 3; }
 /* Contenido más denso y rejillas a una columna. */
 @media (max-width: 860px) {
   .main { padding: 16px 16px 24px; gap: 14px; }
-  .panel { padding: 14px; }
+  .panel { padding: 15px; }
   .page-head h1 { font-size: 19px; }
   .toolbar-search { width: auto; flex: 1 1 220px; }
   .share-list { grid-template-columns: 1fr; }

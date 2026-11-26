@@ -15,7 +15,7 @@ Ciclo TDD en cada grupo: primero los tests en rojo, luego el CSS mínimo para po
 ## 3. Tarjetas rectas con borde degradado
 
 - [x] 3.1 Red: tests de `--card-edge` (`#f2a33a` en `:root`, `#20b0f0` en claro); de `.panel` y `.kpi` con `border-radius: 0`, `background: transparent`, `box-shadow: none`, `border: 0` y `position: relative`; y de `.panel::before` / `.kpi::before` con `pointer-events: none`, `padding: 1px`, `inset: 0`, un `linear-gradient(135deg, var(--card-edge), transparent 40%, transparent 65%, var(--border))`, `mask-composite: exclude` y `-webkit-mask-composite: xor`; verificar que fallan
-- [ ] 3.2 Verde: añadir `--card-edge` a ambos bloques y las reglas de tarjeta y `::before` (design, decisión 4), compensando 1 px de `padding` en `.panel`, `.kpi` y `.kpis-compact .kpi`; verificar que los tests de 3.1 pasan
+- [x] 3.2 Verde: añadir `--card-edge` a ambos bloques y las reglas de tarjeta y `::before` (design, decisión 4), compensando 1 px de `padding` en `.panel`, `.kpi` y `.kpis-compact .kpi`; verificar que los tests de 3.1 pasan
 - [ ] 3.3 Red + verde: test de radio 0 en `.notice`, `.today-session` y `.theme-card` (design, decisión 5), y cambio del CSS; verificar que pasa
 
 ## 4. Líneas internas y elementos rectos

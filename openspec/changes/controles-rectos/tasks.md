@@ -6,7 +6,7 @@
 
 ## 2. Green
 
-- [ ] 2.1 En `src/styles.css`, poner `--control-radius: 0` y radio 0 en todos los selectores del 1.1 (salvo las excepciones circulares). Verificar que los tests pasan sin regresiones
+- [x] 2.1 En `src/styles.css`, poner `--control-radius: 0` y radio 0 en todos los selectores del 1.1 (salvo las excepciones circulares). Verificar que los tests pasan sin regresiones
 
 ## 3. Refactor y verificación
 

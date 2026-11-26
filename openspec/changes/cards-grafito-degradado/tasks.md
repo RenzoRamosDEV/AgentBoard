@@ -27,7 +27,7 @@ Ciclo TDD en cada grupo: primero los tests en rojo, luego el CSS mínimo para po
 
 - [x] 5.1 Refactor: agrupar las reglas nuevas bajo un comentario de sección «Grafito» en `src/styles.css`, eliminar declaraciones que queden sin efecto (rellenos y radios sobrescritos) y renombrar helpers del test si hace falta; verificar que `npm test` sigue en verde
 - [x] 5.2 Mutation testing: el diff solo toca CSS y tests y el proyecto no tiene herramienta de mutación para CSS; documentar la justificación en la descripción del PR y comprobar a mano que cada test nuevo falla al revertir su regla (p. ej. poner `border-radius: 12px` en `.panel` o `transparent 50%` en el degradado) en menos de 3 minutos en total
-- [ ] 5.3 Verificar `npm test` y `npm run build` en verde
+- [x] 5.3 Verificar `npm test` y `npm run build` en verde
 - [ ] 5.4 Verificación visual con `npm run tauri dev` en tema oscuro, claro y sistema: tarjetas rectas y transparentes, borde naranja (oscuro) o celeste (claro) arriba a la izquierda que se apaga hacia el centro y vuelve a gris abajo a la derecha, enlaces y filas junto al borde pulsables, gráficos con los mismos colores; comparar con `docs/design/propuesta-temas-cards.html` (Grafito, «E · Degradado»)
 
 ## Workflow follow-up

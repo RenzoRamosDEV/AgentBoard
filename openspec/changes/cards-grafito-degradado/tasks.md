@@ -10,7 +10,7 @@ Ciclo TDD en cada grupo: primero los tests en rojo, luego el CSS mínimo para po
 ## 2. Paleta Grafito y contraste
 
 - [x] 2.1 Red: tests por partición oscuro/claro con los valores exactos de `--bg`, `--sidebar`, `--surface-1..3`, `--border`, `--row-border`, `--text-primary`, `--text-secondary` y `--track` (design, decisión 1) y test de contraste WCAG `--text-muted` vs `--bg` ≥ 4.5 en ambos modos, más un caso límite que confirma que `#77777d` sobre `#0f0f10` da < 4.5; verificar que fallan
-- [ ] 2.2 Verde: reasignar esos tokens en `:root` y `:root[data-theme="light"]` de `src/styles.css`, con `--text-muted` `#848489` (oscuro) y `#6b6b73` (claro); verificar que los tests de 2.1 y el golden de 1.2 pasan
+- [x] 2.2 Verde: reasignar esos tokens en `:root` y `:root[data-theme="light"]` de `src/styles.css`, con `--text-muted` `#848489` (oscuro) y `#6b6b73` (claro); verificar que los tests de 2.1 y el golden de 1.2 pasan
 
 ## 3. Tarjetas rectas con borde degradado
 

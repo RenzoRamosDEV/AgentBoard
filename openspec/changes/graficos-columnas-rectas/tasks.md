@@ -2,7 +2,7 @@
 
 ## 1. Red
 
-- [ ] 1.1 Añadir en `src/components/__tests__/styles-grafito.test.ts` tests de radio 0 para `.column-seg`, `.column-single`, `.with-dot i`, `.legend i`, `.share-list i`, `.agent-dots i` y `.palette-dot`; de que `.column-stack > .column-seg:first-child/last-child/only-child` no vuelven a redondear; y de que `.status-dot` y `.live-dot` siguen en `50%`. Verificar con `npx vitest run src/components/__tests__/styles-grafito.test.ts` que los nuevos fallan por el radio
+- [x] 1.1 Añadir en `src/components/__tests__/styles-grafito.test.ts` tests de radio 0 para `.column-seg`, `.column-single`, `.with-dot i`, `.legend i`, `.share-list i`, `.agent-dots i` y `.palette-dot`; de que `.column-stack > .column-seg:first-child/last-child/only-child` no vuelven a redondear; y de que `.status-dot` y `.live-dot` siguen en `50%`. Verificar con `npx vitest run src/components/__tests__/styles-grafito.test.ts` que los nuevos fallan por el radio
 
 ## 2. Green
 

@@ -250,6 +250,31 @@ describe("elementos rectos dentro de las tarjetas", () => {
   });
 });
 
+describe("columnas y leyendas de gráficos rectas", () => {
+  it.each([".column-seg", ".column-single"])("%s tiene esquinas rectas", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("0");
+  });
+
+  it.each([
+    ".column-stack > .column-seg:first-child",
+    ".column-stack > .column-seg:last-child",
+    ".column-stack > .column-seg:only-child",
+  ])("%s no vuelve a redondear las esquinas", (selector) => {
+    expect(declarations(css, selector)["border-radius"] ?? "0").toBe("0");
+  });
+
+  it.each([".with-dot i", ".legend i", ".share-list i", ".agent-dots i", ".palette-dot"])(
+    "la muestra de color %s es un cuadrado de 8 px recto",
+    (selector) => {
+      expect(declarations(css, selector)).toMatchObject({ width: "8px", height: "8px", "border-radius": "0" });
+    },
+  );
+
+  it.each([".status-dot", ".live-dot", ".brand-logo"])("%s sigue siendo circular", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("50%");
+  });
+});
+
 describe("los controles de formulario conservan su radio", () => {
   it("--control-radius sigue en 8px", () => {
     expect(declarations(css, DARK)["--control-radius"]).toBe("8px");

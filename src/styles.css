@@ -229,7 +229,7 @@ b { font-weight: 600; }
 .page-head h1 { font-family: var(--font-display); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 .page-head h1 .muted { font-family: "IBM Plex Sans", sans-serif; font-size: 14px; font-weight: 400; }
 .page-head .back { align-self: flex-start; color: var(--text-muted); }
-.notice { background: var(--surface-1); border: 1px dashed var(--border); border-radius: 10px; padding: 12px 16px; color: var(--text-secondary); }
+.notice { background: var(--surface-1); border: 1px dashed var(--border); border-radius: 0; padding: 12px 16px; color: var(--text-secondary); }
 .notice.warn { border-style: solid; border-color: var(--warn); color: var(--warn); }
 
 /* Tantas columnas como quepan: en ventanas estrechas las tarjetas saltan de fila solas. */
@@ -375,7 +375,7 @@ svg .crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3
 .intro-desc { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
 .settings-section h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
 .theme-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.theme-card { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 2px solid var(--border); border-radius: 12px; background: var(--surface-2); cursor: pointer; text-align: center; }
+.theme-card { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 2px solid var(--border); border-radius: 0; background: var(--surface-2); cursor: pointer; text-align: center; }
 .theme-card:hover { border-color: var(--text-muted); }
 .theme-card.selected { border-color: var(--accent-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 25%, transparent); }
 .theme-preview { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
@@ -579,7 +579,7 @@ svg .grid { stroke-dasharray: 3 3; }
 .today-value { font-size: 30px; font-weight: 500; color: var(--accent); line-height: 1.1; }
 .today-row { display: flex; justify-content: space-between; font-size: 12.5px; }
 .today-chart .columns-max { display: none; }
-.today-session { margin-top: auto; display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); font-size: 12.5px; }
+.today-session { margin-top: auto; display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; border-radius: 0; border: 1px solid var(--border); background: var(--surface-2); font-size: 12.5px; }
 .today-session.active { border-color: color-mix(in srgb, var(--good) 45%, var(--border)); }
 .today-session-head { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
 .today-session-cost { margin-left: auto; }

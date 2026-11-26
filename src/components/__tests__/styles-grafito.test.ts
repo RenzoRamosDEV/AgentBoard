@@ -199,3 +199,9 @@ describe("tarjetas en ventanas estrechas", () => {
     expect(declarations(media, ".panel").padding).toBe("15px");
   });
 });
+
+describe("contenedores tipo tarjeta sin borde degradado", () => {
+  it.each([".notice", ".today-session", ".theme-card"])("%s tiene esquinas rectas", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("0");
+  });
+});

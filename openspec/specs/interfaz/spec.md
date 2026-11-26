@@ -63,15 +63,15 @@ Con la comparación activa, la portada SHALL indicar las fechas del periodo ante
 - **THEN** el KPI se titula «Mes · 83 % de $500.00»
 
 ### Requirement: Consistencia de tamaños
-Todos los controles interactivos (botones, botones de filtro, desplegables, campos de texto, buscadores y controles segmentados) SHALL compartir altura y tamaño de letra, salvo los campos dentro de tablas, que usan una variante compacta común. Los botones, botones de filtro, desplegables, campos de texto y buscadores SHALL compartir además radio de esquina; los controles segmentados SHALL tener esquinas rectas, como las tarjetas. Ningún control ni etiqueta SHALL partirse en dos líneas.
+Todos los controles interactivos (botones, botones de filtro, desplegables, campos de texto, buscadores y controles segmentados) SHALL compartir altura y tamaño de letra, salvo los campos dentro de tablas, que usan una variante compacta común. Todos ellos SHALL compartir además radio de esquina 0, como las tarjetas. Ningún control ni etiqueta SHALL partirse en dos líneas.
 
 #### Scenario: Barra de herramientas
 - **WHEN** una barra combina un buscador, un botón y un control segmentado
 - **THEN** los tres tienen la misma altura
 
 #### Scenario: Radio de los controles
-- **WHEN** una barra combina un botón de filtro y un control segmentado
-- **THEN** el botón de filtro conserva el radio común de los controles y el control segmentado tiene esquinas rectas
+- **WHEN** una barra combina un botón de filtro, un buscador, un botón y un control segmentado
+- **THEN** todos tienen esquinas rectas
 
 ### Requirement: Tarjetas ordenadas
 Las tarjetas de una misma fila SHALL tener la misma altura, y ninguna SHALL mostrar un hueco vacío por estirarse a la altura de otra: el contenido que crece (gráficos) ocupa el espacio y el que sobra (listas largas) se desplaza dentro de la tarjeta. A partir de 1280 px de ancho ninguna tabla SHALL salirse de su tarjeta.
@@ -154,7 +154,7 @@ Las líneas internas de las tarjetas (separadores de filas de tabla, cabeceras d
 - **THEN** su cabecera y los separadores entre filas son líneas de 0,5 px
 
 ### Requirement: Elementos rectos dentro de las tarjetas
-Los chips, las pestañas y controles segmentados, las barras de medidor y los avisos dentro de tarjetas SHALL tener esquinas rectas. Los botones, desplegables y campos de texto MAY conservar su radio de esquina.
+Los chips, las pestañas y controles segmentados, las barras de medidor y los avisos dentro de tarjetas SHALL tener esquinas rectas. Los botones, desplegables y campos de texto SHALL tener también esquinas rectas.
 
 #### Scenario: Barra de medidor
 - **WHEN** se muestra la barra de presupuesto o de reparto en una tarjeta
@@ -172,7 +172,7 @@ El rediseño MUST NOT cambiar los colores de gráficos y series (agentes, activi
 - **THEN** cada agente conserva el mismo color que antes del rediseño en el modo activo
 
 ### Requirement: Columnas y leyendas de gráficos rectas
-Las columnas de los gráficos de columnas, tanto apiladas como simples, SHALL tener esquinas rectas en todos sus segmentos. Las muestras de color de leyendas y listas de los gráficos SHALL ser cuadrados de esquinas rectas. Los indicadores circulares (estado, en vivo, logotipo e interruptor) y los extremos de las líneas de los gráficos MUST NOT cambiar de forma.
+Las columnas de los gráficos de columnas, tanto apiladas como simples, SHALL tener esquinas rectas en todos sus segmentos. Las muestras de color de leyendas y listas de los gráficos SHALL ser cuadrados de esquinas rectas. Los indicadores circulares (estado, en vivo y logotipo) y los extremos de las líneas de los gráficos MUST NOT cambiar de forma.
 
 #### Scenario: Columna apilada
 - **WHEN** se muestra una columna del gasto diario apilado por agente
@@ -189,3 +189,29 @@ Las columnas de los gráficos de columnas, tanto apiladas como simples, SHALL te
 #### Scenario: Indicadores circulares
 - **WHEN** se muestran el punto de estado de una sesión o el indicador en vivo
 - **THEN** siguen siendo círculos
+
+### Requirement: Elementos de interfaz rectos
+Las etiquetas e insignias (atajos de teclado, versión, «nuevo», etiquetas de origen y de comparación, indicador «En vivo»), las entradas de navegación y de menú, las opciones de desplegable y de buscador rápido, los campos de precio y de rango, las filas seleccionables, la miniatura de tema, el anillo de foco y el interruptor (pista y pulgar) SHALL tener esquinas rectas. El logotipo y los puntos de estado y en vivo MUST seguir siendo círculos.
+
+#### Scenario: Barra superior
+- **WHEN** se muestra la barra superior con los desplegables de agentes y proyectos, el buscador con su atajo, el botón de exportar y el indicador «En vivo»
+- **THEN** todos tienen esquinas rectas y el punto del indicador sigue siendo un círculo
+
+#### Scenario: Interruptor
+- **WHEN** se muestra el interruptor «Comparar con periodo anterior»
+- **THEN** su pista es un rectángulo y su pulgar un cuadrado, ambos de esquinas rectas
+
+#### Scenario: Foco con teclado
+- **WHEN** el usuario enfoca un control con el teclado
+- **THEN** el anillo de foco tiene esquinas rectas
+
+### Requirement: Ventanas flotantes rectas
+Las ventanas flotantes (menús emergentes, diálogos, buscador rápido, listas de desplegable y tooltips) SHALL tener esquinas rectas y MUST conservar su sombra.
+
+#### Scenario: Diálogo de ajustes
+- **WHEN** se abre el diálogo de ajustes
+- **THEN** tiene esquinas rectas
+
+#### Scenario: Lista de un desplegable
+- **WHEN** se abre la lista de opciones de un desplegable
+- **THEN** la lista tiene esquinas rectas y sigue proyectando sombra

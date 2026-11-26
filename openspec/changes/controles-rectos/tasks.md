@@ -10,7 +10,7 @@
 
 ## 3. Refactor y verificación
 
-- [ ] 3.1 Agrupar los radios 0 en la regla de la sección Grafito y eliminar las declaraciones de radio que queden redundantes, manteniendo los tests en verde
+- [x] 3.1 Agrupar los radios 0 en la regla de la sección Grafito y eliminar las declaraciones de radio que queden redundantes, manteniendo los tests en verde
 - [ ] 3.2 Mutación manual sobre el diff (revertir cada regla y comprobar que su test falla, máximo 3 min) y anotar el resultado en `mutation-testing.md`
 - [ ] 3.3 `npm test` y `npm run build` en verde, incluido el golden `series-tokens.json`
 

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Elementos de interfaz rectos
-Las etiquetas e insignias (atajos de teclado, versión, «nuevo», etiquetas de origen y de comparación, indicador «En vivo»), las entradas de navegación y de menú, las opciones de desplegable y de buscador rápido, los campos de precio y de rango, las filas seleccionables, la miniatura de tema (su lienzo y las tarjetas, barras y chips dibujados en ella), el anillo de foco y el interruptor (pista y pulgar) SHALL tener esquinas rectas. El logotipo (también el dibujado en la miniatura de tema) y los puntos de estado y en vivo MUST seguir siendo círculos.
+Las etiquetas e insignias (atajos de teclado, versión, «nuevo», etiquetas de origen y de comparación, indicador «En vivo»), las entradas de navegación y de menú, las opciones de desplegable y de buscador rápido, los campos de precio y de rango, las filas seleccionables, la miniatura de tema y lo dibujado en ella, el anillo de foco y el interruptor (pista y pulgar) SHALL tener esquinas rectas. El logotipo y los puntos de estado y en vivo MUST seguir siendo círculos.
 
 #### Scenario: Barra superior
 - **WHEN** se muestra la barra superior con los desplegables de agentes y proyectos, el buscador con su atajo, el botón de exportar y el indicador «En vivo»

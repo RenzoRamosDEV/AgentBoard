@@ -6,7 +6,7 @@
 
 ## 2. Green
 
-- [ ] 2.1 En `src/styles.css`, eliminar los radios de 5 px de las columnas y añadir `.column-seg` y `.column-single` a la regla agrupada de radio 0 de Grafito; poner a 0 el radio de las muestras de leyenda. Verificar que los tests del 1.1 pasan
+- [x] 2.1 En `src/styles.css`, eliminar los radios de 5 px de las columnas y añadir `.column-seg` y `.column-single` a la regla agrupada de radio 0 de Grafito; poner a 0 el radio de las muestras de leyenda. Verificar que los tests del 1.1 pasan
 
 ## 3. Refactor y verificación
 

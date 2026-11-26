@@ -125,7 +125,7 @@ b { font-weight: 600; }
 .link:hover { text-decoration: underline; }
 .badge { margin-left: 8px; font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
 .with-dot { display: inline-flex; align-items: center; gap: 8px; }
-.with-dot i, .legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+.with-dot i, .legend i { width: 8px; height: 8px; display: inline-block; flex-shrink: 0; }
 
 .app { display: grid; grid-template-columns: auto 1fr; height: 100vh; }
 .content { position: relative; overflow: hidden; display: flex; flex-direction: column; }
@@ -299,12 +299,8 @@ b { font-weight: 600; }
 .column { min-width: 0; width: 100%; max-width: 28px; justify-self: center; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; }
 .column-seg { width: 100%; min-height: 0; }
 .column-stack { display: flex; flex-direction: column; gap: 1px; }
-.column-stack > .column-seg:first-child { border-radius: 5px 5px 0 0; }
-.column-stack > .column-seg:last-child { border-radius: 0 0 5px 5px; }
-.column-stack > .column-seg:only-child { border-radius: 5px; }
 .column-single { min-height: 2px; opacity: 1; }
 .column-single[style*="height: 0px"] { background: var(--track) !important; }
-.column-single { border-radius: 5px; }
 .column:hover .column-seg { filter: brightness(1.15); }
 .columns-axis { display: grid; gap: 3px; font-size: 11px; position: relative; min-height: 16px; }
 .columns-axis span { text-align: center; white-space: nowrap; }
@@ -319,7 +315,7 @@ b { font-weight: 600; }
 .share-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 20px; font-size: 12.5px; }
 .share-compact .share-list { grid-template-columns: 1fr; gap: 5px; font-size: 12px; }
 .share-list li { display: grid; grid-template-columns: 8px 1fr auto auto; gap: 8px; align-items: center; }
-.share-list i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.share-list i { width: 8px; height: 8px; display: inline-block; }
 .share-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-pct { color: var(--text-secondary); font-size: 11.5px; min-width: 32px; text-align: right; }
 .share-value { color: var(--text-muted); font-size: 11.5px; min-width: 56px; text-align: right; }
@@ -474,7 +470,7 @@ kbd { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondar
 .palette-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; color: var(--text-secondary); }
 .palette-item.active { background: var(--surface-3); color: var(--text-primary); }
 .palette-item svg { flex-shrink: 0; }
-.palette-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--series-blue); margin: 0 4px; flex-shrink: 0; }
+.palette-dot { width: 8px; height: 8px; background: var(--series-blue); margin: 0 4px; flex-shrink: 0; }
 .palette-label { white-space: nowrap; }
 .palette-hint { margin-left: auto; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .palette-empty { padding: 16px 10px; }
@@ -523,7 +519,7 @@ kbd { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondar
 
 /* Proyectos */
 .agent-dots { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.agent-dots i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.agent-dots i { width: 8px; height: 8px; flex-shrink: 0; }
 .agent-dots span { margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* Nada se sale por la derecha: las tablas encogen dentro del panel y, por debajo del suelo
@@ -602,7 +598,7 @@ svg .grid { stroke-dasharray: 3 3; }
 .tray-panel-foot .button { width: 100%; height: var(--control-h); }
 
 /* Grafito: tarjetas rectas y transparentes con borde degradado; dentro de ellas, chips, pestañas,
-   segmentados, medidores y avisos también rectos. */
+   segmentados, medidores, avisos, columnas de gráficos y muestras de leyenda también rectos. */
 .panel, .kpi { position: relative; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 /* La máscara recorta el relleno del contenido y deja solo el anillo de 1 px del padding: el degradado
    se ve como borde sin tapar la tarjeta. Se declara también con prefijo para WebKitGTK (Tauri en Linux). */
@@ -622,6 +618,13 @@ svg .grid { stroke-dasharray: 3 3; }
 .share-seg,
 .rank-bar,
 .rank-bar div,
+.column-seg,
+.column-single,
+.with-dot i,
+.legend i,
+.share-list i,
+.agent-dots i,
+.palette-dot,
 .card-alert { border-radius: 0; }
 
 /* ------------------------------------------------------------------ */

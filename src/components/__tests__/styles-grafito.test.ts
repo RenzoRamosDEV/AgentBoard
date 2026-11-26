@@ -205,3 +205,57 @@ describe("contenedores tipo tarjeta sin borde degradado", () => {
     expect(declarations(css, selector)["border-radius"]).toBe("0");
   });
 });
+
+describe("líneas internas finas", () => {
+  it.each([
+    [".table-head", "border-bottom", "0.5px solid var(--border)"],
+    [".table-row", "border-bottom", "0.5px solid var(--row-border)"],
+    [".panel-note", "border-top", "0.5px solid var(--row-border)"],
+  ])("%s usa %s de 0,5 px", (selector, prop, expected) => {
+    expect(declarations(css, selector)[prop]).toBe(expected);
+  });
+});
+
+describe("elementos rectos dentro de las tarjetas", () => {
+  it.each([
+    ".chip",
+    ".segmented",
+    ".segment",
+    ".settings-tabs",
+    ".settings-tab",
+    ".bar-track",
+    ".bar-fill",
+    ".inline-bar",
+    ".inline-bar-fill",
+    ".share-seg",
+    ".rank-bar",
+    ".rank-bar div",
+    ".card-alert",
+  ])("%s tiene esquinas rectas", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("0");
+  });
+
+  it.each([
+    ".segment.active",
+    ".settings-tab.active",
+    ".share-bar > .share-seg:first-child",
+    ".share-bar > .share-seg:last-child",
+    ".share-bar > .share-seg:only-child",
+  ])("%s no vuelve a redondear las esquinas", (selector) => {
+    expect(declarations(css, selector)["border-radius"] ?? "0").toBe("0");
+  });
+
+  it.each([".segment.active", ".settings-tab.active"])("%s no lleva sombra", (selector) => {
+    expect(declarations(css, selector)["box-shadow"] ?? "none").toBe("none");
+  });
+});
+
+describe("los controles de formulario conservan su radio", () => {
+  it("--control-radius sigue en 8px", () => {
+    expect(declarations(css, DARK)["--control-radius"]).toBe("8px");
+  });
+
+  it.each([".button", ".select", ".chip-button", ".search"])("%s usa var(--control-radius)", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("var(--control-radius)");
+  });
+});

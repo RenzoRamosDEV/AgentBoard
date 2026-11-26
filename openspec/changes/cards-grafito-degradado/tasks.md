@@ -20,7 +20,7 @@ Ciclo TDD en cada grupo: primero los tests en rojo, luego el CSS mínimo para po
 
 ## 4. Líneas internas y elementos rectos
 
-- [ ] 4.1 Red: tests de grosor `0.5px` en `.table-head` y `.table-row` (`border-bottom`) y en `.panel-note` (`border-top`); de `border-radius: 0` en `.chip`, `.segmented`, `.segment`, `.segment.active`, `.bar-track`, `.bar-fill`, `.inline-bar`, `.inline-bar-fill`, los segmentos de `.share-bar` y `.card-alert`; y de que `.button`, `.select`, `.chip-button` y `.search` siguen con `var(--control-radius)` y `--control-radius` sigue en `8px`; verificar que los nuevos fallan
+- [x] 4.1 Red: tests de grosor `0.5px` en `.table-head` y `.table-row` (`border-bottom`) y en `.panel-note` (`border-top`); de `border-radius: 0` en `.chip`, `.segmented`, `.segment`, `.segment.active`, `.bar-track`, `.bar-fill`, `.inline-bar`, `.inline-bar-fill`, los segmentos de `.share-bar` y `.card-alert`; y de que `.button`, `.select`, `.chip-button` y `.search` siguen con `var(--control-radius)` y `--control-radius` sigue en `8px`; verificar que los nuevos fallan
 - [ ] 4.2 Verde: aplicar los cambios en `src/styles.css` (design, decisiones 6 y 7), quitando también la sombra de `.segment.active`; verificar que los tests de 4.1 pasan
 
 ## 5. Refactor y verificación de integración

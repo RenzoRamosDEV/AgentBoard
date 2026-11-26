@@ -329,3 +329,46 @@ describe("ventanas flotantes rectas", () => {
     expect(declarations(css, selector)["box-shadow"]).toMatch(/^0 \d+px \d+px rgb\(0 0 0 \/ 0\.\d+\)$/);
   });
 });
+
+describe("menú lateral con el acento de las tarjetas", () => {
+  const SIDEBAR_EDGE = "linear-gradient(180deg, var(--card-edge), transparent 40%, transparent 65%, var(--border)) 1";
+  const BORDER_PROPS = ["border", "border-right", "border-image", "border-width", "border-right-width"];
+  const narrowSidebarMedia = () => css.match(/@media \(max-width: 940px\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+
+  it(".sidebar pinta su borde derecho de 1 px con el degradado vertical de las tarjetas", () => {
+    expect(declarations(css, ".sidebar")).toMatchObject({
+      "border-right": "1px solid var(--border)",
+      "border-image": SIDEBAR_EDGE,
+    });
+  });
+
+  it.each([
+    ["el panel plegado", () => declarations(css, ".sidebar.collapsed")],
+    ["la media query de 940 px", () => declarations(narrowSidebarMedia(), ".sidebar")],
+    ["la media query de 940 px (plegado)", () => declarations(narrowSidebarMedia(), ".sidebar.collapsed")],
+  ])("%s no redefine el borde del panel", (_, decls) => {
+    const found = decls();
+    expect(BORDER_PROPS.filter((prop) => prop in found)).toEqual([]);
+  });
+
+  it("la media query de 940 px existe y pliega el panel", () => {
+    expect(declarations(narrowSidebarMedia(), ".sidebar").width).toBe("60px");
+  });
+
+  it(".nav-item.active lleva una barra recta de 2 px en --card-edge a la izquierda y conserva fondo y texto", () => {
+    expect(declarations(css, ".nav-item.active")).toMatchObject({
+      "box-shadow": "inset 2px 0 0 var(--card-edge)",
+      background: "var(--surface-3)",
+      color: "var(--text-primary)",
+    });
+  });
+
+  it.each([
+    ["en el panel desplegado", () => declarations(css, ".nav-item.active")],
+    ["en el panel plegado", () => declarations(css, ".sidebar.collapsed .nav-item.active")],
+    ["en la media query de 940 px", () => declarations(narrowSidebarMedia(), ".sidebar .nav-item.active")],
+  ])("el elemento activo no cambia padding, margen ni borde %s", (_, decls) => {
+    const found = decls();
+    expect(["padding", "padding-left", "margin", "margin-left", "border", "border-left"].filter((prop) => prop in found)).toEqual([]);
+  });
+});

@@ -150,3 +150,52 @@ describe("paleta Grafito", () => {
     expect(contrast("#ffffff", "#000000")).toBeCloseTo(21, 5);
   });
 });
+
+describe("tarjetas rectas con borde degradado", () => {
+  it.each([
+    [DARK, "#f2a33a"],
+    [LIGHT, "#20b0f0"],
+  ])("%s: --card-edge vale %s", (selector, expected) => {
+    expect(declarations(css, selector)["--card-edge"]).toBe(expected);
+  });
+
+  it.each([".panel", ".kpi"])("%s es recta, transparente, sin borde ni sombra y ancla el borde", (selector) => {
+    expect(declarations(css, selector)).toMatchObject({
+      "border-radius": "0",
+      background: "transparent",
+      "box-shadow": "none",
+      border: "0",
+      position: "relative",
+    });
+  });
+
+  it.each([".panel::before", ".kpi::before"])("%s pinta un borde de 1 px degradado que no captura el ratón", (selector) => {
+    expect(declarations(css, selector)).toMatchObject({
+      content: '""',
+      position: "absolute",
+      inset: "0",
+      padding: "1px",
+      "pointer-events": "none",
+      background: "linear-gradient(135deg, var(--card-edge), transparent 40%, transparent 65%, var(--border))",
+      "-webkit-mask": "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+      mask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+      "-webkit-mask-composite": "xor",
+      "mask-composite": "exclude",
+    });
+  });
+
+  it.each([
+    [".panel", "19px 21px"],
+    [".kpi", "15px 17px"],
+    [".kpis-compact .kpi", "13px 15px"],
+  ])("%s compensa con 1 px más de padding el borde retirado (%s)", (selector, expected) => {
+    expect(declarations(css, selector).padding).toBe(expected);
+  });
+});
+
+describe("tarjetas en ventanas estrechas", () => {
+  it("el padding compacto de .panel (max-width: 860px) también compensa 1 px", () => {
+    const media = css.match(/@media \(max-width: 860px\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(declarations(media, ".panel").padding).toBe("15px");
+  });
+});

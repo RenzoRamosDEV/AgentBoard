@@ -6,7 +6,7 @@
 
 ## 2. Green
 
-- [ ] 2.1 En la sección Grafito de `src/styles.css`, añadir el `border-image` a `.sidebar` y el `box-shadow` inset a `.nav-item.active`. Verificar que los tests pasan sin regresiones
+- [x] 2.1 En la sección Grafito de `src/styles.css`, añadir el `border-image` a `.sidebar` y el `box-shadow` inset a `.nav-item.active`. Verificar que los tests pasan sin regresiones
 
 ## 3. Refactor y verificación
 

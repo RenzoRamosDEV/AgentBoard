@@ -605,6 +605,9 @@ svg .grid { stroke-dasharray: 3 3; }
 /* La máscara recorta el relleno del contenido y deja solo el anillo de 1 px del padding: el degradado
    se ve como borde sin tapar la tarjeta. Se declara también con prefijo para WebKitGTK (Tauri en Linux). */
 .panel::before, .kpi::before { content: ""; position: absolute; inset: 0; padding: 1px; pointer-events: none; background: linear-gradient(135deg, var(--card-edge), transparent 40%, transparent 65%, var(--border)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+/* border-image y no un pseudo-elemento: el panel hace scroll y un ::after absoluto se desplazaría con él. */
+.sidebar { border-image: linear-gradient(180deg, var(--card-edge), transparent 40%, transparent 65%, var(--border)) 1; }
+.nav-item.active { box-shadow: inset 2px 0 0 var(--card-edge); }
 .notice,
 .today-session,
 .theme-card,

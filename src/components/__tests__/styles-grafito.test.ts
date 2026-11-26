@@ -275,12 +275,57 @@ describe("columnas y leyendas de gráficos rectas", () => {
   });
 });
 
-describe("los controles de formulario conservan su radio", () => {
-  it("--control-radius sigue en 8px", () => {
-    expect(declarations(css, DARK)["--control-radius"]).toBe("8px");
+describe("controles rectos", () => {
+  it("--control-radius vale 0", () => {
+    expect(declarations(css, DARK)["--control-radius"]).toBe("0");
   });
 
-  it.each([".button", ".select", ".chip-button", ".search"])("%s usa var(--control-radius)", (selector) => {
-    expect(declarations(css, selector)["border-radius"]).toBe("var(--control-radius)");
+  it.each([".button", ".select", ".chip-button", ".search", ".field input", ".budget-field", ".scoped-add input"])(
+    "%s usa el radio común var(--control-radius)",
+    (selector) => {
+      expect(declarations(css, selector)["border-radius"]).toBe("var(--control-radius)");
+    },
+  );
+});
+
+describe("elementos de interfaz rectos", () => {
+  it.each([
+    "kbd",
+    ".brand-version",
+    ".nav-new",
+    ".badge",
+    ".tag",
+    ".src-tag",
+    ".compare-pill",
+    ".live",
+    ".nav-item",
+    ".sidebar-toggle",
+    ".menu-item",
+    ".select-option",
+    ".palette-item",
+    ".price-input",
+    ".range input",
+    ".checklist li",
+    ".today-session-row",
+    ".theme-preview",
+    ":focus-visible",
+    ".switch",
+    ".switch::after",
+  ])("%s tiene esquinas rectas", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("0");
+  });
+
+  it("el pulgar del interruptor sigue siendo un cuadrado de 12 px", () => {
+    expect(declarations(css, ".switch::after")).toMatchObject({ width: "12px", height: "12px" });
+  });
+});
+
+describe("ventanas flotantes rectas", () => {
+  it.each([".popover", ".dialog", ".palette", ".select-list", ".tooltip"])("%s tiene esquinas rectas", (selector) => {
+    expect(declarations(css, selector)["border-radius"]).toBe("0");
+  });
+
+  it.each([".popover", ".palette", ".select-list", ".tooltip"])("%s conserva su sombra", (selector) => {
+    expect(declarations(css, selector)["box-shadow"]).toMatch(/^0 \d+px \d+px rgb\(0 0 0 \/ 0\.\d+\)$/);
   });
 });

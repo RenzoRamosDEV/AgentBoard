@@ -2,7 +2,7 @@
 
 ## 1. Red
 
-- [ ] 1.1 En `src/components/__tests__/styles-grafito.test.ts`, cambiar los tests que exigen `--control-radius: 8px` para exigir `0` y añadir tests de radio 0 para `kbd`, `.brand-version`, `.nav-new`, `.badge`, `.tag`, `.src-tag`, `.compare-pill`, `.live`, `.nav-item`, `.sidebar-toggle`, `.menu-item`, `.select-option`, `.palette-item`, `.price-input`, `.range input`, `.checklist li`, `.today-session-row`, `.theme-preview`, `:focus-visible`, `.switch`, `.switch::after` y los flotantes `.popover`, `.dialog`, `.palette`, `.select-list`, `.tooltip` (con sombra conservada); que los controles siguen usando `var(--control-radius)`; y que `.brand-logo`, `.live-dot` y `.status-dot` siguen en `50%`. Verificar con `npx vitest run src/components/__tests__/styles-grafito.test.ts` que los nuevos fallan por el radio
+- [x] 1.1 En `src/components/__tests__/styles-grafito.test.ts`, cambiar los tests que exigen `--control-radius: 8px` para exigir `0` y añadir tests de radio 0 para `kbd`, `.brand-version`, `.nav-new`, `.badge`, `.tag`, `.src-tag`, `.compare-pill`, `.live`, `.nav-item`, `.sidebar-toggle`, `.menu-item`, `.select-option`, `.palette-item`, `.price-input`, `.range input`, `.checklist li`, `.today-session-row`, `.theme-preview`, `:focus-visible`, `.switch`, `.switch::after` y los flotantes `.popover`, `.dialog`, `.palette`, `.select-list`, `.tooltip` (con sombra conservada); que los controles siguen usando `var(--control-radius)`; y que `.brand-logo`, `.live-dot` y `.status-dot` siguen en `50%`. Verificar con `npx vitest run src/components/__tests__/styles-grafito.test.ts` que los nuevos fallan por el radio
 
 ## 2. Green
 

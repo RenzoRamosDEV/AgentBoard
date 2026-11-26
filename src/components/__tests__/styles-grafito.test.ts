@@ -86,3 +86,67 @@ describe("colores de series intactos", () => {
     expect(counts).toEqual({ palette: 8, series: 6, act: 11, agent: 5 });
   });
 });
+
+function relativeLuminance(hex: string): number {
+  const channels = hex.replace("#", "").match(/../g)!.map((h) => parseInt(h, 16) / 255);
+  const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("paleta Grafito", () => {
+  const palette = {
+    [DARK]: {
+      "--bg": "#0f0f10",
+      "--sidebar": "#0f0f10",
+      "--surface-1": "#161618",
+      "--surface-2": "#1c1c1f",
+      "--surface-3": "#232326",
+      "--border": "#262629",
+      "--row-border": "#1e1e21",
+      "--text-primary": "#ededee",
+      "--text-secondary": "#b4b4b8",
+      "--track": "#232326",
+    },
+    [LIGHT]: {
+      "--bg": "#f4f4f5",
+      "--sidebar": "#f4f4f5",
+      "--surface-1": "#ffffff",
+      "--surface-2": "#f0f0f2",
+      "--surface-3": "#ececef",
+      "--border": "#e4e4e7",
+      "--row-border": "#f0f0f2",
+      "--text-primary": "#111113",
+      "--text-secondary": "#4a4a50",
+      "--track": "#ececef",
+    },
+  };
+
+  it.each(Object.entries(palette))("%s usa los tokens neutros de Grafito", (selector, expected) => {
+    const decls = declarations(css, selector);
+    const actual = Object.fromEntries(Object.keys(expected).map((prop) => [prop, decls[prop]]));
+    expect(actual).toEqual(expected);
+  });
+
+  it.each([DARK, LIGHT])("%s: --text-muted contrasta al menos 4.5:1 con --bg", (selector) => {
+    const decls = declarations(css, selector);
+    expect(contrast(decls["--text-muted"], decls["--bg"])).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each([
+    [DARK, "#848489"],
+    [LIGHT, "#6b6b73"],
+  ])("%s: --text-muted es el tono AA más cercano al de la maqueta (%s)", (selector, expected) => {
+    expect(declarations(css, selector)["--text-muted"]).toBe(expected);
+  });
+
+  it("el atenuado original de la maqueta no llega a AA sobre el fondo oscuro", () => {
+    expect(contrast("#77777d", "#0f0f10")).toBeLessThan(4.5);
+    expect(contrast("#77777d", "#0f0f10")).toBeCloseTo(4.31, 2);
+    expect(contrast("#ffffff", "#000000")).toBeCloseTo(21, 5);
+  });
+});

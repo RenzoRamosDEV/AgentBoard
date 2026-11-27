@@ -33,26 +33,26 @@ function Preview({ theme }: { theme: "light" | "dark" }) {
       ? { bg: "#14161a", side: "#191c21", card: "#1d2026", line: "#2b2f37", text: "#8a929d", accent: "#f2a33a", bar: "#5b8def" }
       : { bg: "#f3f3f1", side: "#f8f8f6", card: "#ffffff", line: "#e0dfda", text: "#a5a7ae", accent: "#20b0f0", bar: "#2a78d6" };
   return (
-    <svg viewBox="0 0 160 100" width="100%" aria-hidden="true" style={{ display: "block", borderRadius: 8 }}>
+    <svg viewBox="0 0 160 100" width="100%" aria-hidden="true" style={{ display: "block" }}>
       <rect width="160" height="100" fill={c.bg} />
       <rect width="42" height="100" fill={c.side} />
       <circle cx="21" cy="16" r="9" fill={c.accent} />
       {[34, 42, 50, 58].map((y) => (
-        <rect key={y} x="9" y={y} width="24" height="3" rx="1.5" fill={c.text} />
+        <rect key={y} x="9" y={y} width="24" height="3" fill={c.text} />
       ))}
-      <rect x="9" y="70" width="10" height="6" rx="3" fill={c.accent} />
-      <rect x="22" y="70" width="12" height="6" rx="3" fill={c.line} />
+      <rect x="9" y="70" width="10" height="6" fill={c.accent} />
+      <rect x="22" y="70" width="12" height="6" fill={c.line} />
       {[50, 86, 122].map((x) => (
-        <rect key={x} x={x} y="8" width="30" height="16" rx="3" fill={c.card} stroke={c.line} />
+        <rect key={x} x={x} y="8" width="30" height="16" fill={c.card} stroke={c.line} />
       ))}
       {[50, 86, 122].map((x) => (
-        <rect key={x} x={x + 4} y="16" width="14" height="3" rx="1.5" fill={c.accent} />
+        <rect key={x} x={x + 4} y="16" width="14" height="3" fill={c.accent} />
       ))}
-      <rect x="50" y="31" width="102" height="61" rx="4" fill={c.card} stroke={c.line} />
+      <rect x="50" y="31" width="102" height="61" fill={c.card} stroke={c.line} />
       {[41, 50, 59, 68, 77].map((y, i) => (
         <g key={y}>
-          <rect x="56" y={y} width="22" height="3" rx="1.5" fill={c.text} />
-          <rect x="84" y={y - 1} width={60 - i * 11} height="5" rx="2.5" fill={c.bar} />
+          <rect x="56" y={y} width="22" height="3" fill={c.text} />
+          <rect x="84" y={y - 1} width={60 - i * 11} height="5" fill={c.bar} />
         </g>
       ))}
     </svg>

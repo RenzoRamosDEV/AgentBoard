@@ -63,11 +63,15 @@ Con la comparación activa, la portada SHALL indicar las fechas del periodo ante
 - **THEN** el KPI se titula «Mes · 83 % de $500.00»
 
 ### Requirement: Consistencia de tamaños
-Todos los controles interactivos (botones, botones de filtro, desplegables, campos de texto, buscadores y controles segmentados) SHALL compartir altura, radio de esquina y tamaño de letra, salvo los campos dentro de tablas, que usan una variante compacta común. Ningún control ni etiqueta SHALL partirse en dos líneas.
+Todos los controles interactivos (botones, botones de filtro, desplegables, campos de texto, buscadores y controles segmentados) SHALL compartir altura y tamaño de letra, salvo los campos dentro de tablas, que usan una variante compacta común. Todos ellos SHALL compartir además radio de esquina 0, como las tarjetas. Ningún control ni etiqueta SHALL partirse en dos líneas.
 
 #### Scenario: Barra de herramientas
 - **WHEN** una barra combina un buscador, un botón y un control segmentado
 - **THEN** los tres tienen la misma altura
+
+#### Scenario: Radio de los controles
+- **WHEN** una barra combina un botón de filtro, un buscador, un botón y un control segmentado
+- **THEN** todos tienen esquinas rectas
 
 ### Requirement: Tarjetas ordenadas
 Las tarjetas de una misma fila SHALL tener la misma altura, y ninguna SHALL mostrar un hueco vacío por estirarse a la altura de otra: el contenido que crece (gráficos) ocupa el espacio y el que sobra (listas largas) se desplaza dentro de la tarjeta. A partir de 1280 px de ancho ninguna tabla SHALL salirse de su tarjeta.
@@ -84,7 +88,7 @@ En cada fila de KPIs, las etiquetas SHALL ocupar una sola línea y los valores S
 - **THEN** los KPIs del resumen se ven en dos filas de tres con las etiquetas completas
 
 ### Requirement: Hoy en directo
-La portada SHALL mostrar junto al gasto diario una tarjeta «Hoy en directo», independiente del periodo elegido pero con los filtros de agentes y proyectos, con: el gasto de hoy desde las 00:00 locales y su variación frente a ayer hasta la misma hora; el coste de los últimos 60 minutos (USD/h); el gasto por hora de hoy; y la sesión activa (con llamadas en los últimos 15 minutos) o, si no hay, la última sesión de hoy, con enlace a su detalle. La tarjeta SHALL actualizarse con cada aviso de datos cambiados.
+La portada SHALL mostrar junto al gasto diario una tarjeta «Hoy en directo», independiente del periodo elegido pero con los filtros de agentes y proyectos, con: el gasto de hoy desde las 00:00 locales y su variación frente a ayer hasta la misma hora; el coste de los últimos 60 minutos (USD/h); el gasto por hora de hoy; y la sesión activa o, si no hay, la última de hoy, con enlace a su detalle. La tarjeta SHALL actualizarse con cada aviso de datos cambiados.
 
 #### Scenario: Comparación justa con ayer
 - **WHEN** a las 14:00 el gasto de hoy es 40 USD y ayer hasta las 14:00 fue 30 USD
@@ -94,6 +98,150 @@ La portada SHALL mostrar junto al gasto diario una tarjeta «Hoy en directo», i
 - **WHEN** una sesión de Claude Code tuvo una llamada hace 3 minutos
 - **THEN** la tarjeta la muestra como activa ahora, con enlace a su detalle
 
+#### Scenario: Ventana de actividad de 15 minutos
+- **WHEN** ninguna sesión tiene llamadas en los últimos 15 minutos y la última sesión de hoy tuvo su última llamada hace 16 minutos
+- **THEN** la tarjeta no muestra ninguna sesión como activa y muestra esa sesión como la última de hoy, con enlace a su detalle
+
 #### Scenario: Sin actividad hoy
 - **WHEN** no hay llamadas hoy
 - **THEN** la tarjeta muestra 0 USD y que aún no hay sesiones hoy
+
+### Requirement: Paleta Grafito
+La interfaz SHALL usar una paleta neutra de grises y negros en ambos modos. Oscuro: fondo `#0f0f10`; superficies `#161618`, `#1c1c1f`, `#232326`; borde `#262629`; separador de filas `#1e1e21`; texto primario `#ededee` y secundario `#b4b4b8`; pista de barras `#232326`. Claro: fondo `#f4f4f5`; superficies `#ffffff`, `#f0f0f2`, `#ececef`; borde `#e4e4e7`; separador `#f0f0f2`; texto `#111113` y `#4a4a50`; pista `#ececef`.
+
+#### Scenario: Modo oscuro
+- **WHEN** el tema activo es oscuro
+- **THEN** el fondo de la ventana es `#0f0f10` y el texto primario `#ededee`
+
+#### Scenario: Modo claro
+- **WHEN** el usuario elige el tema claro en el selector de tema
+- **THEN** el fondo de la ventana es `#f4f4f5` y el texto primario `#111113`
+
+#### Scenario: Tema del sistema
+- **WHEN** el usuario elige «sistema» y el sistema pide modo claro
+- **THEN** la interfaz muestra la paleta Grafito clara
+
+### Requirement: Texto atenuado legible
+El texto atenuado SHALL tener un contraste de al menos 4.5:1 sobre el fondo de la ventana en ambos modos, partiendo de `#77777d` (oscuro) y `#8a8a92` (claro) y oscureciéndolo o aclarándolo lo mínimo necesario cuando no alcance ese contraste.
+
+#### Scenario: Contraste en oscuro
+- **WHEN** se mide el contraste del texto atenuado sobre `#0f0f10`
+- **THEN** es igual o superior a 4.5:1
+
+#### Scenario: Contraste en claro
+- **WHEN** se mide el contraste del texto atenuado sobre `#f4f4f5`
+- **THEN** es igual o superior a 4.5:1
+
+### Requirement: Tarjetas rectas con borde degradado
+Las tarjetas (paneles, KPIs y cualquier contenedor tipo tarjeta) SHALL tener esquinas rectas, sin sombra ni relleno propio, y un borde de 1 px degradado a 135°: color de acento de tarjeta en la esquina superior izquierda, transparente entre el 40 % y el 65 % y gris de borde en la esquina inferior derecha. El borde MUST NOT capturar clics ni el paso del ratón.
+
+#### Scenario: Aspecto de un panel
+- **WHEN** se muestra el panel Top proyectos
+- **THEN** tiene esquinas rectas, deja ver el fondo de la ventana y su borde pasa del acento arriba a la izquierda al gris abajo a la derecha
+
+#### Scenario: El borde no bloquea la interacción
+- **WHEN** el usuario pulsa un enlace o una fila situada junto al borde de una tarjeta
+- **THEN** la pulsación llega al enlace o a la fila
+
+### Requirement: Color de arranque del borde de tarjeta
+El color con el que arranca el borde degradado SHALL exponerse como un token propio de tema, con naranja `#f2a33a` en modo oscuro y celeste `#20b0f0` en modo claro.
+
+#### Scenario: Cambio de tema
+- **WHEN** el usuario cambia de tema oscuro a claro
+- **THEN** el borde de las tarjetas pasa de arrancar en naranja `#f2a33a` a arrancar en celeste `#20b0f0`
+
+### Requirement: Líneas internas finas
+Las líneas internas de las tarjetas (separadores de filas de tabla, cabeceras de tabla y nota al pie de panel) SHALL tener 0,5 px de grosor.
+
+#### Scenario: Tabla de un panel
+- **WHEN** se muestra una tabla dentro de un panel
+- **THEN** su cabecera y los separadores entre filas son líneas de 0,5 px
+
+### Requirement: Elementos rectos dentro de las tarjetas
+Los chips, las pestañas y controles segmentados, las barras de medidor y los avisos dentro de tarjetas SHALL tener esquinas rectas. Los botones, desplegables y campos de texto SHALL tener también esquinas rectas.
+
+#### Scenario: Barra de medidor
+- **WHEN** se muestra la barra de presupuesto o de reparto en una tarjeta
+- **THEN** la pista y el relleno tienen esquinas rectas
+
+#### Scenario: Aviso en tarjeta
+- **WHEN** la tarjeta Top modelos muestra el aviso de modelos sin precio
+- **THEN** el aviso tiene esquinas rectas
+
+### Requirement: Colores de gráficos intactos
+El rediseño MUST NOT cambiar los colores de gráficos y series (agentes, actividades, modelos, paletas categóricas y series) en ninguno de los dos modos.
+
+#### Scenario: Gasto diario por agente
+- **WHEN** se muestra el gasto diario apilado por agente tras el rediseño
+- **THEN** cada agente conserva el mismo color que antes del rediseño en el modo activo
+
+### Requirement: Columnas y leyendas de gráficos rectas
+Las columnas de los gráficos de columnas, tanto apiladas como simples, SHALL tener esquinas rectas en todos sus segmentos. Las muestras de color de leyendas y listas de los gráficos SHALL ser cuadrados de esquinas rectas. Los indicadores circulares (estado, en vivo y logotipo) y los extremos de las líneas de los gráficos MUST NOT cambiar de forma.
+
+#### Scenario: Columna apilada
+- **WHEN** se muestra una columna del gasto diario apilado por agente
+- **THEN** su segmento superior, su segmento inferior y, si es el único, ese segmento tienen esquinas rectas
+
+#### Scenario: Columna simple
+- **WHEN** se muestra un gráfico de columnas de una sola serie
+- **THEN** cada columna tiene esquinas rectas
+
+#### Scenario: Leyenda de un gráfico
+- **WHEN** un gráfico o una lista de reparto muestra su leyenda con muestras de color
+- **THEN** cada muestra es un cuadrado de esquinas rectas
+
+#### Scenario: Indicadores circulares
+- **WHEN** se muestran el punto de estado de una sesión o el indicador en vivo
+- **THEN** siguen siendo círculos
+
+### Requirement: Elementos de interfaz rectos
+Las etiquetas e insignias (atajos de teclado, versión, «nuevo», etiquetas de origen y de comparación, indicador «En vivo»), las entradas de navegación y de menú, las opciones de desplegable y de buscador rápido, los campos de precio y de rango, las filas seleccionables, la miniatura de tema y lo dibujado en ella, el anillo de foco y el interruptor (pista y pulgar) SHALL tener esquinas rectas. El logotipo y los puntos de estado y en vivo MUST seguir siendo círculos.
+
+#### Scenario: Barra superior
+- **WHEN** se muestra la barra superior con los desplegables de agentes y proyectos, el buscador con su atajo, el botón de exportar y el indicador «En vivo»
+- **THEN** todos tienen esquinas rectas y el punto del indicador sigue siendo un círculo
+
+#### Scenario: Interruptor
+- **WHEN** se muestra el interruptor «Comparar con periodo anterior»
+- **THEN** su pista es un rectángulo y su pulgar un cuadrado, ambos de esquinas rectas
+
+#### Scenario: Foco con teclado
+- **WHEN** el usuario enfoca un control con el teclado
+- **THEN** el anillo de foco tiene esquinas rectas
+
+#### Scenario: Miniatura de tema
+- **WHEN** se abre la pestaña Tema de Ajustes con las miniaturas Sistema, Claro y Oscuro
+- **THEN** el lienzo de cada miniatura no tiene radio de borde y ninguna tarjeta, barra ni chip dibujado en ella tiene esquinas redondeadas, mientras el logotipo sigue siendo un círculo y los colores no cambian
+
+### Requirement: Ventanas flotantes rectas
+Las ventanas flotantes (menús emergentes, diálogos, buscador rápido, listas de desplegable y tooltips) SHALL tener esquinas rectas y MUST conservar su sombra.
+
+#### Scenario: Diálogo de ajustes
+- **WHEN** se abre el diálogo de ajustes
+- **THEN** tiene esquinas rectas
+
+#### Scenario: Lista de un desplegable
+- **WHEN** se abre la lista de opciones de un desplegable
+- **THEN** la lista tiene esquinas rectas y sigue proyectando sombra
+
+### Requirement: Separación degradada del panel lateral
+La línea vertical de 1 px que separa el panel lateral del contenido SHALL ser un degradado vertical: color de acento de tarjeta arriba, transparente entre el 40 % y el 65 % de la altura y gris de borde abajo, igual que el borde de las tarjetas. SHALL verse así con el panel desplegado, plegado a solo iconos y en ventanas estrechas, y MUST NOT dibujarse además una línea sólida que la duplique.
+
+#### Scenario: Panel desplegado en tema oscuro
+- **WHEN** se muestra el panel lateral desplegado en tema oscuro
+- **THEN** la separación con el contenido arranca arriba en naranja `#f2a33a`, se desvanece hacia la mitad y termina abajo en el gris de borde
+
+#### Scenario: Panel plegado o ventana estrecha
+- **WHEN** el panel lateral está plegado a solo iconos o la ventana es tan estrecha que se pliega solo
+- **THEN** la separación sigue siendo el mismo degradado vertical
+
+### Requirement: Acento del elemento activo del panel lateral
+El elemento activo del panel lateral SHALL mostrar a la izquierda una barra vertical recta de 2 px en el color de acento de tarjeta, a toda la altura del elemento, conservando su fondo gris y el texto en color primario. La barra MUST NOT desplazar el texto ni los iconos.
+
+#### Scenario: Elemento activo en tema claro
+- **WHEN** el usuario está en la vista By Model con el tema claro
+- **THEN** el elemento «By Model» muestra a su izquierda una barra celeste `#20b0f0` de 2 px y su texto e icono quedan en la misma posición que en los elementos inactivos
+
+#### Scenario: Elemento activo con el panel plegado
+- **WHEN** el panel lateral está plegado a solo iconos
+- **THEN** el elemento activo conserva la barra de 2 px a la izquierda y su icono sigue centrado
